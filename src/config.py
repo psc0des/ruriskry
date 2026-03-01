@@ -70,6 +70,14 @@ class Settings(BaseSettings):
     # If False but credentials are missing, each client falls back to mock automatically.
     use_local_mocks: bool = True
 
+    # --- Demo Mode ---
+    # True → ops agents return 1-2 hardcoded realistic ProposedActions so the
+    # full pipeline (SRI scoring, governance engine, audit trail) can be tested
+    # locally without Azure OpenAI credentials.  NOT a mock fallback — the
+    # governance layer still runs deterministically in its normal mock mode.
+    # Env var: DEMO_MODE=true
+    demo_mode: bool = False
+
     # --- LLM Rate Limiting ---
     # Maximum number of simultaneous LLM calls across all governance agents.
     # Azure OpenAI free-tier deployments typically allow ~3 RPM; higher tiers allow more.

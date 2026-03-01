@@ -4,14 +4,18 @@
  * Shows four buttons (Cost, SRE, Deploy, Run All) with a resource-group input.
  * Each button:
  *   1. Calls POST /api/scan/{type} → receives a scan_id immediately
- *   2. Polls GET /api/scan/{scan_id}/status every 2 s until status !== "running"
- *   3. Calls onScanComplete() so the parent re-fetches evaluations
+ *   2. Opens a LiveLogPanel that streams real-time SSE events for that scan
+ *   3. Polls GET /api/scan/{scan_id}/status every 2 s until status !== "running"
+ *   4. Calls onScanComplete() so the parent re-fetches evaluations
  *
- * Buttons are disabled while any scan of that type is running.
+ * Bug 1 fix: the "Run All" button now only shows "Running all agents…" when ALL
+ * three agents are scanning simultaneously (i.e. via Run All).  A single-agent
+ * scan correctly shows "Scan in progress…" on the Run All button instead.
  */
 
 import React, { useState, useRef, useCallback } from 'react'
 import { triggerScan, triggerAllScans, fetchScanStatus } from '../api'
+import LiveLogPanel from './LiveLogPanel'
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -104,17 +108,18 @@ function AgentButton({ type, scanning, lastStatus, onTrigger }) {
  */
 export default function AgentControls({ onScanComplete }) {
   // Default empty → API sends null resource_group → agents scan whole subscription.
-  // Fill in a resource group name to scope scans to a specific RG.
   const [resourceGroup, setResourceGroup] = useState('')
 
-  // { cost: bool, monitoring: bool, deploy: bool }
-  const [scanning,    setScanning]    = useState({ cost: false, monitoring: false, deploy: false })
+  // Per-agent scanning state: { cost: bool, monitoring: bool, deploy: bool }
+  const [scanning,   setScanning]   = useState({ cost: false, monitoring: false, deploy: false })
 
-  // { cost: statusObject|null, monitoring: ..., deploy: ... }
-  const [lastStatus,  setLastStatus]  = useState({ cost: null, monitoring: null, deploy: null })
+  // Per-agent last status from poll: { cost: obj|null, monitoring: ..., deploy: ... }
+  const [lastStatus, setLastStatus] = useState({ cost: null, monitoring: null, deploy: null })
+
+  // Live log panel state: which scan_id + agent_type to show.
+  const [liveLog, setLiveLog] = useState({ open: false, scanId: null, agentType: null })
 
   // Store polling interval IDs so we can clear them when done.
-  // useRef keeps these between renders without causing re-renders.
   const pollRefs = useRef({ cost: null, monitoring: null, deploy: null })
 
   /**
@@ -122,7 +127,6 @@ export default function AgentControls({ onScanComplete }) {
    * Stops automatically when status !== "running".
    */
   const startPolling = useCallback((scanId, agentType) => {
-    // Clear any existing poll for this agent type
     if (pollRefs.current[agentType]) clearInterval(pollRefs.current[agentType])
 
     pollRefs.current[agentType] = setInterval(async () => {
@@ -143,7 +147,7 @@ export default function AgentControls({ onScanComplete }) {
   }, [onScanComplete])
 
   /**
-   * Trigger one agent scan then begin polling for results.
+   * Trigger one agent scan, open live log, then begin polling for results.
    */
   const handleTrigger = useCallback(async (agentType) => {
     const rg = resourceGroup.trim() || null
@@ -151,6 +155,8 @@ export default function AgentControls({ onScanComplete }) {
     setLastStatus(prev => ({ ...prev, [agentType]: { status: 'running' } }))
     try {
       const { scan_id } = await triggerScan(agentType, rg)
+      // Open the live log panel for this scan
+      setLiveLog({ open: true, scanId: scan_id, agentType })
       startPolling(scan_id, agentType)
     } catch (err) {
       setScanning(prev => ({ ...prev, [agentType]: false }))
@@ -160,7 +166,7 @@ export default function AgentControls({ onScanComplete }) {
 
   /**
    * Trigger all three scans simultaneously.
-   * Each scan gets its own polling loop.
+   * Opens the live log for the cost scan (first one).
    */
   const handleTriggerAll = useCallback(async () => {
     const rg = resourceGroup.trim() || null
@@ -173,6 +179,10 @@ export default function AgentControls({ onScanComplete }) {
     try {
       const { scan_ids } = await triggerAllScans(rg)
       const types = ['cost', 'monitoring', 'deploy']
+      // Open log panel for the cost scan (first one)
+      if (scan_ids[0]) {
+        setLiveLog({ open: true, scanId: scan_ids[0], agentType: 'cost' })
+      }
       scan_ids.forEach((scanId, i) => startPolling(scanId, types[i]))
     } catch (err) {
       setScanning({ cost: false, monitoring: false, deploy: false })
@@ -182,77 +192,91 @@ export default function AgentControls({ onScanComplete }) {
   }, [resourceGroup, startPolling])
 
   const anyScanning = Object.values(scanning).some(Boolean)
+  // BUG 1 FIX: only say "all agents" when every agent is scanning (Run All was clicked)
+  const allScanning = Object.values(scanning).every(Boolean)
 
   return (
-    <section className="bg-slate-800 rounded-xl border border-slate-700 p-5">
-      {/* ── Panel header ── */}
-      <div className="flex items-center justify-between mb-4">
-        <div>
-          <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest">
-            Agent Controls
-          </h2>
-          <p className="text-xs text-slate-600 mt-0.5">
-            Trigger ops agent scans directly from the dashboard
-          </p>
+    <>
+      <section className="bg-slate-800 rounded-xl border border-slate-700 p-5">
+        {/* ── Panel header ── */}
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest">
+              Agent Controls
+            </h2>
+            <p className="text-xs text-slate-600 mt-0.5">
+              Trigger ops agent scans directly from the dashboard
+            </p>
+          </div>
+
+          {/* Global scanning badge */}
+          {anyScanning && (
+            <div className="flex items-center gap-1.5 text-xs text-yellow-400 font-mono">
+              <Spinner />
+              scanning…
+            </div>
+          )}
         </div>
 
-        {/* Global scanning badge */}
-        {anyScanning && (
-          <div className="flex items-center gap-1.5 text-xs text-yellow-400 font-mono">
-            <Spinner />
-            scanning…
-          </div>
-        )}
-      </div>
-
-      {/* ── Resource group input ── */}
-      <div className="mb-4">
-        <label className="block text-xs text-slate-500 mb-1" htmlFor="rg-input">
-          Resource Group <span className="text-slate-600">(optional)</span>
-        </label>
-        <input
-          id="rg-input"
-          type="text"
-          value={resourceGroup}
-          onChange={e => setResourceGroup(e.target.value)}
-          placeholder="e.g. sentinel-prod-rg (leave empty to scan whole subscription)"
-          className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-blue-500 transition-colors font-mono"
-        />
-      </div>
-
-      {/* ── Individual agent buttons ── */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
-        {['cost', 'monitoring', 'deploy'].map(type => (
-          <AgentButton
-            key={type}
-            type={type}
-            scanning={scanning}
-            lastStatus={lastStatus}
-            onTrigger={handleTrigger}
+        {/* ── Resource group input ── */}
+        <div className="mb-4">
+          <label className="block text-xs text-slate-500 mb-1" htmlFor="rg-input">
+            Resource Group <span className="text-slate-600">(optional)</span>
+          </label>
+          <input
+            id="rg-input"
+            type="text"
+            value={resourceGroup}
+            onChange={e => setResourceGroup(e.target.value)}
+            placeholder="e.g. sentinel-prod-rg (leave empty to scan whole subscription)"
+            className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-blue-500 transition-colors font-mono"
           />
-        ))}
-      </div>
+        </div>
 
-      {/* ── Run All button ── */}
-      <button
-        onClick={handleTriggerAll}
-        disabled={anyScanning}
-        className={`
-          w-full py-2.5 rounded-xl text-sm font-semibold transition-all border
-          ${anyScanning
-            ? 'border-slate-600 bg-slate-700/40 text-slate-500 cursor-not-allowed'
-            : 'border-blue-500/60 bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 hover:text-blue-200 cursor-pointer'
-          }
-        `}
-      >
-        {anyScanning ? (
-          <span className="flex items-center justify-center gap-2">
-            <Spinner /> Running all agents…
-          </span>
-        ) : (
-          '⚡ Run All Agents'
-        )}
-      </button>
-    </section>
+        {/* ── Individual agent buttons ── */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
+          {['cost', 'monitoring', 'deploy'].map(type => (
+            <AgentButton
+              key={type}
+              type={type}
+              scanning={scanning}
+              lastStatus={lastStatus}
+              onTrigger={handleTrigger}
+            />
+          ))}
+        </div>
+
+        {/* ── Run All button ── */}
+        <button
+          onClick={handleTriggerAll}
+          disabled={anyScanning}
+          className={`
+            w-full py-2.5 rounded-xl text-sm font-semibold transition-all border
+            ${anyScanning
+              ? 'border-slate-600 bg-slate-700/40 text-slate-500 cursor-not-allowed'
+              : 'border-blue-500/60 bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 hover:text-blue-200 cursor-pointer'
+            }
+          `}
+        >
+          {anyScanning ? (
+            <span className="flex items-center justify-center gap-2">
+              <Spinner />
+              {/* BUG 1 FIX: only "Running all agents" when all 3 are scanning */}
+              {allScanning ? 'Running all agents…' : 'Scan in progress…'}
+            </span>
+          ) : (
+            '⚡ Run All Agents'
+          )}
+        </button>
+      </section>
+
+      {/* ── Live Log Panel (renders outside the card to cover the whole screen) ── */}
+      <LiveLogPanel
+        scanId={liveLog.scanId}
+        agentType={liveLog.agentType}
+        isOpen={liveLog.open}
+        onClose={() => setLiveLog(prev => ({ ...prev, open: false }))}
+      />
+    </>
   )
 }

@@ -167,6 +167,13 @@ class CostOptimizationAgent:
         Returns:
             List of :class:`~src.core.models.ProposedAction` objects.
         """
+        if self._cfg.demo_mode:
+            logger.info(
+                "CostOptimizationAgent: DEMO_MODE enabled — returning sample proposals "
+                "for pipeline testing (set DEMO_MODE=false for real Azure scanning)."
+            )
+            return self._demo_proposals()
+
         if not self._use_framework:
             logger.info(
                 "CostOptimizationAgent: no Azure OpenAI endpoint configured — "
@@ -384,6 +391,53 @@ class CostOptimizationAgent:
         # Falling back to seed-data rules would produce false positives in any
         # real environment that does not match the demo seed_resources.json.
         return proposals_holder
+
+    # ------------------------------------------------------------------
+    # Demo mode — realistic sample proposals for pipeline testing
+    # ------------------------------------------------------------------
+
+    def _demo_proposals(self) -> list[ProposedAction]:
+        """Return 2 realistic sample proposals for DEMO_MODE=true.
+
+        These proposals flow through the full SentinelLayer governance pipeline
+        (SRI scoring, governance engine, audit trail) — they just skip the
+        real Azure investigation step.  Useful for verifying the pipeline
+        end-to-end without Azure OpenAI credentials.
+        """
+        return [
+            ProposedAction(
+                agent_id=_AGENT_ID,
+                action_type=ActionType.DELETE_RESOURCE,
+                target=ActionTarget(
+                    resource_id="vm-idle-demo-01",
+                    resource_type="Microsoft.Compute/virtualMachines",
+                    current_monthly_cost=234.50,
+                ),
+                reason=(
+                    "[DEMO] VM shows 1.2% avg CPU over 30 days — idle resource. "
+                    "No activity log entries for 4 weeks. Estimated savings $234/month."
+                ),
+                urgency=Urgency.MEDIUM,
+                projected_savings_monthly=234.50,
+            ),
+            ProposedAction(
+                agent_id=_AGENT_ID,
+                action_type=ActionType.SCALE_DOWN,
+                target=ActionTarget(
+                    resource_id="aks-demo-prod",
+                    resource_type="Microsoft.ContainerService/managedClusters",
+                    current_monthly_cost=890.0,
+                    current_sku="Standard_D4s_v3 (6 nodes)",
+                    proposed_sku="Standard_D4s_v3 (3 nodes)",
+                ),
+                reason=(
+                    "[DEMO] AKS cluster using 18% avg CPU across 6 nodes. "
+                    "Reducing to 3 nodes saves ~$320/month with adequate headroom."
+                ),
+                urgency=Urgency.LOW,
+                projected_savings_monthly=320.0,
+            ),
+        ]
 
     # ------------------------------------------------------------------
     # Deterministic rule-based scan (fallback / mock mode)

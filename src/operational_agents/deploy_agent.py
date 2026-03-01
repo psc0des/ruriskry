@@ -148,6 +148,13 @@ class DeployAgent:
         Returns:
             List of :class:`~src.core.models.ProposedAction` objects.
         """
+        if self._cfg.demo_mode:
+            logger.info(
+                "DeployAgent: DEMO_MODE enabled — returning sample proposals "
+                "for pipeline testing (set DEMO_MODE=false for real Azure scanning)."
+            )
+            return self._demo_proposals()
+
         if not self._use_framework:
             logger.info(
                 "DeployAgent: no Azure OpenAI endpoint configured — "
@@ -338,6 +345,43 @@ class DeployAgent:
         return proposals_holder
 
     # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Demo mode — realistic sample proposals for pipeline testing
+    # ------------------------------------------------------------------
+
+    def _demo_proposals(self) -> list[ProposedAction]:
+        """Return 2 realistic sample proposals for DEMO_MODE=true."""
+        return [
+            ProposedAction(
+                agent_id=_AGENT_ID,
+                action_type=ActionType.MODIFY_NSG,
+                target=ActionTarget(
+                    resource_id="nsg-demo-prod",
+                    resource_type="Microsoft.Network/networkSecurityGroups",
+                ),
+                reason=(
+                    "[DEMO] Port 22 (SSH) open to 0.0.0.0/0 on nsg-demo-prod. "
+                    "No deny-all inbound rule at priority 4096. "
+                    "Recommend adding deny-all rule to reduce attack surface."
+                ),
+                urgency=Urgency.HIGH,
+            ),
+            ProposedAction(
+                agent_id=_AGENT_ID,
+                action_type=ActionType.UPDATE_CONFIG,
+                target=ActionTarget(
+                    resource_id="storage-demo-01",
+                    resource_type="Microsoft.Storage/storageAccounts",
+                ),
+                reason=(
+                    "[DEMO] Storage account storage-demo-01 has no lifecycle management tags "
+                    "(no backup policy, owner, or DR designation). "
+                    "Adding environment and criticality metadata recommended."
+                ),
+                urgency=Urgency.LOW,
+            ),
+        ]
+
     # Deterministic rule-based scan (fallback / mock mode)
     # ------------------------------------------------------------------
 

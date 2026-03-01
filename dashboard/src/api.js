@@ -5,7 +5,7 @@
  * message that the UI can display.
  */
 
-const BASE = 'http://localhost:8000/api'
+export const BASE = 'http://localhost:8000/api'
 
 /** Fetch recent evaluations, optionally filtered by resource ID substring. */
 export async function fetchEvaluations(limit = 20, resourceId = null) {
@@ -85,5 +85,47 @@ export async function triggerAllScans(resourceGroup = null) {
 export async function fetchScanStatus(scanId) {
   const res = await fetch(`${BASE}/scan/${scanId}/status`)
   if (!res.ok) throw new Error(`API error ${res.status}: scan "${scanId}" not found`)
+  return res.json()
+}
+
+/**
+ * Open an SSE stream for real-time scan progress events.
+ * Returns an EventSource — caller must attach onmessage and call .close() when done.
+ * @param {string} scanId - UUID returned by triggerScan
+ * @returns {EventSource}
+ */
+export function streamScanEvents(scanId) {
+  return new EventSource(`${BASE}/scan/${scanId}/stream`)
+}
+
+/**
+ * Request cancellation of a running scan.
+ * @param {string} scanId - UUID to cancel
+ */
+export async function cancelScan(scanId) {
+  const res = await fetch(`${BASE}/scan/${scanId}/cancel`, { method: 'PATCH' })
+  if (!res.ok) throw new Error(`API error ${res.status}: failed to cancel scan "${scanId}"`)
+  return res.json()
+}
+
+/**
+ * Fetch the most recent scan results for an agent.
+ * @param {string} agentName - e.g. "cost-optimization-agent"
+ * @returns {{ source: string, scan_id: string|null, evaluations: object[], ... }}
+ */
+export async function fetchAgentLastRun(agentName) {
+  const res = await fetch(`${BASE}/agents/${encodeURIComponent(agentName)}/last-run`)
+  if (!res.ok) throw new Error(`API error ${res.status}: failed to fetch last run for "${agentName}"`)
+  return res.json()
+}
+
+/**
+ * Fetch action history for one agent.
+ * @param {string} agentName - e.g. "cost-optimization-agent"
+ * @param {number} limit - max records
+ */
+export async function fetchAgentHistory(agentName, limit = 20) {
+  const res = await fetch(`${BASE}/agents/${encodeURIComponent(agentName)}/history?limit=${limit}`)
+  if (!res.ok) throw new Error(`API error ${res.status}: failed to fetch history for "${agentName}"`)
   return res.json()
 }

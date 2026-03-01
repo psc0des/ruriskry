@@ -8,6 +8,7 @@ GET  /api/metrics                  Aggregate stats across all evaluations.
 GET  /api/resources/{id}/risk      Risk profile for one resource.
 GET  /api/agents                   List all connected A2A agents with stats.
 GET  /api/agents/{name}/history    Recent action history for one A2A agent.
+GET  /api/agents/{name}/last-run   Most recent scan results for one agent.
 POST /api/alert-trigger            Receive Azure Monitor alert → trigger MonitoringAgent
                                    → evaluate proposals → return verdicts.
 POST /api/scan/cost                Trigger cost optimisation agent scan.
@@ -15,6 +16,8 @@ POST /api/scan/monitoring          Trigger SRE monitoring agent scan.
 POST /api/scan/deploy              Trigger infrastructure deploy agent scan.
 POST /api/scan/all                 Trigger all 3 agents simultaneously.
 GET  /api/scan/{scan_id}/status    Check if a scan is complete + retrieve results.
+GET  /api/scan/{scan_id}/stream    SSE stream of real-time scan progress events.
+PATCH /api/scan/{scan_id}/cancel   Request cancellation of a running scan.
 
 Run
 ---
@@ -22,6 +25,7 @@ Run
 """
 
 import asyncio
+import json
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -30,6 +34,7 @@ from typing import Any
 import uvicorn
 from fastapi import BackgroundTasks, Body, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from src.a2a.agent_registry import AgentRegistry
@@ -54,7 +59,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "PATCH"],
     allow_headers=["*"],
 )
 
@@ -77,7 +82,7 @@ class ScanRequest(BaseModel):
 
 
 # Keyed by scan_id (UUID str).  Values:
-#   status          "running" | "complete" | "error"
+#   status          "running" | "complete" | "error" | "cancelled"
 #   agent_type      "cost" | "monitoring" | "deploy"
 #   started_at      ISO-8601 string
 #   completed_at    ISO-8601 string (set when done)
@@ -85,6 +90,44 @@ class ScanRequest(BaseModel):
 #   evaluations     list[dict]   — governance verdicts from the pipeline
 #   error           str | None   — set on exception
 _scans: dict[str, dict] = {}
+
+# Per-scan asyncio.Queue for SSE streaming.
+# Background task writes events; GET /api/scan/{id}/stream reads them.
+# Events buffer in the queue until consumed — safe if SSE connects late.
+_scan_events: dict[str, asyncio.Queue] = {}
+
+# Scan IDs whose background tasks should stop at the next checkpoint.
+_scan_cancelled: set[str] = set()
+
+# Map from A2A agent name → scan agent_type.
+_AGENT_TYPE_MAP: dict[str, str] = {
+    "cost-optimization-agent": "cost",
+    "monitoring-agent": "monitoring",
+    "deploy-agent": "deploy",
+}
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+
+async def _emit_event(scan_id: str, event_type: str, **kwargs: Any) -> None:
+    """Push one event onto the per-scan SSE queue.
+
+    The queue is read by :func:`stream_scan_events`.  If no SSE client is
+    connected the events buffer in the queue — they will be drained when
+    (if) a client connects later.
+    """
+    queue = _scan_events.get(scan_id)
+    if queue is not None:
+        await queue.put(
+            {
+                "event": event_type,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                **kwargs,
+            }
+        )
 
 
 async def _run_agent_scan(
@@ -109,8 +152,12 @@ async def _run_agent_scan(
     from src.operational_agents.deploy_agent import DeployAgent
     from src.operational_agents.monitoring_agent import MonitoringAgent
 
+    rg_label = resource_group or "whole subscription"
+    logger.info("scan %s (%s): starting — rg=%s", scan_id[:8], agent_type, rg_label)
+    await _emit_event(scan_id, "scan_started", agent=agent_type, resource_group=rg_label)
+
     try:
-        # --- Pick the right ops agent ---
+        # --- Pick the right ops agent and run scan ---
         if agent_type == "cost":
             agent = CostOptimizationAgent()
             proposals = await agent.scan(target_resource_group=resource_group)
@@ -121,16 +168,97 @@ async def _run_agent_scan(
             agent = DeployAgent()
             proposals = await agent.scan(target_resource_group=resource_group)
 
+        logger.info(
+            "scan %s (%s): agent returned %d proposal(s)",
+            scan_id[:8], agent_type, len(proposals),
+        )
+        summaries = [
+            f"{p.action_type.value} on {p.target.resource_id.split('/')[-1]}"
+            for p in proposals
+        ]
+        await _emit_event(
+            scan_id, "agent_returned",
+            count=len(proposals),
+            proposals=summaries,
+            message=(
+                f"Agent returned {len(proposals)} proposal(s): {', '.join(summaries)}"
+                if summaries else "Agent found no actions to propose."
+            ),
+        )
+
         # --- Evaluate every proposal through the full governance pipeline ---
         pipeline = SentinelLayerPipeline()
         tracker = _get_tracker()
         evaluations: list[dict] = []
+        approved = escalated = denied = 0
 
-        for action in proposals:
+        for i, action in enumerate(proposals, start=1):
+            # Check cancellation flag before each evaluation
+            if scan_id in _scan_cancelled:
+                _scan_cancelled.discard(scan_id)
+                logger.info("scan %s (%s): cancelled by request", scan_id[:8], agent_type)
+                _scans[scan_id].update(
+                    {
+                        "status": "cancelled",
+                        "completed_at": datetime.now(timezone.utc).isoformat(),
+                        "proposed_actions": [p.model_dump(mode="json") for p in proposals],
+                        "evaluations": evaluations,
+                    }
+                )
+                await _emit_event(scan_id, "scan_error", message="Scan cancelled by user.")
+                return
+
+            resource_name = action.target.resource_id.split("/")[-1]
+            logger.info(
+                "scan %s (%s): evaluating %d/%d — %s %s",
+                scan_id[:8], agent_type, i, len(proposals),
+                action.action_type.value, resource_name,
+            )
+            await _emit_event(
+                scan_id, "evaluating",
+                index=i, total=len(proposals),
+                resource_id=resource_name,
+                action_type=action.action_type.value,
+                message=f"[{i}/{len(proposals)}] Evaluating {action.action_type.value} on {resource_name}…",
+            )
+
             verdict = await pipeline.evaluate(action)
-            tracker.record(verdict)
-            evaluations.append(verdict.model_dump(mode="json"))
+            decision = verdict.decision.value
+            sri = verdict.sentinel_risk_index.sri_composite
 
+            logger.info(
+                "scan %s (%s): verdict for %s — %s (SRI %.1f)",
+                scan_id[:8], agent_type, resource_name, decision, sri,
+            )
+            await _emit_event(
+                scan_id, "verdict",
+                resource_id=resource_name,
+                decision=decision,
+                sri_composite=sri,
+                message=f"SentinelLayer verdict: {decision.upper()} (SRI {sri:.1f}) — {resource_name}",
+            )
+
+            tracker.record(verdict)
+            verdict_id = verdict.action_id
+            logger.info(
+                "scan %s (%s): verdict %s persisted to audit trail",
+                scan_id[:8], agent_type, str(verdict_id)[:8],
+            )
+            await _emit_event(
+                scan_id, "persisted",
+                verdict_id=str(verdict_id),
+                message=f"Verdict persisted to audit trail (ID: {str(verdict_id)[:8]}…)",
+            )
+
+            evaluations.append(verdict.model_dump(mode="json"))
+            if decision == "approved":
+                approved += 1
+            elif decision == "escalated":
+                escalated += 1
+            else:
+                denied += 1
+
+        summary = f"{approved} approved, {escalated} escalated, {denied} denied"
         _scans[scan_id].update(
             {
                 "status": "complete",
@@ -140,11 +268,18 @@ async def _run_agent_scan(
             }
         )
         logger.info(
-            "scan %s (%s): %d proposals, %d verdicts",
-            scan_id[:8],
-            agent_type,
-            len(proposals),
-            len(evaluations),
+            "scan %s (%s): complete — %d proposals, %d verdicts (%s)",
+            scan_id[:8], agent_type, len(proposals), len(evaluations), summary,
+        )
+        await _emit_event(
+            scan_id, "scan_complete",
+            total_actions=len(proposals),
+            total_verdicts=len(evaluations),
+            approved=approved,
+            escalated=escalated,
+            denied=denied,
+            summary=summary,
+            message=f"Scan complete — {len(evaluations)} verdict(s): {summary}",
         )
 
     except Exception as exc:  # noqa: BLE001
@@ -155,6 +290,10 @@ async def _run_agent_scan(
                 "completed_at": datetime.now(timezone.utc).isoformat(),
                 "error": str(exc),
             }
+        )
+        await _emit_event(
+            scan_id, "scan_error",
+            message=f"Scan failed: {exc}",
         )
 
 
@@ -415,7 +554,54 @@ async def get_agent_history(
 
 
 # ---------------------------------------------------------------------------
-# Endpoint 7 — alert webhook trigger
+# Endpoint 7 — most recent scan for one agent
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/agents/{agent_name}/last-run")
+async def get_agent_last_run(agent_name: str) -> dict:
+    """Return the most recent completed scan for an agent.
+
+    Searches the in-memory scan store first (data survives until server restart),
+    then falls back to querying the audit trail for that agent's evaluations.
+
+    Path parameter:
+    - **agent_name**: e.g. ``cost-optimization-agent``
+    """
+    agent_type = _AGENT_TYPE_MAP.get(agent_name)
+
+    # Search in-memory scans for the most recent complete run
+    if agent_type:
+        matching = [
+            (sid, s) for sid, s in _scans.items()
+            if s.get("agent_type") == agent_type and s.get("status") == "complete"
+        ]
+        if matching:
+            scan_id, scan = max(matching, key=lambda x: x[1].get("started_at", ""))
+            return {
+                "source": "memory",
+                "scan_id": scan_id,
+                **scan,
+                "evaluations_count": len(scan.get("evaluations", [])),
+            }
+
+    # Fall back: read from audit trail
+    records = _get_tracker().get_recent(limit=100)
+    agent_records = [
+        r for r in records
+        if r.get("agent_id") == agent_name
+    ][:10]
+    return {
+        "source": "tracker",
+        "scan_id": None,
+        "status": "complete" if agent_records else "no_data",
+        "evaluations": agent_records,
+        "evaluations_count": len(agent_records),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Endpoint 8 — alert webhook trigger
 # ---------------------------------------------------------------------------
 
 
@@ -483,7 +669,28 @@ async def trigger_alert(alert: dict[str, Any]) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Endpoint 8 — trigger cost optimisation scan
+# Scan trigger helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_scan_record(agent_type: str) -> tuple[str, dict]:
+    """Create a scan_id + initial scan record, plus its SSE event queue."""
+    scan_id = str(uuid.uuid4())
+    record = {
+        "status": "running",
+        "agent_type": agent_type,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "proposed_actions": [],
+        "evaluations": [],
+        "error": None,
+    }
+    _scans[scan_id] = record
+    _scan_events[scan_id] = asyncio.Queue()
+    return scan_id, record
+
+
+# ---------------------------------------------------------------------------
+# Endpoint 9 — trigger cost optimisation scan
 # ---------------------------------------------------------------------------
 
 
@@ -495,29 +702,22 @@ async def trigger_cost_scan(
     """Trigger a background cost-optimisation agent scan.
 
     Returns immediately with a ``scan_id``.  Poll
-    ``GET /api/scan/{scan_id}/status`` to retrieve results.
+    ``GET /api/scan/{scan_id}/status`` to retrieve results, or connect
+    ``GET /api/scan/{scan_id}/stream`` for real-time SSE progress events.
 
     Optional body::
 
         {"resource_group": "sentinel-prod-rg"}
     """
-    scan_id = str(uuid.uuid4())
-    _scans[scan_id] = {
-        "status": "running",
-        "agent_type": "cost",
-        "started_at": datetime.now(timezone.utc).isoformat(),
-        "proposed_actions": [],
-        "evaluations": [],
-        "error": None,
-    }
     rg = body.resource_group or settings.default_resource_group or None
+    scan_id, _ = _make_scan_record("cost")
     background_tasks.add_task(_run_agent_scan, scan_id, "cost", rg)
     logger.info("scan %s (cost) started rg=%s", scan_id[:8], rg)
     return {"status": "started", "scan_id": scan_id, "agent_type": "cost"}
 
 
 # ---------------------------------------------------------------------------
-# Endpoint 9 — trigger SRE monitoring scan
+# Endpoint 10 — trigger SRE monitoring scan
 # ---------------------------------------------------------------------------
 
 
@@ -531,23 +731,15 @@ async def trigger_monitoring_scan(
     Returns immediately with a ``scan_id``.  Poll
     ``GET /api/scan/{scan_id}/status`` to retrieve results.
     """
-    scan_id = str(uuid.uuid4())
-    _scans[scan_id] = {
-        "status": "running",
-        "agent_type": "monitoring",
-        "started_at": datetime.now(timezone.utc).isoformat(),
-        "proposed_actions": [],
-        "evaluations": [],
-        "error": None,
-    }
     rg = body.resource_group or settings.default_resource_group or None
+    scan_id, _ = _make_scan_record("monitoring")
     background_tasks.add_task(_run_agent_scan, scan_id, "monitoring", rg)
     logger.info("scan %s (monitoring) started rg=%s", scan_id[:8], rg)
     return {"status": "started", "scan_id": scan_id, "agent_type": "monitoring"}
 
 
 # ---------------------------------------------------------------------------
-# Endpoint 10 — trigger deploy / security review scan
+# Endpoint 11 — trigger deploy / security review scan
 # ---------------------------------------------------------------------------
 
 
@@ -561,23 +753,15 @@ async def trigger_deploy_scan(
     Returns immediately with a ``scan_id``.  Poll
     ``GET /api/scan/{scan_id}/status`` to retrieve results.
     """
-    scan_id = str(uuid.uuid4())
-    _scans[scan_id] = {
-        "status": "running",
-        "agent_type": "deploy",
-        "started_at": datetime.now(timezone.utc).isoformat(),
-        "proposed_actions": [],
-        "evaluations": [],
-        "error": None,
-    }
     rg = body.resource_group or settings.default_resource_group or None
+    scan_id, _ = _make_scan_record("deploy")
     background_tasks.add_task(_run_agent_scan, scan_id, "deploy", rg)
     logger.info("scan %s (deploy) started rg=%s", scan_id[:8], rg)
     return {"status": "started", "scan_id": scan_id, "agent_type": "deploy"}
 
 
 # ---------------------------------------------------------------------------
-# Endpoint 11 — trigger all three agents simultaneously
+# Endpoint 12 — trigger all three agents simultaneously
 # ---------------------------------------------------------------------------
 
 
@@ -598,15 +782,7 @@ async def trigger_all_scans(
     rg = body.resource_group or settings.default_resource_group or None
     scan_ids: list[str] = []
     for agent_type in ("cost", "monitoring", "deploy"):
-        scan_id = str(uuid.uuid4())
-        _scans[scan_id] = {
-            "status": "running",
-            "agent_type": agent_type,
-            "started_at": datetime.now(timezone.utc).isoformat(),
-            "proposed_actions": [],
-            "evaluations": [],
-            "error": None,
-        }
+        scan_id, _ = _make_scan_record(agent_type)
         background_tasks.add_task(_run_agent_scan, scan_id, agent_type, rg)
         scan_ids.append(scan_id)
         logger.info("scan %s (%s) started via /scan/all rg=%s", scan_id[:8], agent_type, rg)
@@ -615,7 +791,7 @@ async def trigger_all_scans(
 
 
 # ---------------------------------------------------------------------------
-# Endpoint 12 — poll scan status
+# Endpoint 13 — poll scan status
 # ---------------------------------------------------------------------------
 
 
@@ -630,7 +806,7 @@ async def get_scan_status(scan_id: str) -> dict:
 
         {
             "scan_id": "...",
-            "status": "running" | "complete" | "error",
+            "status": "running" | "complete" | "error" | "cancelled",
             "agent_type": "cost" | "monitoring" | "deploy",
             "started_at": "2025-...",
             "completed_at": "2025-..." | null,
@@ -655,6 +831,105 @@ async def get_scan_status(scan_id: str) -> dict:
         "proposals_count": len(record.get("proposed_actions", [])),
         "evaluations_count": len(record.get("evaluations", [])),
     }
+
+
+# ---------------------------------------------------------------------------
+# Endpoint 14 — SSE live log stream for a scan
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/scan/{scan_id}/stream")
+async def stream_scan_events(scan_id: str):
+    """Stream real-time scan progress as Server-Sent Events (SSE).
+
+    Connect with ``EventSource`` from the browser:
+    ``new EventSource('/api/scan/{scan_id}/stream')``
+
+    Events are JSON objects delivered as SSE ``data:`` lines.  Each event
+    has at minimum ``event`` (type string) and ``timestamp`` fields.
+
+    The stream terminates when a ``scan_complete`` or ``scan_error`` event
+    is emitted.  Events emitted before the client connects are buffered in
+    the queue and delivered immediately on connection.
+
+    Path parameter:
+    - **scan_id**: UUID returned by ``POST /api/scan/*``.
+
+    Returns 404 if the scan_id is not recognised.
+    """
+    if scan_id not in _scans:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Scan '{scan_id}' not found.",
+        )
+
+    async def generate():
+        queue = _scan_events.get(scan_id)
+        if queue is None:
+            # Scan exists but queue is gone (e.g. already completed before client connected).
+            # Check if scan is already done and emit a synthetic complete event.
+            record = _scans.get(scan_id, {})
+            synthetic = {
+                "event": "scan_complete" if record.get("status") == "complete" else "scan_error",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "message": "Scan already finished (connected after completion).",
+                "status": record.get("status"),
+            }
+            yield f"data: {json.dumps(synthetic)}\n\n"
+            return
+
+        while True:
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=30.0)
+                yield f"data: {json.dumps(event, default=str)}\n\n"
+                if event.get("event") in ("scan_complete", "scan_error"):
+                    break
+            except asyncio.TimeoutError:
+                # Keep the connection alive with a comment line.
+                yield ": keepalive\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Endpoint 15 — cancel a running scan
+# ---------------------------------------------------------------------------
+
+
+@app.patch("/api/scan/{scan_id}/cancel")
+async def cancel_scan(scan_id: str) -> dict:
+    """Request cancellation of a running background scan.
+
+    The background task checks for the cancellation flag before evaluating
+    each proposal.  The scan stops cleanly at the next checkpoint.
+
+    Path parameter:
+    - **scan_id**: UUID returned by ``POST /api/scan/*``.
+
+    Returns 404 if the scan_id is not recognised.
+    Returns 400 if the scan is already complete or cancelled.
+    """
+    record = _scans.get(scan_id)
+    if record is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Scan '{scan_id}' not found.",
+        )
+    if record.get("status") != "running":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Scan '{scan_id}' is not running (status: {record.get('status')}).",
+        )
+    _scan_cancelled.add(scan_id)
+    return {"status": "cancellation_requested", "scan_id": scan_id}
 
 
 # ---------------------------------------------------------------------------

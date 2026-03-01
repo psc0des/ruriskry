@@ -169,6 +169,13 @@ class MonitoringAgent:
         Returns:
             List of :class:`~src.core.models.ProposedAction` objects.
         """
+        if self._cfg.demo_mode:
+            logger.info(
+                "MonitoringAgent: DEMO_MODE enabled — returning sample proposals "
+                "for pipeline testing (set DEMO_MODE=false for real Azure scanning)."
+            )
+            return self._demo_proposals()
+
         if not self._use_framework:
             logger.info(
                 "MonitoringAgent: no Azure OpenAI endpoint configured — "
@@ -398,6 +405,30 @@ class MonitoringAgent:
         return proposals_holder
 
     # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Demo mode — realistic sample proposals for pipeline testing
+    # ------------------------------------------------------------------
+
+    def _demo_proposals(self) -> list[ProposedAction]:
+        """Return 1 realistic sample proposal for DEMO_MODE=true."""
+        return [
+            ProposedAction(
+                agent_id=_AGENT_ID,
+                action_type=ActionType.SCALE_UP,
+                target=ActionTarget(
+                    resource_id="vm-web-demo-01",
+                    resource_type="Microsoft.Compute/virtualMachines",
+                    current_sku="Standard_B2ms",
+                    proposed_sku="Standard_B4ms",
+                ),
+                reason=(
+                    "[DEMO] CPU sustained at 87% avg for 25 minutes on vm-web-demo-01. "
+                    "Peak CPU 100%. Scale-up to Standard_B4ms recommended to restore headroom."
+                ),
+                urgency=Urgency.HIGH,
+            ),
+        ]
+
     # Deterministic rule-based scan (fallback / mock mode)
     # ------------------------------------------------------------------
 
