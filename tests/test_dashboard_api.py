@@ -1,5 +1,6 @@
 """Tests for the FastAPI dashboard endpoints."""
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -7,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src.api.dashboard_api import app, _get_tracker
+from src.core.scan_run_tracker import ScanRunTracker
 from src.core.decision_tracker import DecisionTracker
 from src.core.models import ActionTarget, ActionType, ProposedAction, Urgency
 from src.core.pipeline import SentinelLayerPipeline
@@ -56,10 +58,15 @@ def pipeline():
 def client(tmp_path, monkeypatch):
     """Return a TestClient wired to a fresh temp-dir tracker."""
     tracker = DecisionTracker(decisions_dir=tmp_path / "decisions")
+    scan_tracker = ScanRunTracker(scans_dir=tmp_path / "scans")
 
     # Replace the singleton in the API module so endpoints use our tracker.
     import src.api.dashboard_api as api_module
     monkeypatch.setattr(api_module, "_tracker", tracker)
+    monkeypatch.setattr(api_module, "_scan_tracker", scan_tracker)
+    api_module._scans.clear()
+    api_module._scan_events.clear()
+    api_module._scan_cancelled.clear()
 
     return TestClient(app)
 
@@ -295,3 +302,144 @@ class TestGetResourceRisk:
     def test_last_evaluated_is_string(self, populated_client):
         data = populated_client.get("/api/resources/web-tier-01/risk").json()
         assert isinstance(data["last_evaluated"], str)
+
+
+# ---------------------------------------------------------------------------
+# Scan durability / streaming endpoints
+# ---------------------------------------------------------------------------
+
+
+class TestScanDurabilityAndStreaming:
+    def test_scan_status_falls_back_to_persisted_store(self, client):
+        import src.api.dashboard_api as api_module
+
+        scan_id = "scan-persisted-001"
+        api_module._scan_tracker.upsert(
+            {
+                "id": scan_id,
+                "scan_id": scan_id,
+                "status": "complete",
+                "agent_type": "cost",
+                "resource_group": "demo-rg",
+                "started_at": "2026-03-02T10:00:00+00:00",
+                "completed_at": "2026-03-02T10:01:00+00:00",
+                "proposed_actions": [{"action_type": "scale_down"}],
+                "evaluations": [{"decision": "approved"}],
+                "totals": {"approved": 1, "escalated": 0, "denied": 0},
+                "event_count": 4,
+                "last_event_at": "2026-03-02T10:01:00+00:00",
+                "error": None,
+            }
+        )
+        # Simulate process restart: in-memory cache gone.
+        api_module._scans.clear()
+
+        res = client.get(f"/api/scan/{scan_id}/status")
+        assert res.status_code == 200
+        data = res.json()
+        assert data["scan_id"] == scan_id
+        assert data["status"] == "complete"
+        assert data["proposals_count"] == 1
+        assert data["evaluations_count"] == 1
+
+    def test_agent_last_run_includes_counts_and_timestamps(self, client):
+        import src.api.dashboard_api as api_module
+
+        old_id = "scan-old"
+        new_id = "scan-new"
+        api_module._scan_tracker.upsert(
+            {
+                "id": old_id,
+                "scan_id": old_id,
+                "status": "complete",
+                "agent_type": "cost",
+                "resource_group": None,
+                "started_at": "2026-03-02T10:00:00+00:00",
+                "completed_at": "2026-03-02T10:02:00+00:00",
+                "proposed_actions": [{"action_type": "scale_down"}],
+                "evaluations": [{"decision": "approved"}],
+                "totals": {"approved": 1, "escalated": 0, "denied": 0},
+                "event_count": 3,
+                "last_event_at": "2026-03-02T10:02:00+00:00",
+                "error": None,
+            }
+        )
+        api_module._scan_tracker.upsert(
+            {
+                "id": new_id,
+                "scan_id": new_id,
+                "status": "complete",
+                "agent_type": "cost",
+                "resource_group": None,
+                "started_at": "2026-03-02T11:00:00+00:00",
+                "completed_at": "2026-03-02T11:03:00+00:00",
+                "proposed_actions": [{"action_type": "scale_down"}, {"action_type": "delete_resource"}],
+                "evaluations": [{"decision": "approved"}, {"decision": "denied"}],
+                "totals": {"approved": 1, "escalated": 0, "denied": 1},
+                "event_count": 7,
+                "last_event_at": "2026-03-02T11:03:00+00:00",
+                "error": None,
+            }
+        )
+
+        res = client.get("/api/agents/cost-optimization-agent/last-run")
+        assert res.status_code == 200
+        data = res.json()
+        assert data["source"] == "scan_tracker"
+        assert data["scan_id"] == new_id
+        assert data["proposals_count"] == 2
+        assert data["evaluations_count"] == 2
+        assert data["started_at"] == "2026-03-02T11:00:00+00:00"
+        assert data["completed_at"] == "2026-03-02T11:03:00+00:00"
+        assert data["totals"]["denied"] == 1
+
+    def test_scan_stream_includes_detailed_event_types(self, client):
+        import src.api.dashboard_api as api_module
+
+        scan_id, _ = api_module._make_scan_record("cost", "demo-rg")
+        asyncio.run(api_module._emit_event(scan_id, "discovery", agent="cost", message="Found 3 resources"))
+        asyncio.run(api_module._emit_event(scan_id, "proposal", agent="cost", message="Proposing scale_down"))
+        asyncio.run(api_module._emit_event(scan_id, "evaluation", agent="cost", message="Evaluating via pipeline"))
+        asyncio.run(api_module._emit_event(scan_id, "verdict", agent="cost", decision="approved", message="Approved"))
+        asyncio.run(api_module._emit_event(scan_id, "scan_complete", agent="cost", message="Complete"))
+
+        res = client.get(f"/api/scan/{scan_id}/stream")
+        assert res.status_code == 200
+        body = res.text
+        assert '"event": "discovery"' in body
+        assert '"event": "proposal"' in body
+        assert '"event": "evaluation"' in body
+        assert '"event": "verdict"' in body
+        assert '"event": "scan_complete"' in body
+
+    def test_scan_cancel_persists_cancelled_status(self, client):
+        import src.api.dashboard_api as api_module
+        import src.operational_agents.cost_agent as cost_module
+
+        class _FakeCostAgent:
+            async def scan(self, target_resource_group=None):
+                return [
+                    _make_action(
+                        resource_id=(
+                            "/subscriptions/demo/resourceGroups/prod"
+                            "/providers/Microsoft.Compute/virtualMachines/vm-cancel"
+                        ),
+                        action_type=ActionType.SCALE_DOWN,
+                        current_sku="Standard_D4s_v3",
+                        proposed_sku="Standard_D2s_v3",
+                    )
+                ]
+
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr(cost_module, "CostOptimizationAgent", _FakeCostAgent)
+        try:
+            scan_id, _ = api_module._make_scan_record("cost", None)
+            api_module._scan_cancelled.add(scan_id)
+            asyncio.run(api_module._run_agent_scan(scan_id, "cost", None))
+        finally:
+            monkeypatch.undo()
+
+        res = client.get(f"/api/scan/{scan_id}/status")
+        assert res.status_code == 200
+        data = res.json()
+        assert data["status"] == "cancelled"

@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     cosmos_key_secret_name: str = "cosmos-primary-key"
     cosmos_database: str = "sentinellayer"
     cosmos_container_decisions: str = "governance-decisions"
+    cosmos_container_scan_runs: str = "governance-scan-runs"
 
     # --- Azure Cosmos DB (Gremlin — Dependency Graph) ---
     cosmos_gremlin_endpoint: str = ""

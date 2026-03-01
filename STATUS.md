@@ -4,7 +4,7 @@
 > picking up this project. It tells you exactly what is done, what is live,
 > and what comes next. Architecture and coding standards are in `CONTEXT.md`.
 
-**Last updated:** 2026-03-01 (Phase 15 validator contract fixes complete)
+**Last updated:** 2026-03-02 (Phase 16 scan durability + live log complete)
 **Active branch:** `main`
 **Demo verdict:** All 3 scenarios pass with real prod resource IDs (DENIED / APPROVED / ESCALATED)
 
@@ -28,9 +28,12 @@
 | Microsoft Agent Framework | ✅ Complete | `agent-framework-core` + GPT-4.1 |
 | Decision tracker | ✅ Complete | Azure Cosmos DB (live) / JSON (mock) |
 | MCP server | ✅ Complete | FastMCP stdio (`server.py`) |
-| Dashboard API | ✅ Complete | FastAPI REST (12 endpoints incl. scan triggers) |
+| Dashboard API | ✅ Complete | FastAPI REST (15 endpoints; scan runs durable; SSE live log) |
 | Agent scan triggers (Phase 13) | ✅ Complete | POST /api/scan/cost\|monitoring\|deploy\|all + GET status |
 | AgentControls dashboard panel (Phase 13) | ✅ Complete | `dashboard/src/components/AgentControls.jsx` |
+| Scan run tracker (Phase 16) | ✅ Complete | `src/core/scan_run_tracker.py` — Cosmos DB / JSON; survives restarts |
+| SSE live log stream (Phase 16) | ✅ Complete | `GET /api/scan/{id}/stream` — real-time event streaming |
+| Agent action menus (Phase 16) | ✅ Complete | ⋮ dropdown on each ConnectedAgents card — 6 actions |
 | Environment-agnosticism fixes | ✅ Complete | Broadened KQL, generic tags, `[]` fallback, mock fixes |
 | Azure infrastructure (Terraform) | ✅ Deployed | Foundry · Search · Cosmos · KV |
 | Mini prod environment (Terraform) | ✅ Complete | `infrastructure/terraform-prod/` |
@@ -121,7 +124,40 @@
 - [x] Commit: `6fac593` — `feat(framework): rebuild all agents on Microsoft Agent Framework SDK`
 - [x] Learning: `learning/16-microsoft-agent-framework.md`
 
-### Phase 15 — Validator Contract Fixes  ← LATEST
+### Phase 16 — Scan Durability, Live Log & Agent Action Menus  ← LATEST
+
+Five dashboard issues fixed; scan results now survive browser refresh and server restart.
+
+**`src/core/scan_run_tracker.py`** (NEW)
+- [x] Durable scan-run store, mirrors `DecisionTracker` pattern: Cosmos DB live / local JSON mock.
+- [x] `upsert(record)`, `get(scan_id)`, `get_latest_completed_by_agent_type(agent_type)`, `record_event(scan_id, ts)`
+- [x] Auto-creates `governance-scan-runs` container in live mode (`PartitionKey("/agent_type")`).
+- [x] Graceful fallback to `data/scans/*.json` if Cosmos init fails.
+
+**`src/config.py`**
+- [x] `cosmos_container_scan_runs: str = "governance-scan-runs"` added.
+
+**`src/api/dashboard_api.py`** — 3 new endpoints + durable persistence
+- [x] `_get_scan_tracker()` / `_persist_scan_record()` / `_get_scan_record()` helpers — memory-first, durable fallback.
+- [x] `_make_scan_record()` now also accepts `resource_group`; initialises `event_count`, `last_event_at`, `totals`.
+- [x] `_run_agent_scan()` emits 8 event types: `scan_started`, `discovery`, `analysis`, `reasoning`, `proposal`, `evaluation`, `verdict`, `persisted`, `scan_complete` / `scan_error`.
+- [x] Cancellation writes persisted `cancelled` status; empty-proposal runs persist as `complete` with 0 verdicts.
+- [x] `GET /api/scan/{scan_id}/stream` — SSE endpoint; `asyncio.Queue` per scan; handles late connections with synthetic terminal event.
+- [x] `PATCH /api/scan/{scan_id}/cancel` — validates via `_get_scan_record()`; returns 400 if not running.
+- [x] `GET /api/agents/{name}/last-run` — durable scan tracker first, audit trail fallback; returns `proposals_count`, `evaluations_count`, `totals`, timestamps.
+- [x] `GET /api/scan/{scan_id}/status` and `stream` now both use `_get_scan_record()` so they survive server restarts.
+
+**Frontend**
+- [x] `dashboard/src/components/LiveLogPanel.jsx` — styles added for `analysis`, `reasoning`, `proposal`, `evaluation` event types; backward compat for old `agent_returned` / `evaluating` names.
+- [x] `dashboard/src/components/ConnectedAgents.jsx` — `hasScanId` bug fixed (uses real `scanId`, not boolean); "View Live Log" falls back to `fetchAgentLastRun` to recover scan_id; `LastRunPanel` shows timestamp + counts + reasoning chain.
+- [x] `dashboard/src/api.js` — `fetchAgentLastRun` JSDoc updated with enriched payload fields.
+
+**Tests**
+- [x] `tests/test_dashboard_api.py` — fixture wires isolated `ScanRunTracker`; clears `_scans`, `_scan_events`, `_scan_cancelled` per test.
+- [x] `TestScanDurabilityAndStreaming` (4 new tests): status fallback from durable store, last-run counts/timestamps, SSE detailed event sequence, cancellation persistence.
+- [x] **Test result: 424 passed, 10 xfailed, 0 failed** ✅ (was 420 before this phase)
+
+### Phase 15 — Validator Contract Fixes
 
 Second-pass audit against the Phase 12/13 prompt contract.  8 findings confirmed and fixed.
 
@@ -681,10 +717,14 @@ through SentinelLayer automatically — fully autonomous cloud governance loop.
 | `src/a2a/sentinel_a2a_server.py` | A2A server — AgentCard + SentinelAgentExecutor + audit trail write; all TaskUpdater calls awaited | TaskUpdater fix |
 | `src/a2a/operational_a2a_clients.py` | A2A client wrappers — `httpx_client=`; SSE `.root.result` unwrap | SSE fix |
 | `src/a2a/agent_registry.py` | Tracks connected A2A agents + governance stats; cosmos_key guard matches CosmosDecisionClient | Registry fix |
-| `src/api/dashboard_api.py` | FastAPI REST — 12 endpoints; scan endpoints use `default_resource_group` config | Phase 15 |
+| `src/core/scan_run_tracker.py` | Durable scan-run store — Cosmos / JSON; upsert, get, get_latest_by_agent_type | Phase 16 |
+| `src/api/dashboard_api.py` | FastAPI REST — 15 endpoints; durable scan store; SSE live log; cancel; last-run | Phase 16 |
 | `demo_live.py` | Two-layer intelligence demo — A2A server auto-starts; no hardcoded RG fallback | Phase 15 |
-| `dashboard/src/components/AgentControls.jsx` | Scan control panel — per-agent buttons, polling, Run All | Phase 13 |
-| `dashboard/src/api.js` | Frontend fetch helpers incl. triggerScan, fetchScanStatus | Phase 13 |
+| `dashboard/src/components/AgentControls.jsx` | Scan control panel — per-agent buttons, polling, Run All, LiveLogPanel trigger | Phase 16 |
+| `dashboard/src/components/LiveLogPanel.jsx` | SSE slide-out panel — 9 event type styles, auto-scroll, EventSource cleanup | Phase 16 |
+| `dashboard/src/components/ConnectedAgents.jsx` | Agent card grid — ⋮ action menu, per-agent scan/log/results/history/details panels | Phase 16 |
+| `dashboard/src/api.js` | Frontend fetch helpers incl. streamScanEvents, cancelScan, fetchAgentLastRun | Phase 16 |
+| `data/scans/` | Local JSON scan-run store (mock mode for ScanRunTracker) | Phase 16 |
 | `infrastructure/terraform/main.tf` | Azure infra — Foundry, Search, Cosmos (2 containers), KV | Phase 10 bugfixes |
 | `infrastructure/terraform-prod/main.tf` | Mini prod env — 2 VMs, NSG, storage, App Service, monitor alerts | Phase 11 |
 | `infrastructure/terraform-prod/outputs.tf` | Exports all resource IDs, names, tags, URLs | Phase 11 |

@@ -18,7 +18,7 @@ Terraform in `infrastructure/terraform/` deploys:
 2. Azure AI Foundry account (`azurerm_ai_services`)
 3. Foundry model deployment (`azurerm_cognitive_deployment`, default `gpt-4.1`)
 4. Azure AI Search
-5. Azure Cosmos DB (SQL API) — two containers: `governance-decisions` (partition `/resource_id`) and `governance-agents` (partition `/name`)
+5. Azure Cosmos DB (SQL API) — three containers: `governance-decisions` (partition `/resource_id`), `governance-agents` (partition `/name`), `governance-scan-runs` (partition `/agent_type`, auto-created by `ScanRunTracker` if missing)
 6. Azure Key Vault
 7. Azure Log Analytics
 
@@ -62,7 +62,7 @@ python scripts/seed_data.py
 
 # 6. Run tests (pytest-asyncio required — installs via requirements.txt)
 pytest tests/ -v
-# Expected: 420 passed, 10 xfailed, 0 failed
+# Expected: 424 passed, 10 xfailed, 0 failed
 
 # 7a. Start SentinelLayer — MCP stdio server (for Claude Desktop)
 python -m src.mcp_server.server
@@ -128,7 +128,9 @@ See `infrastructure/terraform-prod/README.md` for full detail including cost est
 | `AZURE_SEARCH_INDEX` | Live only | `incident-history` | Search index name |
 | `COSMOS_ENDPOINT` | Live only | — | Cosmos DB endpoint |
 | `COSMOS_DATABASE` | Live only | `sentinellayer` | Database name |
-| `COSMOS_CONTAINER_DECISIONS` | Live only | `governance-decisions` | Container name |
+| `COSMOS_CONTAINER_DECISIONS` | Live only | `governance-decisions` | Container for verdict audit trail |
+| `COSMOS_CONTAINER_SCAN_RUNS` | Live only | `governance-scan-runs` | Container for scan-run records (auto-created) |
+| `DEMO_MODE` | No | `false` | `true` = ops agents return hardcoded sample proposals (no Azure OpenAI needed). Full governance pipeline still runs. |
 | `AZURE_KEYVAULT_URL` | Live only | — | Key Vault URL for secret resolution |
 | `A2A_SERVER_URL` | No | `http://localhost:8000` | Base URL advertised in the A2A Agent Card |
 | `DEFAULT_RESOURCE_GROUP` | No | `""` | Default Azure resource group for dashboard scan endpoints. Empty = scan whole subscription. Body `resource_group` overrides this. |

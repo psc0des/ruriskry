@@ -119,7 +119,7 @@ flowchart LR
 | MCP Interception | FastMCP stdio server | Intercept actions from Claude Desktop / MCP hosts |
 | Infrastructure Graph | Azure Resource Graph | Real-time resource dependency data |
 | Incident Search | Azure AI Search (BM25) | Historical incident similarity |
-| Audit DB | Azure Cosmos DB (SQL API) | Governance decisions + agent registry |
+| Audit DB | Azure Cosmos DB (SQL API) | Governance decisions + agent registry + scan-run records |
 | Secret Management | Azure Key Vault + `DefaultAzureCredential` | Runtime secret resolution |
 | Dashboard | React + Vite + FastAPI | Governance visualization + REST API |
 
@@ -193,7 +193,7 @@ npm run dev
 ### Run Tests
 
 ```bash
-# Expected: 420 passed, 10 xfailed, 0 failed
+# Expected: 424 passed, 10 xfailed, 0 failed
 pytest tests/ -v
 ```
 
@@ -215,7 +215,8 @@ sentinellayer/
 │   │   └── financial_agent.py       # SRI:Cost
 │   ├── core/                   # Decision engine & tracking
 │   │   ├── governance_engine.py     # SRI™ scoring + verdicts
-│   │   ├── decision_tracker.py      # Cosmos DB audit trail
+│   │   ├── decision_tracker.py      # Cosmos DB audit trail (verdicts)
+│   │   ├── scan_run_tracker.py      # Cosmos DB / JSON scan-run store (Phase 16)
 │   │   ├── interception.py          # Action interception façade
 │   │   ├── pipeline.py              # asyncio.gather() orchestration
 │   │   └── models.py               # Pydantic data models (read first)
@@ -233,12 +234,13 @@ sentinellayer/
 │   │   ├── openai_client.py
 │   │   └── secrets.py               # Key Vault secret resolver
 │   └── api/                    # Dashboard REST endpoints
-│       └── dashboard_api.py         # 12 endpoints incl. scan triggers + alert webhook
+│       └── dashboard_api.py         # 15 endpoints: scan triggers, SSE stream, cancel, last-run, alert webhook
 ├── dashboard/                  # React + Vite governance dashboard
 ├── functions/                  # Azure Functions triggers
 ├── data/                       # Seed data for demo
 │   ├── agents/                      # A2A agent registry (mock)
 │   ├── decisions/                   # Audit trail (mock)
+│   ├── scans/                       # Scan-run records (mock — ScanRunTracker)
 │   ├── seed_incidents.json
 │   ├── seed_resources.json
 │   └── policies.json

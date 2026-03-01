@@ -111,7 +111,18 @@ export async function cancelScan(scanId) {
 /**
  * Fetch the most recent scan results for an agent.
  * @param {string} agentName - e.g. "cost-optimization-agent"
- * @returns {{ source: string, scan_id: string|null, evaluations: object[], ... }}
+ * @returns {{
+ *   source: string,
+ *   scan_id: string|null,
+ *   status: string,
+ *   started_at: string|null,
+ *   completed_at: string|null,
+ *   proposed_actions: object[],
+ *   proposals_count: number,
+ *   evaluations: object[],
+ *   evaluations_count: number,
+ *   totals: { approved: number, escalated: number, denied: number }
+ * }}
  */
 export async function fetchAgentLastRun(agentName) {
   const res = await fetch(`${BASE}/agents/${encodeURIComponent(agentName)}/last-run`)

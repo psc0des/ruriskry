@@ -34,10 +34,16 @@ function eventStyle(event) {
   switch (event.event) {
     case 'scan_started':
       return { icon: '🚀', colour: 'text-slate-400', label: 'Started' }
-    case 'agent_returned':
+    case 'discovery':
       return { icon: '🔍', colour: 'text-blue-400', label: 'Discovery' }
-    case 'evaluating':
-      return { icon: '🤔', colour: 'text-purple-400', label: 'Evaluating' }
+    case 'analysis':
+      return { icon: '🧠', colour: 'text-purple-400', label: 'Analysis' }
+    case 'reasoning':
+      return { icon: '🤔', colour: 'text-purple-300', label: 'Reasoning' }
+    case 'proposal':
+      return { icon: '📋', colour: 'text-orange-400', label: 'Proposal' }
+    case 'evaluation':
+      return { icon: '⚖️', colour: 'text-yellow-400', label: 'Evaluation' }
     case 'verdict': {
       const d = event.decision?.toLowerCase()
       if (d === 'approved')  return { icon: '✅', colour: 'text-green-400',  label: 'Approved' }
@@ -45,6 +51,11 @@ function eventStyle(event) {
       if (d === 'denied')    return { icon: '🚫', colour: 'text-red-400',    label: 'Denied' }
       return { icon: '⚖️', colour: 'text-yellow-400', label: 'Verdict' }
     }
+    // Backward compatibility for older event names during transition.
+    case 'agent_returned':
+      return { icon: '🔍', colour: 'text-blue-400', label: 'Discovery' }
+    case 'evaluating':
+      return { icon: '⚖️', colour: 'text-yellow-400', label: 'Evaluation' }
     case 'persisted':
       return { icon: '💾', colour: 'text-slate-500', label: 'Persisted' }
     case 'scan_complete':

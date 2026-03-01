@@ -147,7 +147,9 @@ org-specific assumptions. See the Two-Layer Intelligence Model section below.
 |---|---|---|
 | Azure OpenAI / GPT-4.1 | All 7 agents (Agent Framework) | `AZURE_OPENAI_ENDPOINT` |
 | Azure AI Search | `HistoricalPatternAgent` | `AZURE_SEARCH_ENDPOINT` |
-| Azure Cosmos DB | `DecisionTracker` | `COSMOS_ENDPOINT` |
+| Azure Cosmos DB — `governance-decisions` | `DecisionTracker` | `COSMOS_ENDPOINT` |
+| Azure Cosmos DB — `governance-agents` | `AgentRegistry` | `COSMOS_ENDPOINT` |
+| Azure Cosmos DB — `governance-scan-runs` | `ScanRunTracker` | `COSMOS_CONTAINER_SCAN_RUNS` |
 | Azure Key Vault | All secrets at runtime | `AZURE_KEYVAULT_URL` |
 
 In mock mode (`USE_LOCAL_MOCKS=true`), all four Azure services are replaced by local JSON files
@@ -286,7 +288,8 @@ src/
 │   ├── models.py              # All Pydantic models — shared contract
 │   ├── pipeline.py            # asyncio.gather() orchestration
 │   ├── governance_engine.py   # SRI composite + verdict logic
-│   ├── decision_tracker.py    # Audit trail → Cosmos DB / JSON
+│   ├── decision_tracker.py    # Audit trail → Cosmos DB / JSON (verdicts)
+│   ├── scan_run_tracker.py    # Scan-run lifecycle → Cosmos DB / JSON (scan records)
 │   └── interception.py        # ActionInterceptor façade (async)
 ├── governance_agents/         # 4 governors — all async def evaluate()
 ├── operational_agents/        # 3 governed agents — all async def scan()
@@ -295,15 +298,20 @@ src/
 │   ├── operational_a2a_clients.py # A2A client wrappers for 3 operational agents
 │   └── agent_registry.py     # Tracks connected agents + stats
 ├── mcp_server/server.py       # FastMCP stdio — sentinel_evaluate_action (async)
-├── api/dashboard_api.py       # FastAPI REST — 12 async endpoints (evaluations, agents, scan triggers)
+├── api/dashboard_api.py       # FastAPI REST — 15 async endpoints (evaluations, agents,
+│                              #   scan triggers, SSE stream, cancel, last-run)
 ├── infrastructure/            # Azure clients with mock fallback
 │   └── azure_tools.py         # 5 sync tools: Resource Graph, metrics, NSG, activity log; mock fallbacks
-└── config.py                  # SRI thresholds + env vars
+└── config.py                  # SRI thresholds + env vars + DEMO_MODE
 dashboard/
 └── src/components/
-    └── AgentControls.jsx      # Scan trigger panel: per-agent buttons, RG filter, 2 s polling
+    ├── AgentControls.jsx      # Scan trigger panel: per-agent buttons, RG filter, 2 s polling, LiveLogPanel
+    ├── LiveLogPanel.jsx        # SSE slide-out log panel: 9 event type styles, auto-scroll
+    └── ConnectedAgents.jsx    # Agent card grid: ⋮ action menu, scan/log/results/history/details panels
 data/
 ├── agents/                    # A2A agent registry (mock mode)
+├── decisions/                 # Governance verdict audit trail (mock mode)
+├── scans/                     # Scan-run records (mock mode — ScanRunTracker)
 ├── policies.json              # 6 governance policies
 ├── seed_incidents.json        # 7 historical incidents
 └── seed_resources.json        # Azure resource topology (see note below)

@@ -138,12 +138,15 @@ All endpoints are `async def` (FastAPI manages the event loop).
 | GET | `/api/resources/{resource_id}/risk` | Risk profile for one resource |
 | GET | `/api/agents` | List operational agents connected via A2A |
 | GET | `/api/agents/{agent_name}/history` | Recent decisions for one A2A agent |
+| GET | `/api/agents/{agent_name}/last-run` | Most recent completed scan for one agent |
 | POST | `/api/alert-trigger` | Webhook — trigger monitoring agent from Azure Monitor alert |
 | POST | `/api/scan/cost` | Start a background cost agent scan |
 | POST | `/api/scan/monitoring` | Start a background monitoring agent scan |
 | POST | `/api/scan/deploy` | Start a background deploy agent scan |
 | POST | `/api/scan/all` | Start background scans for all three agents |
 | GET | `/api/scan/{scan_id}/status` | Poll the status and results of a background scan |
+| GET | `/api/scan/{scan_id}/stream` | SSE stream of real-time scan progress events |
+| PATCH | `/api/scan/{scan_id}/cancel` | Request cancellation of a running scan |
 
 ### Query parameters for `GET /api/evaluations`
 
@@ -310,7 +313,85 @@ Poll a background scan started by one of the scan trigger endpoints.
 }
 ```
 
-Returns **404** if the `scan_id` is not recognised (unknown or from a previous server restart — scan state is in-memory).
+Returns **404** only if the `scan_id` is completely unknown. Scan records are persisted by
+`ScanRunTracker` (Cosmos DB / local JSON), so status survives server restarts.
+
+---
+
+### `GET /api/scan/{scan_id}/stream` (Phase 16)
+
+Stream real-time scan progress as Server-Sent Events (SSE).
+
+Connect with the browser's native `EventSource` API:
+```javascript
+const es = new EventSource(`http://localhost:8000/api/scan/${scanId}/stream`)
+es.onmessage = (e) => console.log(JSON.parse(e.data))
+```
+
+Each event is a JSON object with at minimum `event` (type string) and `timestamp`. The stream
+terminates when a `scan_complete` or `scan_error` event arrives. Events emitted before the
+client connects are buffered in the queue and delivered immediately on connection.
+
+**Event types:**
+
+| Event | Icon | When emitted |
+|---|---|---|
+| `scan_started` | 🚀 | Scan begins |
+| `discovery` | 🔍 | Agent returned proposals list |
+| `analysis` | 🧠 | Starting evaluation for one proposal |
+| `reasoning` | 🤔 | Agent's reason for the proposal |
+| `proposal` | 📋 | Proposing the action |
+| `evaluation` | ⚖️ | Pipeline evaluating the action |
+| `verdict` | ✅/⚠️/🚫 | Verdict returned (with `decision` and `sri_composite`) |
+| `persisted` | 💾 | Verdict written to audit trail |
+| `scan_complete` | ✔️ | All proposals evaluated |
+| `scan_error` | ❌ | Unhandled exception or user cancellation |
+
+If the scan is already complete when the client connects, a synthetic terminal event is returned
+immediately. Returns **404** if `scan_id` is unknown.
+
+---
+
+### `PATCH /api/scan/{scan_id}/cancel` (Phase 16)
+
+Request cancellation of a running scan. The background task checks the cancellation flag before
+each proposal evaluation and stops cleanly at the next checkpoint. The persisted status is
+set to `"cancelled"`.
+
+Returns **404** if the scan_id is not found.
+Returns **400** if the scan is not currently running.
+
+**Response:**
+```json
+{ "status": "cancellation_requested", "scan_id": "b3e7c1a2-..." }
+```
+
+---
+
+### `GET /api/agents/{agent_name}/last-run` (Phase 16)
+
+Return the most recent completed scan results for one agent. Prefers the durable scan store
+(`ScanRunTracker`) so results survive server restarts; falls back to the audit trail.
+
+**Response:**
+```json
+{
+  "source": "scan_tracker",
+  "scan_id": "b3e7c1a2-...",
+  "status": "complete",
+  "agent_type": "cost",
+  "started_at": "2026-03-02T10:00:00+00:00",
+  "completed_at": "2026-03-02T10:00:15+00:00",
+  "proposals_count": 2,
+  "evaluations_count": 2,
+  "proposed_actions": [...],
+  "evaluations": [...],
+  "totals": { "approved": 1, "escalated": 0, "denied": 1 }
+}
+```
+
+`source` is `"scan_tracker"` if found in durable store, `"tracker"` if from audit trail only.
+Unknown agent names return an empty `no_data` response (not 404).
 
 ---
 

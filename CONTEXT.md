@@ -18,7 +18,8 @@ src/
 │   └── financial_agent.py       # SRI:Cost (0-100)
 ├── core/
 │   ├── governance_engine.py     # Calculates SRI™ Composite + verdict
-│   ├── decision_tracker.py      # Audit trail storage
+│   ├── decision_tracker.py      # Audit trail storage (verdicts → Cosmos / JSON)
+│   ├── scan_run_tracker.py      # Scan-run lifecycle store (scan records → Cosmos / JSON) ← NEW Phase 16
 │   ├── interception.py          # MCP action interception
 │   └── models.py                # ALL Pydantic data models (READ THIS FIRST)
 ├── mcp_server/
@@ -39,8 +40,9 @@ src/
 │   ├── openai_client.py         # Azure OpenAI / GPT-4.1 (mock: canned string)
 │   └── secrets.py               # Key Vault secret resolver (env → KV → empty)
 ├── api/
-│   └── dashboard_api.py         # FastAPI REST endpoints — 12 total (Phase 10 agents,
-│                                #   Phase 12 alert-trigger, Phase 13 scan triggers)
+│   └── dashboard_api.py         # FastAPI REST endpoints — 15 total (Phase 10 agents,
+│                                #   Phase 12 alert-trigger, Phase 13 scan triggers,
+│                                #   Phase 16: SSE stream, cancel, last-run + durable store)
 └── config.py                    # Environment config with SRI thresholds
 ```
 
@@ -180,6 +182,17 @@ and activity logs. See STATUS.md for the complete Phase 12 breakdown.
 
 ## Current Development Phase
 > For detailed progress tracking see **STATUS.md** at the project root.
+
+**Phase 16 — Scan Durability, Live Log & Agent Action Menus (complete)**
+
+- `src/core/scan_run_tracker.py` (NEW) — durable scan-run store, mirrors `DecisionTracker` pattern.
+  Cosmos DB live mode / `data/scans/*.json` mock mode. Survives server restarts.
+- `src/api/dashboard_api.py` — 3 new endpoints: `GET /api/scan/{id}/stream` (SSE),
+  `PATCH /api/scan/{id}/cancel`, `GET /api/agents/{name}/last-run`. All scan reads now use
+  `_get_scan_record()` (memory-first, durable fallback).
+- Frontend: `LiveLogPanel.jsx` event styles, `ConnectedAgents.jsx` ⋮ action menus,
+  `hasScanId` bug fix, enriched `LastRunPanel`.
+- Test result: **424 passed, 10 xfailed, 0 failed** ✅
 
 **Phase 14 — Verification & Fixes (complete)**
 

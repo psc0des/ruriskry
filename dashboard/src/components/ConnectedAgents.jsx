@@ -131,6 +131,7 @@ function Modal({ title, children, onClose }) {
 
 function LastRunPanel({ agentName, data, onClose }) {
   const evaluations = data?.evaluations ?? []
+  const proposedCount = data?.proposals_count ?? data?.proposed_actions?.length ?? 0
 
   return (
     <Modal title={`Last Run — ${agentName}`} onClose={onClose}>
@@ -140,10 +141,15 @@ function LastRunPanel({ agentName, data, onClose }) {
         </p>
       ) : (
         <div className="space-y-2">
-          <p className="text-xs text-slate-500 mb-3">
-            {evaluations.length} verdict(s)
+          <p className="text-xs text-slate-500 mb-3 space-y-1">
+            <span className="block">
+              Last run: {formatTime(data?.completed_at ?? data?.started_at)}
+            </span>
+            <span className="block">
+              {proposedCount} action(s) proposed · {evaluations.length} verdict(s)
+            </span>
             {data?.scan_id && (
-              <span className="ml-2 font-mono text-slate-600">
+              <span className="ml-0 block font-mono text-slate-600">
                 scan {data.scan_id.slice(0, 8)}…
               </span>
             )}
@@ -160,9 +166,9 @@ function LastRunPanel({ agentName, data, onClose }) {
                 <p className="text-xs text-slate-500 mt-0.5">
                   {ev.action_type?.replace(/_/g, ' ')}
                 </p>
-                {ev.reason && (
-                  <p className="text-xs text-slate-600 mt-1 line-clamp-2">{ev.reason}</p>
-                )}
+                <p className="text-xs text-slate-600 mt-1 line-clamp-2">
+                  {ev.reason || ev.verdict_reason || ev.action_reason || 'No reasoning provided.'}
+                </p>
               </div>
               <div className="shrink-0 text-right">
                 <span
@@ -251,7 +257,7 @@ function DetailsPanel({ agent, onClose }) {
 
 // ── AgentCard ──────────────────────────────────────────────────────────────
 
-function AgentCard({ agent, menuOpen, onMenuToggle, onMenuAction, scanning }) {
+function AgentCard({ agent, menuOpen, onMenuToggle, onMenuAction, scanning, hasScanId }) {
   const online    = isOnline(agent.last_seen)
   const total     = agent.total_actions_proposed ?? 0
   const approved  = agent.approval_count ?? 0
@@ -291,7 +297,7 @@ function AgentCard({ agent, menuOpen, onMenuToggle, onMenuAction, scanning }) {
           {menuOpen && (
             <DropdownMenu
               scanning={scanning}
-              hasScanId={scanning}
+              hasScanId={hasScanId}
               onAction={onMenuAction}
             />
           )}
@@ -430,7 +436,18 @@ export default function ConnectedAgents({ agents }) {
 
       case 'log': {
         const sid = scanState[agentName]?.scanId
-        if (sid) setPanels(prev => ({ ...prev, [agentName]: 'log' }))
+        if (sid) {
+          setPanels(prev => ({ ...prev, [agentName]: 'log' }))
+          break
+        }
+        try {
+          const data = await fetchAgentLastRun(agentName)
+          if (data?.scan_id) {
+            setData(prev => ({ ...prev, [agentName]: data }))
+            setScan(prev => ({ ...prev, [agentName]: { scanning: false, scanId: data.scan_id } }))
+            setPanels(prev => ({ ...prev, [agentName]: 'log' }))
+          }
+        } catch { /* no last run */ }
         break
       }
 
@@ -476,6 +493,7 @@ export default function ConnectedAgents({ agents }) {
               onMenuToggle={() => toggleMenu(agent.name)}
               onMenuAction={(action) => handleMenuAction(agent.name, action)}
               scanning={!!scanState[agent.name]?.scanning}
+              hasScanId={!!scanState[agent.name]?.scanId}
             />
           ))}
         </div>
