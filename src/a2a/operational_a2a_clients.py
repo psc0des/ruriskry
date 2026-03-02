@@ -1,11 +1,11 @@
 """Operational agent A2A client wrappers.
 
 Each class wraps one of the three operational agents and uses the A2A protocol
-to send governance requests to SentinelLayer.
+to send governance requests to RuriSkry.
 
 Pattern (same for all three clients)
 --------------------------------------
-1. ``A2ACardResolver.get_agent_card()`` — download SentinelLayer's Agent Card
+1. ``A2ACardResolver.get_agent_card()`` — download RuriSkry's Agent Card
    from ``/.well-known/agent-card.json``.  This tells the client where to send
    requests and what the server can do.
 2. ``agent.scan()`` — run the operational agent to generate proposals.
@@ -26,7 +26,7 @@ Why httpx.AsyncClient?
 ----------------------
 A2AClient uses ``httpx`` as its transport layer.  We pass an
 ``httpx.AsyncClient`` so all network calls happen inside the same async event
-loop — no blocking threads, consistent with the rest of SentinelLayer's
+loop — no blocking threads, consistent with the rest of RuriSkry's
 async-first design.
 """
 
@@ -96,12 +96,12 @@ def _build_streaming_request(action: ProposedAction) -> SendStreamingMessageRequ
     )
 
 
-async def send_action_to_sentinel(
+async def send_action_to_skry(
     action: ProposedAction,
     server_url: str,
     agent_name: str,
 ) -> GovernanceVerdict | None:
-    """Send one ProposedAction to SentinelLayer via A2A streaming.
+    """Send one ProposedAction to RuriSkry via A2A streaming.
 
     Steps:
     1. Open an httpx.AsyncClient (context manager — auto-closes on exit).
@@ -112,14 +112,14 @@ async def send_action_to_sentinel(
 
     Args:
         action: Proposed infrastructure action from the operational agent.
-        server_url: Base URL of the SentinelLayer A2A server.
+        server_url: Base URL of the RuriSkry A2A server.
         agent_name: Human-readable name for logging (e.g. "cost-optimization-agent").
 
     Returns:
         Parsed ``GovernanceVerdict``, or ``None`` if the call failed.
     """
     async with httpx.AsyncClient(base_url=server_url, timeout=120.0) as http_client:
-        # Step 1 — Discover SentinelLayer via its Agent Card
+        # Step 1 — Discover RuriSkry via its Agent Card
         resolver = A2ACardResolver(httpx_client=http_client, base_url=server_url)
         try:
             agent_card = await resolver.get_agent_card()
@@ -185,7 +185,7 @@ async def send_action_to_sentinel(
                 "[%s] A2A: verdict=%s sri=%.1f",
                 agent_name,
                 verdict.decision.value.upper(),
-                verdict.sentinel_risk_index.sri_composite,
+                verdict.skry_risk_index.sri_composite,
             )
             return verdict
         except Exception as exc:
@@ -202,7 +202,7 @@ async def send_action_to_sentinel(
 class CostAgentA2AClient:
     """A2A client wrapper for the CostOptimizationAgent.
 
-    Scans for cost proposals, then evaluates each via SentinelLayer using
+    Scans for cost proposals, then evaluates each via RuriSkry using
     the A2A protocol.  Updates the agent registry after each evaluation.
 
     Usage::
@@ -239,7 +239,7 @@ class CostAgentA2AClient:
 
         results: list[dict[str, Any]] = []
         for action in proposals:
-            verdict = await send_action_to_sentinel(
+            verdict = await send_action_to_skry(
                 action, self._server_url, self.AGENT_NAME
             )
             if verdict:
@@ -257,7 +257,7 @@ class CostAgentA2AClient:
 class MonitoringAgentA2AClient:
     """A2A client wrapper for the MonitoringAgent.
 
-    Scans for anomaly-based proposals, then evaluates each via SentinelLayer.
+    Scans for anomaly-based proposals, then evaluates each via RuriSkry.
 
     Usage::
 
@@ -291,7 +291,7 @@ class MonitoringAgentA2AClient:
 
         results: list[dict[str, Any]] = []
         for action in proposals:
-            verdict = await send_action_to_sentinel(
+            verdict = await send_action_to_skry(
                 action, self._server_url, self.AGENT_NAME
             )
             if verdict:
@@ -310,7 +310,7 @@ class DeployAgentA2AClient:
     """A2A client wrapper for the DeployAgent.
 
     Scans for infrastructure deployment proposals (NSG rules, lifecycle tags,
-    sparse topology), then evaluates each via SentinelLayer.
+    sparse topology), then evaluates each via RuriSkry.
 
     Usage::
 
@@ -344,7 +344,7 @@ class DeployAgentA2AClient:
 
         results: list[dict[str, Any]] = []
         for action in proposals:
-            verdict = await send_action_to_sentinel(
+            verdict = await send_action_to_skry(
                 action, self._server_url, self.AGENT_NAME
             )
             if verdict:

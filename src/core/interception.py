@@ -1,10 +1,10 @@
-"""Action Interception Engine — single entry point for all SentinelLayer governance.
+"""Action Interception Engine — single entry point for all RuriSkry governance.
 
 The ActionInterceptor is the façade that operational agents (and the MCP server)
 call to have a ProposedAction evaluated.  It wires together two components that
 already exist and does *not* duplicate their logic:
 
-    SentinelLayerPipeline  — runs the four governance agents in parallel and
+    RuriSkryPipeline  — runs the four governance agents in parallel and
                               produces a GovernanceVerdict.
     DecisionTracker        — writes the verdict to the local JSON audit trail.
 
@@ -31,7 +31,7 @@ Data flow
     Operational agent (or MCP tool)
         │
         ▼
-    ActionInterceptor.intercept() ──► SentinelLayerPipeline.evaluate()
+    ActionInterceptor.intercept() ──► RuriSkryPipeline.evaluate()
                                               │
                                4 governance agents run in parallel
                                               │
@@ -53,7 +53,7 @@ from src.core.models import (
     ProposedAction,
     Urgency,
 )
-from src.core.pipeline import SentinelLayerPipeline
+from src.core.pipeline import RuriSkryPipeline
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +62,7 @@ class ActionInterceptor:
     """Façade that routes ProposedAction objects through the governance pipeline.
 
     This class is the *entry point* for all governance decisions in
-    SentinelLayer.  Every action that an operational agent wants to execute
+    RuriSkry.  Every action that an operational agent wants to execute
     must pass through here before it is allowed to proceed.
 
     Think of it like an airport security checkpoint:
@@ -90,7 +90,7 @@ class ActionInterceptor:
         # result is a plain dict — JSON-safe, ready for the MCP response
 
     Args:
-        pipeline: Optional pre-built SentinelLayerPipeline.  When omitted, a
+        pipeline: Optional pre-built RuriSkryPipeline.  When omitted, a
             new pipeline is created (agents load their data files).  Pass a
             mock here in unit tests to avoid loading real data.
         tracker: Optional pre-built DecisionTracker.  When omitted, a new
@@ -100,10 +100,10 @@ class ActionInterceptor:
 
     def __init__(
         self,
-        pipeline: SentinelLayerPipeline | None = None,
+        pipeline: RuriSkryPipeline | None = None,
         tracker: DecisionTracker | None = None,
     ) -> None:
-        self._pipeline: SentinelLayerPipeline = pipeline or SentinelLayerPipeline()
+        self._pipeline: RuriSkryPipeline = pipeline or RuriSkryPipeline()
         self._tracker: DecisionTracker = tracker or DecisionTracker()
         logger.info("ActionInterceptor initialised and ready.")
 
@@ -119,7 +119,7 @@ class ActionInterceptor:
 
         Steps (in order):
         1. Log the incoming action so we have a trace in the server logs.
-        2. Ask SentinelLayerPipeline to evaluate the action (runs all four
+        2. Ask RuriSkryPipeline to evaluate the action (runs all four
            governance agents in parallel and returns a GovernanceVerdict).
         3. Ask DecisionTracker to record the verdict (writes a JSON file
            to data/decisions/ for the audit trail and the dashboard).
@@ -152,7 +152,7 @@ class ActionInterceptor:
             "Interception complete: action_id=%s decision=%s SRI_composite=%.1f",
             verdict.action_id,
             verdict.decision.value,
-            verdict.sentinel_risk_index.sri_composite,
+            verdict.skry_risk_index.sri_composite,
         )
 
         return verdict
@@ -264,7 +264,7 @@ class ActionInterceptor:
         Returns:
             A plain dict with string / float / dict values only.
         """
-        sri = verdict.sentinel_risk_index
+        sri = verdict.skry_risk_index
         return {
             "action_id": verdict.action_id,
             "timestamp": verdict.timestamp.isoformat(),

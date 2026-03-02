@@ -1,1 +1,1 @@
-"""SentinelLayer — core module."""
+"""RuriSkry — core module."""

@@ -1,7 +1,7 @@
 """SRE Monitoring & RCA Agent — detects anomalies and proposes remediation.
 
 This is an operational agent (the governed subject). It proposes
-infrastructure actions that SentinelLayer evaluates before execution.
+infrastructure actions that RuriSkry evaluates before execution.
 
 Phase 12 — Intelligent, evidence-driven agent
 ----------------------------------------------
@@ -124,7 +124,7 @@ class MonitoringAgent:
         proposals = await agent.scan(alert_payload=alert)
 
         # Proactive scan of a resource group:
-        proposals = await agent.scan(target_resource_group="sentinel-prod-rg")
+        proposals = await agent.scan(target_resource_group="ruriskry-prod-rg")
     """
 
     def __init__(

@@ -74,7 +74,7 @@ _DAY_MAP: dict[str, int] = {
 
 # System instructions for the framework agent (live mode only).
 _AGENT_INSTRUCTIONS = """\
-You are SentinelLayer's Policy Compliance Evaluator — a specialist in cloud
+You are RuriSkry's Policy Compliance Evaluator — a specialist in cloud
 governance, regulatory compliance, and change management policy enforcement.
 
 Your job:

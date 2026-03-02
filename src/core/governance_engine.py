@@ -50,7 +50,7 @@ class GovernanceDecisionEngine:
             action, blast_radius_result, policy_result,
             historical_result, financial_result,
         )
-        print(verdict.decision, verdict.sentinel_risk_index.sri_composite)
+        print(verdict.decision, verdict.skry_risk_index.sri_composite)
 
     Pass a custom ``settings`` object to override thresholds and weights —
     this is useful in tests that need non-default configuration.
@@ -91,7 +91,7 @@ class GovernanceDecisionEngine:
         Returns:
             :class:`~src.core.models.GovernanceVerdict` containing:
             * ``decision`` — APPROVED / ESCALATED / DENIED
-            * ``sentinel_risk_index`` — all four dimension scores + composite
+            * ``skry_risk_index`` — all four dimension scores + composite
             * ``reason`` — human-readable explanation of the decision
             * ``agent_results`` — raw outputs from all four agents
         """
@@ -123,7 +123,7 @@ class GovernanceDecisionEngine:
             action_id=str(uuid.uuid4()),
             timestamp=datetime.now(timezone.utc),
             proposed_action=action,
-            sentinel_risk_index=sri_breakdown,
+            skry_risk_index=sri_breakdown,
             decision=decision,
             reason=reason,
             agent_results={

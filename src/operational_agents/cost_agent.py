@@ -1,7 +1,7 @@
 """Cost Optimization Agent — identifies wasteful resources and proposes savings.
 
 This is an operational agent (the governed subject). It proposes
-infrastructure actions that SentinelLayer evaluates before execution.
+infrastructure actions that RuriSkry evaluates before execution.
 
 Phase 12 — Intelligent, environment-agnostic agent
 ----------------------------------------------------
@@ -399,7 +399,7 @@ class CostOptimizationAgent:
     def _demo_proposals(self) -> list[ProposedAction]:
         """Return 2 realistic sample proposals for DEMO_MODE=true.
 
-        These proposals flow through the full SentinelLayer governance pipeline
+        These proposals flow through the full RuriSkry governance pipeline
         (SRI scoring, governance engine, audit trail) — they just skip the
         real Azure investigation step.  Useful for verifying the pipeline
         end-to-end without Azure OpenAI credentials.

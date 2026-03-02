@@ -1,5 +1,5 @@
 # =============================================================================
-# SentinelLayer — Mini Production Environment — Outputs
+# RuriSkry — Mini Production Environment — Outputs
 # =============================================================================
 # After `terraform apply`, these values are printed to the console.
 # Use them to update data/seed_resources.json with real Azure resource IDs.
@@ -129,7 +129,7 @@ output "storage_account_id" {
 }
 
 output "storage_account_name" {
-  description = "Name of the shared storage account (sentinelprod + suffix)"
+  description = "Name of the shared storage account (ruriskryprod + suffix)"
   value       = azurerm_storage_account.prod.name
 }
 
@@ -182,7 +182,7 @@ output "seed_resources_ids" {
     nsg-east-prod:
       ${azurerm_network_security_group.prod.id}
 
-    storage account (sentinelprod${var.suffix}):
+    storage account (ruriskryprod${var.suffix}):
       ${azurerm_storage_account.prod.id}
 
   EOT

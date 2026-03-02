@@ -10,7 +10,7 @@ Mock mode (USE_LOCAL_MOCKS=true, or endpoint not set):
 
 Azure mode (USE_LOCAL_MOCKS=false + COSMOS_ENDPOINT set):
     Uses ``azure-cosmos`` SDK to read/write to the ``governance-decisions``
-    container in the ``sentinellayer`` Cosmos DB database.
+    container in the ``ruriskry`` Cosmos DB database.
 
 Usage::
 

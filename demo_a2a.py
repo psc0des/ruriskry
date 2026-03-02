@@ -69,7 +69,7 @@ def _run_server_in_thread() -> None:
     event loop in this background thread just for the server.
     This is the standard pattern for embedding uvicorn programmatically.
     """
-    from src.a2a.sentinel_a2a_server import create_app
+    from src.a2a.ruriskry_a2a_server import create_app
 
     server_app = create_app()
     config = uvicorn.Config(

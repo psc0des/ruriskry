@@ -89,13 +89,13 @@ class TestSRICompositeCalculation:
         action = _make_action()
         blast, policy, hist, fin = _make_results(0, 0, 0, 0)
         verdict = engine.evaluate(action, blast, policy, hist, fin)
-        assert verdict.sentinel_risk_index.sri_composite == 0.0
+        assert verdict.skry_risk_index.sri_composite == 0.0
 
     def test_all_100_gives_100_composite(self, engine):
         action = _make_action()
         blast, policy, hist, fin = _make_results(100, 100, 100, 100)
         verdict = engine.evaluate(action, blast, policy, hist, fin)
-        assert verdict.sentinel_risk_index.sri_composite == 100.0
+        assert verdict.skry_risk_index.sri_composite == 100.0
 
     def test_composite_formula_correct(self, engine):
         """30×0.30 + 20×0.25 + 40×0.25 + 50×0.20 = 9+5+10+10 = 34.0"""
@@ -103,20 +103,20 @@ class TestSRICompositeCalculation:
         blast, policy, hist, fin = _make_results(30, 20, 40, 50)
         verdict = engine.evaluate(action, blast, policy, hist, fin)
         expected = round(30 * 0.30 + 20 * 0.25 + 40 * 0.25 + 50 * 0.20, 2)
-        assert verdict.sentinel_risk_index.sri_composite == expected
+        assert verdict.skry_risk_index.sri_composite == expected
 
     def test_composite_within_bounds(self, engine):
         action = _make_action()
         blast, policy, hist, fin = _make_results(100, 100, 100, 100)
         verdict = engine.evaluate(action, blast, policy, hist, fin)
-        assert 0.0 <= verdict.sentinel_risk_index.sri_composite <= 100.0
+        assert 0.0 <= verdict.skry_risk_index.sri_composite <= 100.0
 
     def test_composite_preserves_dimension_scores(self, engine):
         """The breakdown must echo each agent's raw score unchanged."""
         action = _make_action()
         blast, policy, hist, fin = _make_results(30, 20, 40, 50)
         verdict = engine.evaluate(action, blast, policy, hist, fin)
-        sri = verdict.sentinel_risk_index
+        sri = verdict.skry_risk_index
         assert sri.sri_infrastructure == 30.0
         assert sri.sri_policy == 20.0
         assert sri.sri_historical == 40.0
@@ -213,7 +213,7 @@ class TestSRIScoring:
         action = _make_action()
         blast, policy, hist, fin = _make_results(100, 100, 100, 100)
         verdict = engine.evaluate(action, blast, policy, hist, fin)
-        assert 0.0 <= verdict.sentinel_risk_index.sri_composite <= 100.0
+        assert 0.0 <= verdict.skry_risk_index.sri_composite <= 100.0
 
 
 # ---------------------------------------------------------------------------
@@ -253,7 +253,7 @@ class TestBoundaryConditions:
         hist = HistoricalResult(sri_historical=0)
         fin = FinancialResult(sri_cost=0)
         verdict = engine.evaluate(action, blast, policy_r, hist, fin)
-        assert verdict.sentinel_risk_index.sri_composite == 25.0
+        assert verdict.skry_risk_index.sri_composite == 25.0
         assert verdict.decision == SRIVerdict.APPROVED
 
     def test_sri_just_above_25_is_escalated(self, engine):
@@ -265,7 +265,7 @@ class TestBoundaryConditions:
         hist = HistoricalResult(sri_historical=0)
         fin = FinancialResult(sri_cost=0)
         verdict = engine.evaluate(action, blast, policy_r, hist, fin)
-        assert verdict.sentinel_risk_index.sri_composite == 26.5
+        assert verdict.skry_risk_index.sri_composite == 26.5
         assert verdict.decision == SRIVerdict.ESCALATED
 
     def test_sri_60_is_escalated(self, engine):
@@ -277,7 +277,7 @@ class TestBoundaryConditions:
         hist = HistoricalResult(sri_historical=20)
         fin = FinancialResult(sri_cost=0)
         verdict = engine.evaluate(action, blast, policy_r, hist, fin)
-        assert verdict.sentinel_risk_index.sri_composite == 60.0
+        assert verdict.skry_risk_index.sri_composite == 60.0
         assert verdict.decision == SRIVerdict.ESCALATED
 
     def test_sri_61_is_denied(self, engine):
@@ -289,7 +289,7 @@ class TestBoundaryConditions:
         hist = HistoricalResult(sri_historical=24)
         fin = FinancialResult(sri_cost=0)
         verdict = engine.evaluate(action, blast, policy_r, hist, fin)
-        assert verdict.sentinel_risk_index.sri_composite == 61.0
+        assert verdict.skry_risk_index.sri_composite == 61.0
         assert verdict.decision == SRIVerdict.DENIED
 
 

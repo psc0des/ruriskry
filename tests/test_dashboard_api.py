@@ -11,7 +11,7 @@ from src.api.dashboard_api import app, _get_tracker
 from src.core.scan_run_tracker import ScanRunTracker
 from src.core.decision_tracker import DecisionTracker
 from src.core.models import ActionTarget, ActionType, ProposedAction, Urgency
-from src.core.pipeline import SentinelLayerPipeline
+from src.core.pipeline import RuriSkryPipeline
 
 
 # ---------------------------------------------------------------------------
@@ -51,7 +51,7 @@ def _make_action(
 
 @pytest.fixture(scope="module")
 def pipeline():
-    return SentinelLayerPipeline()
+    return RuriSkryPipeline()
 
 
 @pytest.fixture()

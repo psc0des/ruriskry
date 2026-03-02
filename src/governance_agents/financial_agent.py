@@ -117,7 +117,7 @@ _OVER_OPT_THRESHOLD: int = 1
 
 # System instructions for the framework agent (live mode only).
 _AGENT_INSTRUCTIONS = """\
-You are SentinelLayer's Financial Impact Assessor — a specialist in cloud
+You are RuriSkry's Financial Impact Assessor — a specialist in cloud
 cost analysis, FinOps, and financial risk assessment for infrastructure changes.
 
 Your job:

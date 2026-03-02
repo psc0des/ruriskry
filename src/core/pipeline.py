@@ -1,4 +1,4 @@
-"""SentinelLayer end-to-end governance pipeline.
+"""RuriSkry end-to-end governance pipeline.
 
 Wires all four governance agents together with the GovernanceDecisionEngine,
 running the agents in parallel for maximum throughput.
@@ -83,8 +83,8 @@ _DEFAULT_RESOURCES_PATH = (
 )
 
 
-class SentinelLayerPipeline:
-    """End-to-end governance pipeline for SentinelLayer.
+class RuriSkryPipeline:
+    """End-to-end governance pipeline for RuriSkry.
 
     Instantiates all four governance agents, all three operational agents,
     and the decision engine once at startup (each agent loads its data file
@@ -102,9 +102,9 @@ class SentinelLayerPipeline:
 
     Usage::
 
-        pipeline = SentinelLayerPipeline()
+        pipeline = RuriSkryPipeline()
         verdict: GovernanceVerdict = pipeline.evaluate(action)
-        print(verdict.decision.value, verdict.sentinel_risk_index.sri_composite)
+        print(verdict.decision.value, verdict.skry_risk_index.sri_composite)
     """
 
     def __init__(self) -> None:
@@ -130,7 +130,7 @@ class SentinelLayerPipeline:
         self._resources: dict[str, dict] = self._load_resource_graph()
 
         logger.info(
-            "SentinelLayerPipeline initialised — %d resources in topology graph",
+            "RuriSkryPipeline initialised — %d resources in topology graph",
             len(self._resources),
         )
 
@@ -220,7 +220,7 @@ class SentinelLayerPipeline:
             "Pipeline: verdict=%s composite=%.1f (infra=%.1f policy=%.1f "
             "hist=%.1f cost=%.1f) agent=%s",
             verdict.decision.value,
-            verdict.sentinel_risk_index.sri_composite,
+            verdict.skry_risk_index.sri_composite,
             blast_result.sri_infrastructure,
             policy_result.sri_policy,
             historical_result.sri_historical,

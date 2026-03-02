@@ -7,7 +7,7 @@ import pytest
 
 from src.core.decision_tracker import DecisionTracker
 from src.core.models import ActionTarget, ActionType, ProposedAction, Urgency
-from src.core.pipeline import SentinelLayerPipeline
+from src.core.pipeline import RuriSkryPipeline
 
 
 # ---------------------------------------------------------------------------
@@ -18,7 +18,7 @@ from src.core.pipeline import SentinelLayerPipeline
 @pytest.fixture(scope="module")
 def pipeline():
     """One pipeline for the whole module — agents load data once."""
-    return SentinelLayerPipeline()
+    return RuriSkryPipeline()
 
 
 def _make_action(

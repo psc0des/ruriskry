@@ -1,5 +1,5 @@
 # =============================================================================
-# SentinelLayer - Azure Infrastructure (Foundry Only)
+# RuriSkry - Azure Infrastructure (Foundry Only)
 # =============================================================================
 # This configuration manages Foundry (AIServices) as the only LLM platform.
 # =============================================================================
@@ -26,12 +26,12 @@ locals {
   name_suffix = var.suffix
 
   common_tags = {
-    project     = "sentinellayer"
+    project     = "ruriskry"
     environment = var.env
     managed_by  = "terraform"
   }
 
-  default_foundry_name = "sentinel-foundry-${local.name_suffix}"
+  default_foundry_name = "ruriskry-foundry-${local.name_suffix}"
   foundry_account_name = var.foundry_account_name != "" ? var.foundry_account_name : local.default_foundry_name
   foundry_subdomain    = var.foundry_custom_subdomain_name != "" ? var.foundry_custom_subdomain_name : local.foundry_account_name
 }
@@ -40,7 +40,7 @@ locals {
 # 1. Resource Group
 # =============================================================================
 
-resource "azurerm_resource_group" "sentinel" {
+resource "azurerm_resource_group" "skry" {
   name     = var.resource_group_name
   location = var.location
   tags     = local.common_tags
@@ -50,10 +50,10 @@ resource "azurerm_resource_group" "sentinel" {
 # 2. Log Analytics Workspace
 # =============================================================================
 
-resource "azurerm_log_analytics_workspace" "sentinel" {
-  name                = "sentinel-log-${local.name_suffix}"
-  resource_group_name = azurerm_resource_group.sentinel.name
-  location            = azurerm_resource_group.sentinel.location
+resource "azurerm_log_analytics_workspace" "skry" {
+  name                = "ruriskry-log-${local.name_suffix}"
+  resource_group_name = azurerm_resource_group.ruriskry.name
+  location            = azurerm_resource_group.ruriskry.location
   sku                 = "PerGB2018"
   retention_in_days   = 30
   tags                = local.common_tags
@@ -63,10 +63,10 @@ resource "azurerm_log_analytics_workspace" "sentinel" {
 # 3. Azure Key Vault
 # =============================================================================
 
-resource "azurerm_key_vault" "sentinel" {
-  name                = "sentinel-kv-${local.name_suffix}"
-  resource_group_name = azurerm_resource_group.sentinel.name
-  location            = azurerm_resource_group.sentinel.location
+resource "azurerm_key_vault" "skry" {
+  name                = "ruriskry-kv-${local.name_suffix}"
+  resource_group_name = azurerm_resource_group.ruriskry.name
+  location            = azurerm_resource_group.ruriskry.location
   tenant_id           = data.azurerm_client_config.current.tenant_id
   sku_name            = "standard"
 
@@ -85,7 +85,7 @@ resource "azurerm_key_vault" "sentinel" {
 resource "azurerm_key_vault_access_policy" "managed_identity_readers" {
   for_each = toset(var.managed_identity_principal_ids)
 
-  key_vault_id = azurerm_key_vault.sentinel.id
+  key_vault_id = azurerm_key_vault.ruriskry.id
   tenant_id    = data.azurerm_client_config.current.tenant_id
   object_id    = each.value
 
@@ -99,7 +99,7 @@ resource "azurerm_key_vault_access_policy" "managed_identity_readers" {
 resource "azurerm_ai_services" "foundry" {
   name                               = local.foundry_account_name
   custom_subdomain_name              = local.foundry_subdomain
-  resource_group_name                = azurerm_resource_group.sentinel.name
+  resource_group_name                = azurerm_resource_group.ruriskry.name
   location                           = var.foundry_location
   sku_name                           = "S0"
   local_authentication_enabled       = true
@@ -145,10 +145,10 @@ resource "azurerm_cognitive_deployment" "foundry_primary" {
 # 5. Azure AI Search
 # =============================================================================
 
-resource "azurerm_search_service" "sentinel" {
-  name                = "sentinel-search-${local.name_suffix}"
-  resource_group_name = azurerm_resource_group.sentinel.name
-  location            = azurerm_resource_group.sentinel.location
+resource "azurerm_search_service" "skry" {
+  name                = "ruriskry-search-${local.name_suffix}"
+  resource_group_name = azurerm_resource_group.ruriskry.name
+  location            = azurerm_resource_group.ruriskry.location
   sku                 = var.search_sku
 
   replica_count   = var.search_sku == "free" ? null : 1
@@ -161,9 +161,9 @@ resource "azurerm_search_service" "sentinel" {
 # 6. Cosmos DB (SQL API)
 # =============================================================================
 
-resource "azurerm_cosmosdb_account" "sentinel" {
-  name                = "sentinel-cosmos-${local.name_suffix}"
-  resource_group_name = azurerm_resource_group.sentinel.name
+resource "azurerm_cosmosdb_account" "skry" {
+  name                = "ruriskry-cosmos-${local.name_suffix}"
+  resource_group_name = azurerm_resource_group.ruriskry.name
   location            = var.cosmos_location
   offer_type          = "Standard"
   kind                = "GlobalDocumentDB"
@@ -182,17 +182,17 @@ resource "azurerm_cosmosdb_account" "sentinel" {
   tags              = local.common_tags
 }
 
-resource "azurerm_cosmosdb_sql_database" "sentinellayer" {
-  name                = "sentinellayer"
-  resource_group_name = azurerm_resource_group.sentinel.name
-  account_name        = azurerm_cosmosdb_account.sentinel.name
+resource "azurerm_cosmosdb_sql_database" "ruriskry" {
+  name                = "ruriskry"
+  resource_group_name = azurerm_resource_group.ruriskry.name
+  account_name        = azurerm_cosmosdb_account.ruriskry.name
 }
 
 resource "azurerm_cosmosdb_sql_container" "governance_decisions" {
   name                = "governance-decisions"
-  resource_group_name = azurerm_resource_group.sentinel.name
-  account_name        = azurerm_cosmosdb_account.sentinel.name
-  database_name       = azurerm_cosmosdb_sql_database.sentinellayer.name
+  resource_group_name = azurerm_resource_group.ruriskry.name
+  account_name        = azurerm_cosmosdb_account.ruriskry.name
+  database_name       = azurerm_cosmosdb_sql_database.ruriskry.name
 
   partition_key_paths   = ["/resource_id"]
   partition_key_version = 2
@@ -208,9 +208,9 @@ resource "azurerm_cosmosdb_sql_container" "governance_decisions" {
 
 resource "azurerm_cosmosdb_sql_container" "governance_agents" {
   name                = "governance-agents"
-  resource_group_name = azurerm_resource_group.sentinel.name
-  account_name        = azurerm_cosmosdb_account.sentinel.name
-  database_name       = azurerm_cosmosdb_sql_database.sentinellayer.name
+  resource_group_name = azurerm_resource_group.ruriskry.name
+  account_name        = azurerm_cosmosdb_account.ruriskry.name
+  database_name       = azurerm_cosmosdb_sql_database.ruriskry.name
 
   partition_key_paths   = ["/name"]
   partition_key_version = 2
@@ -231,23 +231,23 @@ resource "azurerm_cosmosdb_sql_container" "governance_agents" {
 resource "azurerm_key_vault_secret" "foundry_primary_key" {
   name         = var.keyvault_secret_name_foundry_key
   value        = azurerm_ai_services.foundry.primary_access_key
-  key_vault_id = azurerm_key_vault.sentinel.id
+  key_vault_id = azurerm_key_vault.ruriskry.id
 
   depends_on = [azurerm_key_vault_access_policy.managed_identity_readers]
 }
 
 resource "azurerm_key_vault_secret" "search_primary_key" {
   name         = var.keyvault_secret_name_search_key
-  value        = azurerm_search_service.sentinel.primary_key
-  key_vault_id = azurerm_key_vault.sentinel.id
+  value        = azurerm_search_service.ruriskry.primary_key
+  key_vault_id = azurerm_key_vault.ruriskry.id
 
   depends_on = [azurerm_key_vault_access_policy.managed_identity_readers]
 }
 
 resource "azurerm_key_vault_secret" "cosmos_primary_key" {
   name         = var.keyvault_secret_name_cosmos_key
-  value        = azurerm_cosmosdb_account.sentinel.primary_key
-  key_vault_id = azurerm_key_vault.sentinel.id
+  value        = azurerm_cosmosdb_account.ruriskry.primary_key
+  key_vault_id = azurerm_key_vault.ruriskry.id
 
   depends_on = [azurerm_key_vault_access_policy.managed_identity_readers]
 }

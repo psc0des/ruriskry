@@ -1,7 +1,7 @@
 """Infrastructure Deploy Agent — proposes deployment and configuration actions.
 
 This is an operational agent (the governed subject). It proposes
-infrastructure changes that SentinelLayer evaluates before execution.
+infrastructure changes that RuriSkry evaluates before execution.
 
 Phase 12 — Intelligent, evidence-driven agent
 ----------------------------------------------
@@ -110,7 +110,7 @@ class DeployAgent:
         proposals: list[ProposedAction] = await agent.scan()
 
         # Scope to a specific resource group:
-        proposals = await agent.scan(target_resource_group="sentinel-prod-rg")
+        proposals = await agent.scan(target_resource_group="ruriskry-prod-rg")
     """
 
     def __init__(

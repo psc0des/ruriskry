@@ -47,7 +47,7 @@ class _MockSettings:
     cosmos_endpoint = ""
     cosmos_key = ""
     cosmos_key_secret_name = "cosmos-primary-key"
-    cosmos_database = "sentinellayer"
+    cosmos_database = "ruriskry"
     cosmos_container_decisions = "governance-decisions"
     azure_subscription_id = ""
     azure_tenant_id = ""

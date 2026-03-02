@@ -1,4 +1,4 @@
-"""SentinelLayer configuration — loaded from environment variables."""
+"""RuriSkry configuration — loaded from environment variables."""
 
 from pydantic_settings import BaseSettings
 
@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     cosmos_endpoint: str = ""
     cosmos_key: str = ""
     cosmos_key_secret_name: str = "cosmos-primary-key"
-    cosmos_database: str = "sentinellayer"
+    cosmos_database: str = "ruriskry"
     cosmos_container_decisions: str = "governance-decisions"
     cosmos_container_scan_runs: str = "governance-scan-runs"
 

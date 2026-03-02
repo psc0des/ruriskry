@@ -181,7 +181,7 @@ class AzureOpenAIClient:
             In mock mode returns the standard mock placeholder instantly.
         """
         system_prompt = (
-            f"You are SentinelLayer, an AI governance engine acting as a {agent_role}. "
+            f"You are RuriSkry, an AI governance engine acting as a {agent_role}. "
             "Analyze the cloud infrastructure action described and give a concise expert "
             "risk assessment in 2-3 sentences. Be specific about the risks, mention any "
             "compliance or operational concerns, and give one actionable recommendation. "

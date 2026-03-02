@@ -112,7 +112,7 @@ _SECONDARY_WEIGHT: float = 0.20
 
 # System instructions for the framework agent (live mode only).
 _AGENT_INSTRUCTIONS = """\
-You are SentinelLayer's Historical Pattern Analyst — a specialist in
+You are RuriSkry's Historical Pattern Analyst — a specialist in
 incident forensics and historical risk pattern recognition.
 
 Your job:

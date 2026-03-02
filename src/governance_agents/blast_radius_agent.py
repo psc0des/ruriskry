@@ -94,7 +94,7 @@ _EXTRA_SPOF_SCORE: float = 10.0
 
 # System instructions for the framework agent (live mode only).
 _AGENT_INSTRUCTIONS = """\
-You are SentinelLayer's Blast Radius Evaluator — a specialist in cloud
+You are RuriSkry's Blast Radius Evaluator — a specialist in cloud
 infrastructure dependency analysis and risk assessment.
 
 Your job:

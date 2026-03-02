@@ -1,21 +1,21 @@
-"""SentinelLayer MCP Server — exposes governance tools to any AI agent.
+"""RuriSkry MCP Server — exposes governance tools to any AI agent.
 
 Registers three MCP tools using FastMCP so that any MCP-capable client
-(Claude Desktop, Copilot, etc.) can invoke SentinelLayer governance directly:
+(Claude Desktop, Copilot, etc.) can invoke RuriSkry governance directly:
 
 Tools
 -----
-sentinel_evaluate_action
+skry_evaluate_action
     Accepts a description of a proposed infrastructure change, runs it through
-    the full SentinelLayer pipeline (all four governance agents in parallel),
+    the full RuriSkry pipeline (all four governance agents in parallel),
     records the verdict in the local audit trail, and returns a structured
     verdict with the SRI(tm) breakdown.
 
-sentinel_query_history
+skry_query_history
     Returns recent governance decisions from the local audit trail, optionally
     filtered by resource ID.
 
-sentinel_get_risk_profile
+skry_get_risk_profile
     Returns an aggregated risk summary for a specific resource — decision
     counts, average SRI composite, and the most commonly violated policies.
 
@@ -43,7 +43,7 @@ from src.core.models import (
     ProposedAction,
     Urgency,
 )
-from src.core.pipeline import SentinelLayerPipeline
+from src.core.pipeline import RuriSkryPipeline
 
 logger = logging.getLogger(__name__)
 
@@ -52,12 +52,12 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 mcp = FastMCP(
-    "SentinelLayer",
+    "RuriSkry",
     instructions=(
-        "SentinelLayer is an AI-action governance system for Azure cloud infrastructure. "
-        "Use sentinel_evaluate_action to assess proposed changes, "
-        "sentinel_query_history to review past decisions, and "
-        "sentinel_get_risk_profile to understand a resource's risk history."
+        "RuriSkry is an AI-action governance system for Azure cloud infrastructure. "
+        "Use skry_evaluate_action to assess proposed changes, "
+        "skry_query_history to review past decisions, and "
+        "skry_get_risk_profile to understand a resource's risk history."
     ),
 )
 
@@ -66,15 +66,15 @@ mcp = FastMCP(
 # Stored at module level so tests can monkeypatch them.
 # ---------------------------------------------------------------------------
 
-_pipeline: SentinelLayerPipeline | None = None
+_pipeline: RuriSkryPipeline | None = None
 _tracker: DecisionTracker | None = None
 
 
-def _get_pipeline() -> SentinelLayerPipeline:
+def _get_pipeline() -> RuriSkryPipeline:
     """Return the module-level pipeline singleton, creating it if needed."""
     global _pipeline
     if _pipeline is None:
-        _pipeline = SentinelLayerPipeline()
+        _pipeline = RuriSkryPipeline()
     return _pipeline
 
 
@@ -92,7 +92,7 @@ def _get_tracker() -> DecisionTracker:
 
 
 @mcp.tool()
-async def sentinel_evaluate_action(
+async def skry_evaluate_action(
     resource_id: str,
     resource_type: str,
     action_type: str,
@@ -103,7 +103,7 @@ async def sentinel_evaluate_action(
     current_sku: str | None = None,
     proposed_sku: str | None = None,
 ) -> dict:
-    """Evaluate a proposed infrastructure action through SentinelLayer governance.
+    """Evaluate a proposed infrastructure action through RuriSkry governance.
 
     Runs the full pipeline — all four governance agents in parallel — and
     returns a structured verdict with the SRI(tm) breakdown and decision.
@@ -131,7 +131,7 @@ async def sentinel_evaluate_action(
         - ``action_id`` — unique identifier for this evaluation
         - ``decision`` — ``"approved"``, ``"escalated"``, or ``"denied"``
         - ``reason`` — human-readable explanation of the decision
-        - ``sri_composite`` — overall Sentinel Risk Index score (0–100)
+        - ``sri_composite`` — overall Skry Risk Index score (0–100)
         - ``sri_breakdown`` — per-dimension scores (infrastructure, policy,
           historical, cost)
         - ``thresholds`` — auto-approve and human-review thresholds used
@@ -156,7 +156,7 @@ async def sentinel_evaluate_action(
     verdict = await _get_pipeline().evaluate(action)
     _get_tracker().record(verdict)
 
-    sri = verdict.sentinel_risk_index
+    sri = verdict.skry_risk_index
     return {
         "action_id": verdict.action_id,
         "decision": verdict.decision.value,
@@ -178,7 +178,7 @@ async def sentinel_evaluate_action(
 
 
 @mcp.tool()
-def sentinel_query_history(
+def skry_query_history(
     limit: int = 10,
     resource_id: str | None = None,
 ) -> dict:
@@ -217,7 +217,7 @@ def sentinel_query_history(
 
 
 @mcp.tool()
-def sentinel_get_risk_profile(resource_id: str) -> dict:
+def skry_get_risk_profile(resource_id: str) -> dict:
     """Return an aggregated risk profile for a specific resource.
 
     Analyses all historical governance decisions for the given resource and

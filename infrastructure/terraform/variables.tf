@@ -1,5 +1,5 @@
 # =============================================================================
-# SentinelLayer - Terraform Input Variables
+# RuriSkry - Terraform Input Variables
 # =============================================================================
 # Set values in terraform.tfvars (copy from terraform.tfvars.example).
 # Never commit terraform.tfvars - it is in .gitignore.
@@ -13,7 +13,7 @@ variable "subscription_id" {
 variable "resource_group_name" {
   description = "Name of the Azure Resource Group to create"
   type        = string
-  default     = "sentinel-layer-rg"
+  default     = "ruriskry-rg"
 }
 
 variable "location" {
@@ -91,7 +91,7 @@ variable "create_foundry_project" {
 variable "foundry_project_name" {
   description = "Foundry project name when create_foundry_project=true."
   type        = string
-  default     = "sentinel-layer"
+  default     = "ruriskry"
 }
 
 variable "create_foundry_deployment" {

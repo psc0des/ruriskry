@@ -1,17 +1,17 @@
 # =============================================================================
-# SentinelLayer — Mini Production Environment
+# RuriSkry — Mini Production Environment
 # =============================================================================
-# Creates REAL Azure resources that SentinelLayer governs in live demos.
+# Creates REAL Azure resources that RuriSkry governs in live demos.
 #
 # Governance scenarios:
-#   vm-dr-01         → Cost agent proposes DELETE  → SentinelLayer DENIES
+#   vm-dr-01         → Cost agent proposes DELETE  → RuriSkry DENIES
 #                      (disaster-recovery tag = policy violation)
-#   vm-web-01        → SRE agent proposes SCALE UP → SentinelLayer APPROVES
+#   vm-web-01        → SRE agent proposes SCALE UP → RuriSkry APPROVES
 #                      (legitimate CPU spike, no policy violations)
 #   payment-api-prod → Critical dependency of vm-web-01 (critical=true tag)
 #   nsg-east-prod    → Deploy agent proposes open port 8080 → ESCALATED
 #                      (NSG changes affect all governed workloads — medium blast radius)
-#   sentinelprod*    → Shared storage dependency of all three resources above
+#   ruriskryprod*    → Shared storage dependency of all three resources above
 # =============================================================================
 
 terraform {
@@ -69,18 +69,18 @@ locals {
   vm_hourly_rate_usd = lookup(local.vm_hourly_rate_usd_by_sku, var.vm_size, null)
 
   common_tags = {
-    project    = "sentinellayer"
+    project    = "ruriskry"
     managed_by = "terraform"
     purpose    = "governance-demo"
   }
 }
 
 # =============================================================================
-# 1. Resource Group: sentinel-prod-rg
+# 1. Resource Group: ruriskry-prod-rg
 # =============================================================================
 
 resource "azurerm_resource_group" "prod" {
-  name     = "sentinel-prod-rg"
+  name     = "ruriskry-prod-rg"
   location = var.location
   tags     = local.common_tags
 }
@@ -90,7 +90,7 @@ resource "azurerm_resource_group" "prod" {
 # =============================================================================
 
 resource "azurerm_virtual_network" "prod" {
-  name                = "vnet-sentinel-prod"
+  name                = "vnet-ruriskry-prod"
   address_space       = ["10.1.0.0/16"]
   location            = azurerm_resource_group.prod.location
   resource_group_name = azurerm_resource_group.prod.name
@@ -98,7 +98,7 @@ resource "azurerm_virtual_network" "prod" {
 }
 
 resource "azurerm_subnet" "prod" {
-  name                 = "subnet-sentinel-prod"
+  name                 = "subnet-ruriskry-prod"
   resource_group_name  = azurerm_resource_group.prod.name
   virtual_network_name = azurerm_virtual_network.prod.name
   address_prefixes     = ["10.1.1.0/24"]
@@ -111,7 +111,7 @@ resource "azurerm_subnet" "prod" {
 # Default: allow HTTP (80) + HTTPS (443) from:
 #   1) your current public IP (auto-detected, or override)
 #   2) inside the VNet (VirtualNetwork service tag)
-# Demo scenario: deploy agent proposes opening port 8080 → SentinelLayer
+# Demo scenario: deploy agent proposes opening port 8080 → RuriSkry
 # ESCALATES because NSG changes affect all workloads behind the subnet gateway.
 
 resource "azurerm_network_security_group" "prod" {
@@ -180,14 +180,14 @@ resource "azurerm_subnet_network_security_group_association" "prod" {
 }
 
 # =============================================================================
-# 4. Storage Account: sentinelprod{suffix}
+# 4. Storage Account: ruriskryprod{suffix}
 # =============================================================================
 # Shared dependency for vm-dr-01, vm-web-01, and payment-api-prod.
 # Any action that removes or disrupts this storage has a HIGH blast radius
 # because three production resources depend on it simultaneously.
 
 resource "azurerm_storage_account" "prod" {
-  name                            = "sentinelprod${var.suffix}"
+  name                            = "ruriskryprod${var.suffix}"
   resource_group_name             = azurerm_resource_group.prod.name
   location                        = azurerm_resource_group.prod.location
   account_tier                    = "Standard"
@@ -243,7 +243,7 @@ resource "azurerm_network_interface" "web01" {
 # =============================================================================
 # This VM is intentionally idle — that's the point of a standby DR server.
 # The cost agent will flag it as "unused for 30+ days" and propose deletion.
-# SentinelLayer DENIES because:
+# RuriSkry DENIES because:
 #   - Policy: tag disaster-recovery=true → protected resource
 #   - Blast radius: dr-failover-service and backup-coordinator depend on it
 #   - Historical: similar DR deletions caused 2h outages in past incidents
@@ -284,7 +284,7 @@ resource "azurerm_linux_virtual_machine" "dr01" {
 # =============================================================================
 # This is the live web tier. When the CPU alert fires at >80%, the monitoring
 # agent proposes a scale-up from var.vm_size to a larger size.
-# SentinelLayer APPROVES because:
+# RuriSkry APPROVES because:
 #   - No policy violations (no protected tags, no deny-listed action types)
 #   - Low blast radius (no critical downstream services depend on it)
 #   - Historical: scaling web VMs has zero incident history
@@ -301,7 +301,7 @@ resource "azurerm_linux_virtual_machine" "web01" {
   # Cloud-init script: runs once on first boot after terraform apply.
   # Installs stress-ng and adds a cron job that spikes CPU every 30 minutes
   # for 20 minutes — long enough to breach the 15-minute alert window and
-  # trigger the Azure Monitor CPU alert → SentinelLayer APPROVES scale-up.
+  # trigger the Azure Monitor CPU alert → RuriSkry APPROVES scale-up.
   # The cron entry survives VM deallocation (auto-shutdown) because the OS
   # disk is preserved. It is only lost if the VM is destroyed and recreated.
   custom_data = base64encode(<<-EOF
@@ -369,12 +369,12 @@ resource "azurerm_dev_test_global_vm_shutdown_schedule" "web01" {
 # 9. App Service: payment-api-prod (Free F1 tier)
 # =============================================================================
 # The payment microservice that vm-web-01 depends on.
-# Tagged critical=true — so SentinelLayer's blast radius agent will score any
+# Tagged critical=true — so RuriSkry's blast radius agent will score any
 # action touching vm-web-01 higher because it could cascade to the payment API.
 # F1 selected for low-cost demo usage in this subscription/region.
 
 resource "azurerm_service_plan" "prod" {
-  name                = "asp-sentinel-prod-${var.suffix}"
+  name                = "asp-ruriskry-prod-${var.suffix}"
   resource_group_name = azurerm_resource_group.prod.name
   location            = azurerm_resource_group.prod.location
   os_type             = "Linux"
@@ -404,7 +404,7 @@ resource "azurerm_linux_web_app" "payment_api" {
 # =============================================================================
 
 resource "azurerm_log_analytics_workspace" "prod" {
-  name                = "law-sentinel-prod-${var.suffix}"
+  name                = "law-ruriskry-prod-${var.suffix}"
   resource_group_name = azurerm_resource_group.prod.name
   location            = azurerm_resource_group.prod.location
   sku                 = "PerGB2018"
@@ -435,7 +435,7 @@ resource "azurerm_virtual_machine_extension" "ama_web01" {
 }
 
 resource "azurerm_monitor_data_collection_rule" "vm_signals" {
-  name                = "dcr-sentinel-prod-${var.suffix}"
+  name                = "dcr-ruriskry-prod-${var.suffix}"
   resource_group_name = azurerm_resource_group.prod.name
   location            = azurerm_resource_group.prod.location
   kind                = "Linux"
@@ -480,9 +480,9 @@ resource "azurerm_monitor_data_collection_rule_association" "web01" {
 # =============================================================================
 
 resource "azurerm_monitor_action_group" "prod" {
-  name                = "ag-sentinel-prod"
+  name                = "ag-ruriskry-prod"
   resource_group_name = azurerm_resource_group.prod.name
-  short_name          = "sentinel"
+  short_name          = "skry"
   tags                = local.common_tags
 
   email_receiver {
@@ -496,13 +496,13 @@ resource "azurerm_monitor_action_group" "prod" {
 # =============================================================================
 # Fires when vm-web-01 average CPU exceeds 80% over a 15-minute window.
 # In the demo flow: alert fires → monitoring agent proposes scale-up →
-# SentinelLayer evaluates → APPROVES (safe action, legitimate load).
+# RuriSkry evaluates → APPROVES (safe action, legitimate load).
 
 resource "azurerm_monitor_metric_alert" "web01_cpu" {
   name                = "alert-vm-web-01-cpu-high"
   resource_group_name = azurerm_resource_group.prod.name
   scopes              = [azurerm_linux_virtual_machine.web01.id]
-  description         = "Triggers SentinelLayer when vm-web-01 CPU > 80% — scale-up candidate"
+  description         = "Triggers RuriSkry when vm-web-01 CPU > 80% — scale-up candidate"
   severity            = 2
   frequency           = "PT5M"
   window_size         = "PT15M"
@@ -527,7 +527,7 @@ resource "azurerm_monitor_metric_alert" "web01_cpu" {
 # =============================================================================
 # If vm-dr-01 sends no heartbeat for 15 minutes it is considered idle/stopped.
 # In the demo flow: no heartbeat → cost agent flags as idle → proposes deletion
-# → SentinelLayer DENIES (disaster-recovery policy + high blast radius).
+# → RuriSkry DENIES (disaster-recovery policy + high blast radius).
 # Uses AMA + DCR so this is real heartbeat telemetry, not just "no data".
 
 resource "azurerm_monitor_scheduled_query_rules_alert_v2" "dr01_heartbeat" {

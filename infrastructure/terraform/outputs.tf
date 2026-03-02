@@ -1,17 +1,17 @@
 # =============================================================================
-# SentinelLayer - Terraform Outputs (Foundry Only)
+# RuriSkry - Terraform Outputs (Foundry Only)
 # =============================================================================
 
 # --- Resource Group ---
 
 output "resource_group_name" {
   description = "Name of the deployed resource group"
-  value       = azurerm_resource_group.sentinel.name
+  value       = azurerm_resource_group.ruriskry.name
 }
 
 output "location" {
   description = "Azure region where core resources were deployed"
-  value       = azurerm_resource_group.sentinel.location
+  value       = azurerm_resource_group.ruriskry.location
 }
 
 # --- Foundry runtime outputs ---
@@ -51,12 +51,12 @@ output "foundry_project_name" {
 
 output "search_endpoint" {
   description = "Azure AI Search service endpoint URL"
-  value       = "https://${azurerm_search_service.sentinel.name}.search.windows.net"
+  value       = "https://${azurerm_search_service.ruriskry.name}.search.windows.net"
 }
 
 output "search_primary_key" {
   description = "Azure AI Search primary admin key (sensitive)"
-  value       = azurerm_search_service.sentinel.primary_key
+  value       = azurerm_search_service.ruriskry.primary_key
   sensitive   = true
 }
 
@@ -69,18 +69,18 @@ output "search_index_name" {
 
 output "cosmos_endpoint" {
   description = "Cosmos DB account endpoint URL"
-  value       = azurerm_cosmosdb_account.sentinel.endpoint
+  value       = azurerm_cosmosdb_account.ruriskry.endpoint
 }
 
 output "cosmos_primary_key" {
   description = "Cosmos DB primary key (sensitive)"
-  value       = azurerm_cosmosdb_account.sentinel.primary_key
+  value       = azurerm_cosmosdb_account.ruriskry.primary_key
   sensitive   = true
 }
 
 output "cosmos_database" {
   description = "Cosmos DB database name"
-  value       = azurerm_cosmosdb_sql_database.sentinellayer.name
+  value       = azurerm_cosmosdb_sql_database.ruriskry.name
 }
 
 output "cosmos_container_decisions" {
@@ -92,24 +92,24 @@ output "cosmos_container_decisions" {
 
 output "log_analytics_workspace_id" {
   description = "Log Analytics workspace ID"
-  value       = azurerm_log_analytics_workspace.sentinel.workspace_id
+  value       = azurerm_log_analytics_workspace.ruriskry.workspace_id
 }
 
 output "log_analytics_workspace_resource_id" {
   description = "Log Analytics workspace resource ID"
-  value       = azurerm_log_analytics_workspace.sentinel.id
+  value       = azurerm_log_analytics_workspace.ruriskry.id
 }
 
 # --- Key Vault ---
 
 output "keyvault_url" {
   description = "Azure Key Vault vault URI"
-  value       = azurerm_key_vault.sentinel.vault_uri
+  value       = azurerm_key_vault.ruriskry.vault_uri
 }
 
 output "keyvault_name" {
   description = "Azure Key Vault resource name"
-  value       = azurerm_key_vault.sentinel.name
+  value       = azurerm_key_vault.ruriskry.name
 }
 
 output "keyvault_secret_name_foundry_key" {

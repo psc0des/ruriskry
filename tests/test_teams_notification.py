@@ -59,7 +59,7 @@ def _make_verdict(
         action_id="test-notif-001",
         timestamp=datetime.now(timezone.utc),
         proposed_action=_make_action(),
-        sentinel_risk_index=SRIBreakdown(
+        skry_risk_index=SRIBreakdown(
             sri_infrastructure=65.0,
             sri_policy=100.0,
             sri_historical=62.0,
@@ -207,9 +207,9 @@ class TestTeamsNotification:
     @pytest.mark.asyncio
     async def test_teams_notification_does_not_block_pipeline(self, monkeypatch):
         """Even if the notification fails, pipeline.evaluate() must return a verdict."""
-        from src.core.pipeline import SentinelLayerPipeline
+        from src.core.pipeline import RuriSkryPipeline
 
-        pipeline = SentinelLayerPipeline()
+        pipeline = RuriSkryPipeline()
 
         # Set an invalid webhook URL so publish is attempted but will fail
         monkeypatch.setattr(
@@ -246,4 +246,4 @@ class TestTeamsNotification:
         # Pipeline must still return a valid verdict regardless of notification failure
         assert verdict is not None
         assert verdict.decision in (SRIVerdict.APPROVED, SRIVerdict.ESCALATED, SRIVerdict.DENIED)
-        assert verdict.sentinel_risk_index.sri_composite >= 0
+        assert verdict.skry_risk_index.sri_composite >= 0

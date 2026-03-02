@@ -5,7 +5,7 @@ Tests are mock-first and do not require a running A2A server or Azure services.
 Test coverage:
 1. Agent Card structure and fields
 2. AgentRegistry CRUD operations (using a temp directory)
-3. A2A task submission via SentinelAgentExecutor (mock pipeline)
+3. A2A task submission via RuriSkryAgentExecutor (mock pipeline)
 4. Dashboard API new /api/agents endpoints
 """
 
@@ -28,15 +28,15 @@ os.environ.setdefault("USE_LOCAL_MOCKS", "true")
 
 
 class TestAgentCard:
-    """Verify the A2A Agent Card structure advertised by SentinelLayer."""
+    """Verify the A2A Agent Card structure advertised by RuriSkry."""
 
     def test_agent_card_has_required_fields(self) -> None:
         """Agent Card must have name, url, version, skills, and capabilities."""
-        from src.a2a.sentinel_a2a_server import _build_agent_card
+        from src.a2a.ruriskry_a2a_server import _build_agent_card
 
         card = _build_agent_card("http://localhost:8000")
 
-        assert card.name == "SentinelLayer Governance Engine"
+        assert card.name == "RuriSkry Governance Engine"
         assert card.version == "1.0.0"
         assert card.url == "http://localhost:8000"
         # Streaming must be enabled for SSE support
@@ -45,7 +45,7 @@ class TestAgentCard:
 
     def test_agent_card_has_three_skills(self) -> None:
         """Agent Card must advertise exactly 3 skills."""
-        from src.a2a.sentinel_a2a_server import _build_agent_card
+        from src.a2a.ruriskry_a2a_server import _build_agent_card
 
         card = _build_agent_card("http://localhost:8000")
         skill_ids = {s.id for s in card.skills}
@@ -56,14 +56,14 @@ class TestAgentCard:
 
     def test_agent_card_url_from_env(self) -> None:
         """Agent Card URL should reflect the A2A_SERVER_URL environment variable."""
-        from src.a2a.sentinel_a2a_server import _build_agent_card
+        from src.a2a.ruriskry_a2a_server import _build_agent_card
 
         card = _build_agent_card("http://my-server:9000")
         assert card.url == "http://my-server:9000"
 
     def test_agent_card_description_mentions_sri(self) -> None:
         """Description must mention SRI™ so external agents understand the purpose."""
-        from src.a2a.sentinel_a2a_server import _build_agent_card
+        from src.a2a.ruriskry_a2a_server import _build_agent_card
 
         card = _build_agent_card("http://localhost:8000")
         assert "SRI" in card.description
@@ -178,11 +178,11 @@ class TestAgentRegistry:
 
 
 # ---------------------------------------------------------------------------
-# 3. A2A task submission via SentinelAgentExecutor
+# 3. A2A task submission via RuriSkryAgentExecutor
 # ---------------------------------------------------------------------------
 
 
-class TestSentinelAgentExecutor:
+class TestRuriSkryAgentExecutor:
     """Test the A2A server executor with a mocked pipeline."""
 
     def _make_mock_verdict(self, decision: str = "denied") -> Any:
@@ -216,7 +216,7 @@ class TestSentinelAgentExecutor:
             action_id=str(uuid.uuid4()),
             timestamp=datetime.now(timezone.utc),
             proposed_action=action,
-            sentinel_risk_index=sri,
+            skry_risk_index=sri,
             decision=SRIVerdict(decision),
             reason="Test verdict",
         )
@@ -225,7 +225,7 @@ class TestSentinelAgentExecutor:
     async def test_execute_valid_action_completes(self) -> None:
         """executor.execute() should call complete() after a successful evaluation."""
         from src.core.models import ActionTarget, ActionType, ProposedAction, Urgency
-        from src.a2a.sentinel_a2a_server import SentinelAgentExecutor
+        from src.a2a.ruriskry_a2a_server import RuriSkryAgentExecutor
 
         action = ProposedAction(
             agent_id="test-agent",
@@ -241,13 +241,13 @@ class TestSentinelAgentExecutor:
         mock_verdict = self._make_mock_verdict("denied")
 
         with patch(
-            "src.a2a.sentinel_a2a_server.get_pipeline"
+            "src.a2a.ruriskry_a2a_server.get_pipeline"
         ) as mock_get_pipeline:
             pipeline = AsyncMock()
             pipeline.evaluate = AsyncMock(return_value=mock_verdict)
             mock_get_pipeline.return_value = pipeline
 
-            executor = SentinelAgentExecutor()
+            executor = RuriSkryAgentExecutor()
             executor._pipeline = pipeline
 
             # Mock context
@@ -259,7 +259,7 @@ class TestSentinelAgentExecutor:
             # Mock event queue (TaskUpdater writes to this)
             event_queue = MagicMock()
 
-            with patch("src.a2a.sentinel_a2a_server.TaskUpdater") as MockUpdater:
+            with patch("src.a2a.ruriskry_a2a_server.TaskUpdater") as MockUpdater:
                 updater_instance = AsyncMock()
                 MockUpdater.return_value = updater_instance
 
@@ -274,10 +274,10 @@ class TestSentinelAgentExecutor:
     @pytest.mark.asyncio
     async def test_execute_invalid_json_calls_complete_with_error(self) -> None:
         """executor.execute() should call complete() even when JSON is invalid."""
-        from src.a2a.sentinel_a2a_server import SentinelAgentExecutor
+        from src.a2a.ruriskry_a2a_server import RuriSkryAgentExecutor
 
-        with patch("src.a2a.sentinel_a2a_server.get_pipeline"):
-            executor = SentinelAgentExecutor()
+        with patch("src.a2a.ruriskry_a2a_server.get_pipeline"):
+            executor = RuriSkryAgentExecutor()
             executor._pipeline = AsyncMock()
 
             context = MagicMock()
@@ -287,7 +287,7 @@ class TestSentinelAgentExecutor:
 
             event_queue = MagicMock()
 
-            with patch("src.a2a.sentinel_a2a_server.TaskUpdater") as MockUpdater:
+            with patch("src.a2a.ruriskry_a2a_server.TaskUpdater") as MockUpdater:
                 updater_instance = AsyncMock()
                 MockUpdater.return_value = updater_instance
 
@@ -302,7 +302,7 @@ class TestSentinelAgentExecutor:
     async def test_execute_streams_progress_messages(self) -> None:
         """executor.execute() should call new_agent_message() at least once."""
         from src.core.models import ActionTarget, ActionType, ProposedAction, Urgency
-        from src.a2a.sentinel_a2a_server import SentinelAgentExecutor
+        from src.a2a.ruriskry_a2a_server import RuriSkryAgentExecutor
 
         action = ProposedAction(
             agent_id="test-agent",
@@ -317,8 +317,8 @@ class TestSentinelAgentExecutor:
 
         mock_verdict = self._make_mock_verdict("approved")
 
-        with patch("src.a2a.sentinel_a2a_server.get_pipeline"):
-            executor = SentinelAgentExecutor()
+        with patch("src.a2a.ruriskry_a2a_server.get_pipeline"):
+            executor = RuriSkryAgentExecutor()
             executor._pipeline = AsyncMock()
             executor._pipeline.evaluate = AsyncMock(return_value=mock_verdict)
 
@@ -329,7 +329,7 @@ class TestSentinelAgentExecutor:
 
             event_queue = MagicMock()
 
-            with patch("src.a2a.sentinel_a2a_server.TaskUpdater") as MockUpdater:
+            with patch("src.a2a.ruriskry_a2a_server.TaskUpdater") as MockUpdater:
                 updater_instance = AsyncMock()
                 MockUpdater.return_value = updater_instance
 

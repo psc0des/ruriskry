@@ -17,7 +17,7 @@ Design principles
   permissions gap or missing SDK never crashes an agent; it just reduces
   data fidelity and logs a warning.
 - Functions accept resource IDs and resource group names as parameters —
-  they are NOT hard-coded to sentinel-prod-rg.  They work in ANY Azure
+  they are NOT hard-coded to ruriskry-prod-rg.  They work in ANY Azure
   environment.
 
 Usage (inside an agent's ``@af.tool`` function)::
@@ -76,7 +76,7 @@ def query_resource_graph(kusto_query: str, subscription_id: str = "") -> list[di
     Example queries::
 
         "Resources | where type == 'microsoft.compute/virtualmachines'"
-        "Resources | where resourceGroup == 'sentinel-prod-rg'"
+        "Resources | where resourceGroup == 'ruriskry-prod-rg'"
         "Resources | where tags['environment'] == 'production'"
 
     Args:

@@ -1,16 +1,18 @@
-"""SentinelLayer A2A Server — exposes the governance engine via the A2A protocol.
+"""RuriSkry — A2A protocol server.
+
+Exposes the governance engine via the A2A protocol.
 
 What is A2A?
 -----------
 A2A (Agent-to-Agent) is an open protocol that lets AI agents talk to each other
-using a standard HTTP + JSON-RPC interface.  Each agent publishes an **Agent Card**
-(a machine-readable description of its capabilities) at a well-known URL.  Other
+using a standard HTTP + JSON-RPC interface. Each agent publishes an **Agent Card**
+(a machine-readable description of its capabilities) at a well-known URL. Other
 agents discover it, then send tasks and receive streaming progress updates via
 Server-Sent Events (SSE).
 
-SentinelLayer as an A2A Server
+RuriSkry as an A2A Server
 -------------------------------
-SentinelLayer publishes its governance engine as an A2A server.  External
+RuriSkry publishes its governance engine as an A2A server. External
 operational agents (cost-agent, monitoring-agent, deploy-agent) discover it via
 the Agent Card, send ``ProposedAction`` JSON payloads as task messages, and
 receive ``GovernanceVerdict`` results with streaming SRI progress updates.
@@ -21,7 +23,7 @@ Agent Card is served at:
 
 Run
 ---
-    uvicorn src.a2a.sentinel_a2a_server:app --host 0.0.0.0 --port 8000
+    uvicorn src.a2a.ruriskry_a2a_server:app --host 0.0.0.0 --port 8000
 """
 
 import logging
@@ -38,7 +40,7 @@ from a2a.utils import new_agent_text_message
 
 from src.core.decision_tracker import DecisionTracker
 from src.core.models import GovernanceVerdict, ProposedAction
-from src.core.pipeline import SentinelLayerPipeline
+from src.core.pipeline import RuriSkryPipeline
 
 logger = logging.getLogger(__name__)
 
@@ -46,14 +48,14 @@ logger = logging.getLogger(__name__)
 # Pipeline singleton — created once, shared across all requests.
 # ---------------------------------------------------------------------------
 
-_pipeline: SentinelLayerPipeline | None = None
+_pipeline: RuriSkryPipeline | None = None
 
 
-def get_pipeline() -> SentinelLayerPipeline:
+def get_pipeline() -> RuriSkryPipeline:
     """Return the module-level pipeline singleton, creating it on first call."""
     global _pipeline
     if _pipeline is None:
-        _pipeline = SentinelLayerPipeline()
+        _pipeline = RuriSkryPipeline()
     return _pipeline
 
 
@@ -62,10 +64,10 @@ def get_pipeline() -> SentinelLayerPipeline:
 # ---------------------------------------------------------------------------
 
 
-class SentinelAgentExecutor(AgentExecutor):
-    """A2A AgentExecutor that routes governance requests through SentinelLayer.
+class RuriSkryAgentExecutor(AgentExecutor):
+    """A2A AgentExecutor that routes governance requests through RuriSkry.
 
-    The A2A SDK calls ``execute()`` for every incoming task.  We:
+    The A2A SDK calls ``execute()`` for every incoming task. We:
     1. Parse the user message as a ``ProposedAction`` JSON string.
     2. Stream intermediate progress updates via SSE (Server-Sent Events).
     3. Run the full governance pipeline (all 4 agents in parallel).
@@ -74,8 +76,8 @@ class SentinelAgentExecutor(AgentExecutor):
     Why streaming?
     --------------
     A2A supports Server-Sent Events — the server can push multiple messages
-    *before* the final result.  Clients that call ``send_message_streaming()``
-    receive these as a live feed.  This lets the user see "Evaluating blast
+    *before* the final result. Clients that call ``send_message_streaming()``
+    receive these as a live feed. This lets the user see "Evaluating blast
     radius..." and "Checking policy compliance..." while the pipeline runs.
     """
 
@@ -122,7 +124,7 @@ class SentinelAgentExecutor(AgentExecutor):
             return
 
         # ── Stream progress — these are sent to the client via SSE ─────────
-        # new_agent_message() enqueues a TaskStatusUpdateEvent.  Clients that
+        # new_agent_message() enqueues a TaskStatusUpdateEvent. Clients that
         # called send_message_streaming() will receive each of these in order.
         updater.new_agent_message(
             [Part(root=TextPart(kind="text", text="Evaluating blast radius..."))]
@@ -146,7 +148,7 @@ class SentinelAgentExecutor(AgentExecutor):
         except Exception as exc:
             logger.warning("A2A: failed to record verdict to audit trail — %s", exc)
 
-        sri = verdict.sentinel_risk_index.sri_composite
+        sri = verdict.skry_risk_index.sri_composite
         decision = verdict.decision.value.upper()
 
         # ── Stream final SRI summary ─────────────────────────────────────
@@ -194,7 +196,7 @@ class SentinelAgentExecutor(AgentExecutor):
 
 
 def _build_agent_card(server_url: str) -> AgentCard:
-    """Build the A2A Agent Card that advertises SentinelLayer's capabilities.
+    """Build the A2A Agent Card that advertises RuriSkry's capabilities.
 
     The Agent Card is a JSON document that other agents download to learn:
     - What this agent is called and what it does
@@ -205,7 +207,7 @@ def _build_agent_card(server_url: str) -> AgentCard:
     Think of it like a business card for an AI agent.
     """
     return AgentCard(
-        name="SentinelLayer Governance Engine",
+        name="RuriSkry Governance Engine",
         description=(
             "AI Action Governance — evaluates proposed infrastructure actions "
             "using SRI™ scoring. Intercepts AI agent actions and scores them "
@@ -260,7 +262,7 @@ def create_app() -> Any:
 
     This wires together:
     - The Agent Card (published at /.well-known/agent-card.json)
-    - The AgentExecutor (SentinelAgentExecutor)
+    - The AgentExecutor (RuriSkryAgentExecutor)
     - The DefaultRequestHandler (routes JSON-RPC calls to the executor)
     - InMemoryTaskStore (tracks in-flight tasks)
     - InMemoryQueueManager (manages SSE event queues)
@@ -272,7 +274,7 @@ def create_app() -> Any:
     logger.info("A2A server: building app with URL=%s", server_url)
 
     agent_card = _build_agent_card(server_url)
-    executor = SentinelAgentExecutor()
+    executor = RuriSkryAgentExecutor()
 
     handler = DefaultRequestHandler(
         agent_executor=executor,
@@ -296,6 +298,6 @@ def create_app() -> Any:
 # ---------------------------------------------------------------------------
 # Module-level ASGI app — used directly by uvicorn
 # ---------------------------------------------------------------------------
-# uvicorn src.a2a.sentinel_a2a_server:app --host 0.0.0.0 --port 8000
+# uvicorn src.a2a.ruriskry_a2a_server:app --host 0.0.0.0 --port 8000
 
 app = create_app()

@@ -1,5 +1,5 @@
 /**
- * ConnectedAgents.jsx — grid of cards for every A2A agent connected to SentinelLayer.
+ * ConnectedAgents.jsx — grid of cards for every A2A agent connected to RuriSkry.
  *
  * Each card shows:
  *   - Agent name + a green pulsing dot (online) or grey dot (offline)
@@ -28,8 +28,8 @@ import LiveLogPanel from './LiveLogPanel'
 /** Map A2A agent name → scan endpoint type */
 const AGENT_TYPE = {
   'cost-optimization-agent': 'cost',
-  'monitoring-agent':        'monitoring',
-  'deploy-agent':            'deploy',
+  'monitoring-agent': 'monitoring',
+  'deploy-agent': 'deploy',
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -53,9 +53,9 @@ function formatTime(iso) {
 
 function verdictBadge(decision) {
   const d = decision?.toLowerCase()
-  if (d === 'approved')  return 'bg-green-500/20 text-green-400 border-green-500/30'
+  if (d === 'approved') return 'bg-green-500/20 text-green-400 border-green-500/30'
   if (d === 'escalated') return 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30'
-  if (d === 'denied')    return 'bg-red-500/20 text-red-400 border-red-500/30'
+  if (d === 'denied') return 'bg-red-500/20 text-red-400 border-red-500/30'
   return 'bg-slate-700 text-slate-400 border-slate-600'
 }
 
@@ -63,12 +63,12 @@ function verdictBadge(decision) {
 
 function DropdownMenu({ scanning, hasScanId, onAction }) {
   const items = [
-    { key: 'scan',    icon: '▶', label: 'Start Scan',       disabled: scanning },
-    { key: 'cancel',  icon: '⏹', label: 'Stop Scan',        disabled: !scanning },
+    { key: 'scan', icon: '▶', label: 'Start Scan', disabled: scanning },
+    { key: 'cancel', icon: '⏹', label: 'Stop Scan', disabled: !scanning },
     { key: 'results', icon: '📋', label: 'Last Run Results', disabled: false },
-    { key: 'history', icon: '📊', label: 'History',          disabled: false },
-    { key: 'log',     icon: '📄', label: 'View Live Log',    disabled: !hasScanId },
-    { key: 'details', icon: 'ℹ️', label: 'Agent Details',   disabled: false },
+    { key: 'history', icon: '📊', label: 'History', disabled: false },
+    { key: 'log', icon: '📄', label: 'View Live Log', disabled: !hasScanId },
+    { key: 'details', icon: 'ℹ️', label: 'Agent Details', disabled: false },
   ]
 
   return (
@@ -231,13 +231,13 @@ function HistoryPanel({ agentName, data, onClose }) {
 
 function DetailsPanel({ agent, onClose }) {
   const rows = [
-    { label: 'Name',           value: agent.name },
-    { label: 'Registered',     value: formatTime(agent.registered_at) },
-    { label: 'Last seen',      value: formatTime(agent.last_seen) },
+    { label: 'Name', value: agent.name },
+    { label: 'Registered', value: formatTime(agent.registered_at) },
+    { label: 'Last seen', value: formatTime(agent.last_seen) },
     { label: 'Total proposed', value: agent.total_actions_proposed ?? 0 },
-    { label: 'Approved',       value: agent.approval_count ?? 0 },
-    { label: 'Escalated',      value: agent.escalation_count ?? 0 },
-    { label: 'Denied',         value: agent.denial_count ?? 0 },
+    { label: 'Approved', value: agent.approval_count ?? 0 },
+    { label: 'Escalated', value: agent.escalation_count ?? 0 },
+    { label: 'Denied', value: agent.denial_count ?? 0 },
     { label: 'Agent card URL', value: agent.agent_card_url ?? '—' },
   ]
 
@@ -258,10 +258,10 @@ function DetailsPanel({ agent, onClose }) {
 // ── AgentCard ──────────────────────────────────────────────────────────────
 
 function AgentCard({ agent, menuOpen, onMenuToggle, onMenuAction, scanning, hasScanId }) {
-  const online    = isOnline(agent.last_seen)
-  const total     = agent.total_actions_proposed ?? 0
-  const approved  = agent.approval_count ?? 0
-  const denied    = agent.denial_count ?? 0
+  const online = isOnline(agent.last_seen)
+  const total = agent.total_actions_proposed ?? 0
+  const approved = agent.approval_count ?? 0
+  const denied = agent.denial_count ?? 0
   const escalated = agent.escalation_count ?? 0
 
   const pct = (n) => (total > 0 ? (n / total) * 100 : 0)
@@ -272,9 +272,8 @@ function AgentCard({ agent, menuOpen, onMenuToggle, onMenuAction, scanning, hasS
       {/* ── Name + status dot + 3-dot menu ── */}
       <div className="flex items-center gap-2">
         <span
-          className={`w-2 h-2 rounded-full shrink-0 ${
-            online ? 'bg-green-500 animate-pulse' : 'bg-slate-600'
-          }`}
+          className={`w-2 h-2 rounded-full shrink-0 ${online ? 'bg-green-500 animate-pulse' : 'bg-slate-600'
+            }`}
           title={online ? 'Online (seen < 5 min ago)' : 'Offline'}
         />
         <span
@@ -317,9 +316,9 @@ function AgentCard({ agent, menuOpen, onMenuToggle, onMenuAction, scanning, hasS
             <div className="w-full bg-slate-600 rounded-full" />
           ) : (
             <>
-              {approved  > 0 && <div className="bg-green-500"  style={{ width: `${pct(approved)}%` }}  />}
+              {approved > 0 && <div className="bg-green-500" style={{ width: `${pct(approved)}%` }} />}
               {escalated > 0 && <div className="bg-yellow-500" style={{ width: `${pct(escalated)}%` }} />}
-              {denied    > 0 && <div className="bg-red-500"    style={{ width: `${pct(denied)}%` }}    />}
+              {denied > 0 && <div className="bg-red-500" style={{ width: `${pct(denied)}%` }} />}
             </>
           )}
         </div>
@@ -351,10 +350,10 @@ function AgentCard({ agent, menuOpen, onMenuToggle, onMenuAction, scanning, hasS
 // ── ConnectedAgents (section) ──────────────────────────────────────────────
 
 export default function ConnectedAgents({ agents }) {
-  const [menus, setMenus]     = useState({})  // { agentName: bool }
-  const [scanState, setScan]  = useState({})  // { agentName: { scanning, scanId } }
-  const [panels, setPanels]   = useState({})  // { agentName: panel type string | null }
-  const [panelData, setData]  = useState({})  // { agentName: fetched data }
+  const [menus, setMenus] = useState({})  // { agentName: bool }
+  const [scanState, setScan] = useState({})  // { agentName: { scanning, scanId } }
+  const [panels, setPanels] = useState({})  // { agentName: panel type string | null }
+  const [panelData, setData] = useState({})  // { agentName: fetched data }
 
   const pollRefs = useRef({})
 
@@ -501,9 +500,9 @@ export default function ConnectedAgents({ agents }) {
 
       {/* ── Per-agent panels ── */}
       {agents.map((agent) => {
-        const panel     = panels[agent.name]
-        const data      = panelData[agent.name]
-        const scanId    = scanState[agent.name]?.scanId
+        const panel = panels[agent.name]
+        const data = panelData[agent.name]
+        const scanId = scanState[agent.name]?.scanId
         const agentType = AGENT_TYPE[agent.name]
 
         if (!panel) return null

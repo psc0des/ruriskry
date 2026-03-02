@@ -100,8 +100,8 @@ class TestCostAgentAgnostic:
         assert "vm-web-01" not in _AGENT_INSTRUCTIONS, (
             "_AGENT_INSTRUCTIONS must not hardcode vm-web-01"
         )
-        assert "sentinel-prod-rg" not in _AGENT_INSTRUCTIONS, (
-            "_AGENT_INSTRUCTIONS must not hardcode sentinel-prod-rg"
+        assert "ruriskry-prod-rg" not in _AGENT_INSTRUCTIONS, (
+            "_AGENT_INSTRUCTIONS must not hardcode ruriskry-prod-rg"
         )
 
     # ------------------------------------------------------------------

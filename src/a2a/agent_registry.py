@@ -1,9 +1,9 @@
-"""A2A Agent Registry — tracks operational agents that connect to SentinelLayer.
+"""A2A Agent Registry — tracks operational agents that connect to RuriSkry.
 
 What is the registry?
 ---------------------
 When an operational agent (cost-agent, monitoring-agent, deploy-agent) sends its
-first A2A request to SentinelLayer, the registry records it.  After every
+first A2A request to RuriSkry, the registry records it.  After every
 governance evaluation the registry updates that agent's counters (how many
 actions were approved, denied, escalated).
 

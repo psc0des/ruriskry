@@ -1,5 +1,5 @@
 # =============================================================================
-# SentinelLayer — Mini Production Environment — Input Variables
+# RuriSkry — Mini Production Environment — Input Variables
 # =============================================================================
 # Copy terraform.tfvars.example → terraform.tfvars and fill in your values.
 # terraform.tfvars is in .gitignore — never commit it.
@@ -26,7 +26,7 @@ variable "suffix" {
   description = <<-EOT
     Short unique suffix for globally-unique resource names (storage account, App Service).
     Rules: lowercase letters and digits only, max 8 characters.
-    Example: "abc1234" makes storage account "sentinelprodabc1234"
+    Example: "abc1234" makes storage account "ruriskryprodabc1234"
     and App Service "payment-api-prod-abc1234".
     Tip: use your initials + 4 random digits.
   EOT
@@ -41,7 +41,7 @@ variable "suffix" {
 variable "vm_admin_username" {
   description = "Local administrator username for both VMs. Cannot be 'admin', 'administrator', or 'root'."
   type        = string
-  default     = "sentineladmin"
+  default     = "ruriskryadmin"
 }
 
 variable "vm_admin_password" {

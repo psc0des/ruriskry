@@ -60,7 +60,7 @@ class DecisionTracker:
 
         Args:
             verdict: The :class:`~src.core.models.GovernanceVerdict` returned
-                by ``SentinelLayerPipeline.evaluate()``.
+                by ``RuriSkryPipeline.evaluate()``.
         """
         record = self._verdict_to_dict(verdict)
         # Cosmos DB requires an "id" field as the document key.
@@ -72,7 +72,7 @@ class DecisionTracker:
             "DecisionTracker: recorded %s -> %s (SRI %.1f)",
             verdict.proposed_action.action_type.value,
             verdict.decision.value,
-            verdict.sentinel_risk_index.sri_composite,
+            verdict.skry_risk_index.sri_composite,
         )
 
     def get_recent(self, limit: int = 10) -> list[dict]:
@@ -167,7 +167,7 @@ class DecisionTracker:
     def _verdict_to_dict(self, verdict: GovernanceVerdict) -> dict:
         """Flatten a GovernanceVerdict into a simple dict for storage."""
         action = verdict.proposed_action
-        sri = verdict.sentinel_risk_index
+        sri = verdict.skry_risk_index
 
         # Extract violation policy IDs from agent_results (list of dicts)
         policy_data = verdict.agent_results.get("policy", {})

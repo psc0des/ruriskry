@@ -35,7 +35,7 @@ import uvicorn
 # Keep demo output clean — suppress library noise.
 logging.basicConfig(level=logging.WARNING)
 
-from src.a2a.sentinel_a2a_server import app as _a2a_app  # noqa: E402
+from src.a2a.ruriskry_a2a_server import app as _a2a_app  # noqa: E402
 from src.core.decision_tracker import DecisionTracker  # noqa: E402
 from src.core.pipeline import SentinelLayerPipeline  # noqa: E402
 from src.operational_agents.cost_agent import CostOptimizationAgent  # noqa: E402

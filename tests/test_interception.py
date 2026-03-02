@@ -1,7 +1,7 @@
-"""Tests for the ActionInterceptor — SentinelLayer's governance entry point.
+"""Tests for the ActionInterceptor — RuriSkry's governance entry point.
 
 These tests check the ActionInterceptor in isolation by *mocking* the
-SentinelLayerPipeline and DecisionTracker.  Mocking means we replace the real
+RuriSkryPipeline and DecisionTracker.  Mocking means we replace the real
 objects with fake ones that return pre-defined answers.
 
 Why mock instead of using real objects?
@@ -67,7 +67,7 @@ def _make_verdict(
         action_id="test-uuid-1234",
         timestamp=datetime(2026, 2, 20, 12, 0, 0, tzinfo=timezone.utc),
         proposed_action=action,
-        sentinel_risk_index=SRIBreakdown(
+        skry_risk_index=SRIBreakdown(
             sri_infrastructure=10.0,
             sri_policy=5.0,
             sri_historical=8.0,
@@ -412,7 +412,7 @@ class TestGetInterceptorSingleton:
     def test_returns_action_interceptor_instance(self):
         """get_interceptor() must return an ActionInterceptor, not None."""
         interception_module._interceptor = None  # reset
-        with patch("src.core.interception.SentinelLayerPipeline"), \
+        with patch("src.core.interception.RuriSkryPipeline"), \
              patch("src.core.interception.DecisionTracker"):
             result = get_interceptor()
             assert isinstance(result, ActionInterceptor)
@@ -421,7 +421,7 @@ class TestGetInterceptorSingleton:
     def test_returns_same_instance_on_repeated_calls(self):
         """Second call must return exactly the same object (singleton)."""
         interception_module._interceptor = None  # reset
-        with patch("src.core.interception.SentinelLayerPipeline"), \
+        with patch("src.core.interception.RuriSkryPipeline"), \
              patch("src.core.interception.DecisionTracker"):
             i1 = get_interceptor()
             i2 = get_interceptor()
@@ -429,9 +429,9 @@ class TestGetInterceptorSingleton:
         interception_module._interceptor = None  # clean up
 
     def test_pipeline_constructed_only_once(self):
-        """SentinelLayerPipeline should be instantiated just once, not per call."""
+        """RuriSkryPipeline should be instantiated just once, not per call."""
         interception_module._interceptor = None
-        with patch("src.core.interception.SentinelLayerPipeline") as MockPipeline, \
+        with patch("src.core.interception.RuriSkryPipeline") as MockPipeline, \
              patch("src.core.interception.DecisionTracker"):
             get_interceptor()
             get_interceptor()

@@ -9,7 +9,7 @@
 subscription_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 
 # Core resources
-resource_group_name = "sentinel-layer-rg"
+resource_group_name = "ruriskry-rg"
 location            = "eastus2"
 env                 = "dev"
 suffix              = "replace-me"
@@ -26,7 +26,7 @@ foundry_custom_subdomain_name = ""
 
 # Foundry project and deployment
 create_foundry_project    = false
-foundry_project_name      = "sentinel-layer"
+foundry_project_name      = "ruriskry"
 create_foundry_deployment = true
 foundry_model             = "gpt-4.1"
 foundry_model_version     = "2025-04-14"
