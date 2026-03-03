@@ -1,0 +1,19 @@
+{
+  "id": "b691783b-67ba-490c-9227-75dde7e8a5fb",
+  "scan_id": "b691783b-67ba-490c-9227-75dde7e8a5fb",
+  "status": "running",
+  "agent_type": "monitoring",
+  "resource_group": null,
+  "started_at": "2026-03-02T04:20:57.227398+00:00",
+  "completed_at": null,
+  "proposed_actions": [],
+  "evaluations": [],
+  "totals": {
+    "approved": 0,
+    "escalated": 0,
+    "denied": 0
+  },
+  "event_count": 0,
+  "last_event_at": null,
+  "error": null
+}

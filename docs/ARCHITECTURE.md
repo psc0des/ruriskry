@@ -404,7 +404,7 @@ dashboard/                     # Vite + React frontend
 `data/seed_resources.json` contains two groups of resources:
 
 1. **Mini prod resources** (ruriskry-prod-rg) — `vm-dr-01`, `vm-web-01`, `payment-api-prod`,
-   `nsg-east-prod`, `ruriskryproddata`. These match `infrastructure/terraform-prod/` exactly.
+   `nsg-east-prod`, `ruriskryprodprod`. These match `infrastructure/terraform-prod/` exactly.
    After `terraform apply`, replace `YOUR-SUBSCRIPTION-ID` with your real subscription ID.
    Each has a specific governance scenario (DENIED / APPROVED / ESCALATED).
 

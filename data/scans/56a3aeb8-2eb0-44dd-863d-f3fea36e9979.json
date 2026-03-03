@@ -1,0 +1,19 @@
+{
+  "id": "56a3aeb8-2eb0-44dd-863d-f3fea36e9979",
+  "scan_id": "56a3aeb8-2eb0-44dd-863d-f3fea36e9979",
+  "status": "running",
+  "agent_type": "cost",
+  "resource_group": null,
+  "started_at": "2026-03-02T02:54:28.911352+00:00",
+  "completed_at": null,
+  "proposed_actions": [],
+  "evaluations": [],
+  "totals": {
+    "approved": 0,
+    "escalated": 0,
+    "denied": 0
+  },
+  "event_count": 0,
+  "last_event_at": null,
+  "error": null
+}

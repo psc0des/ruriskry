@@ -1,0 +1,19 @@
+{
+  "id": "cb96a304-e118-421e-9ab5-e015a9f97c10",
+  "scan_id": "cb96a304-e118-421e-9ab5-e015a9f97c10",
+  "status": "running",
+  "agent_type": "cost",
+  "resource_group": "custom-rg",
+  "started_at": "2026-03-02T20:01:10.291835+00:00",
+  "completed_at": null,
+  "proposed_actions": [],
+  "evaluations": [],
+  "totals": {
+    "approved": 0,
+    "escalated": 0,
+    "denied": 0
+  },
+  "event_count": 0,
+  "last_event_at": null,
+  "error": null
+}

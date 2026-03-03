@@ -42,10 +42,11 @@ src/
 ├── notifications/               # Outbound alerting ← NEW Phase 17
 │   └── teams_notifier.py        # send_teams_notification() — Adaptive Card to Teams webhook
 ├── api/
-│   └── dashboard_api.py         # FastAPI REST endpoints — 17 total (Phase 10 agents,
+│   └── dashboard_api.py         # FastAPI REST endpoints — 18 total (Phase 10 agents,
 │                                #   Phase 12 alert-trigger, Phase 13 scan triggers,
 │                                #   Phase 16: SSE stream, cancel, last-run + durable store,
-│                                #   Phase 17: notification-status + test-notification)
+│                                #   Phase 17: notification-status + test-notification,
+│                                #   Phase 18: evaluation explanation)
 └── config.py                    # Environment config with SRI thresholds
 ```
 

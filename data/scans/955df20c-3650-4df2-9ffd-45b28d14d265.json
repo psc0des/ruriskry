@@ -1,0 +1,19 @@
+{
+  "id": "955df20c-3650-4df2-9ffd-45b28d14d265",
+  "scan_id": "955df20c-3650-4df2-9ffd-45b28d14d265",
+  "status": "running",
+  "agent_type": "monitoring",
+  "resource_group": null,
+  "started_at": "2026-03-02T04:10:09.597309+00:00",
+  "completed_at": null,
+  "proposed_actions": [],
+  "evaluations": [],
+  "totals": {
+    "approved": 0,
+    "escalated": 0,
+    "denied": 0
+  },
+  "event_count": 0,
+  "last_event_at": null,
+  "error": null
+}

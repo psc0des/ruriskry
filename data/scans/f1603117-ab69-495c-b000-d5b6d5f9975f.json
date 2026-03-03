@@ -1,0 +1,19 @@
+{
+  "id": "f1603117-ab69-495c-b000-d5b6d5f9975f",
+  "scan_id": "f1603117-ab69-495c-b000-d5b6d5f9975f",
+  "status": "running",
+  "agent_type": "cost",
+  "resource_group": "custom-rg",
+  "started_at": "2026-03-02T20:00:35.329768+00:00",
+  "completed_at": null,
+  "proposed_actions": [],
+  "evaluations": [],
+  "totals": {
+    "approved": 0,
+    "escalated": 0,
+    "denied": 0
+  },
+  "event_count": 0,
+  "last_event_at": null,
+  "error": null
+}

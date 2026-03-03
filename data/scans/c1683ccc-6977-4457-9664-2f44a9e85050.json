@@ -1,0 +1,19 @@
+{
+  "id": "c1683ccc-6977-4457-9664-2f44a9e85050",
+  "scan_id": "c1683ccc-6977-4457-9664-2f44a9e85050",
+  "status": "running",
+  "agent_type": "monitoring",
+  "resource_group": null,
+  "started_at": "2026-03-02T20:00:35.322199+00:00",
+  "completed_at": null,
+  "proposed_actions": [],
+  "evaluations": [],
+  "totals": {
+    "approved": 0,
+    "escalated": 0,
+    "denied": 0
+  },
+  "event_count": 0,
+  "last_event_at": null,
+  "error": null
+}

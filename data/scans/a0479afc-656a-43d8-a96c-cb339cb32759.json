@@ -1,0 +1,19 @@
+{
+  "id": "a0479afc-656a-43d8-a96c-cb339cb32759",
+  "scan_id": "a0479afc-656a-43d8-a96c-cb339cb32759",
+  "status": "running",
+  "agent_type": "deploy",
+  "resource_group": null,
+  "started_at": "2026-03-02T02:54:28.912035+00:00",
+  "completed_at": null,
+  "proposed_actions": [],
+  "evaluations": [],
+  "totals": {
+    "approved": 0,
+    "escalated": 0,
+    "denied": 0
+  },
+  "event_count": 0,
+  "last_event_at": null,
+  "error": null
+}

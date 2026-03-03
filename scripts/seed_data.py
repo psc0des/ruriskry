@@ -182,7 +182,7 @@ def seed_policies() -> None:
 
 if __name__ == "__main__":
     print("=" * 55)
-    print("SentinelLayer — Seed Demo Data")
+    print("RuriSkry — Seed Demo Data")
     print("=" * 55)
     print(f"Mode: {'MOCK (local JSON)' if settings.use_local_mocks else 'LIVE (Azure)'}")
     print()

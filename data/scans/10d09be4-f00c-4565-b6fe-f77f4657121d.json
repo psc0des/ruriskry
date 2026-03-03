@@ -1,0 +1,19 @@
+{
+  "id": "10d09be4-f00c-4565-b6fe-f77f4657121d",
+  "scan_id": "10d09be4-f00c-4565-b6fe-f77f4657121d",
+  "status": "running",
+  "agent_type": "cost",
+  "resource_group": null,
+  "started_at": "2026-03-02T18:58:27.607348+00:00",
+  "completed_at": null,
+  "proposed_actions": [],
+  "evaluations": [],
+  "totals": {
+    "approved": 0,
+    "escalated": 0,
+    "denied": 0
+  },
+  "event_count": 0,
+  "last_event_at": null,
+  "error": null
+}

@@ -1,10 +1,10 @@
-"""SentinelLayer — Phase 12 Live Intelligence Demo.
+"""RuriSkry — Phase 12 Live Intelligence Demo.
 
 Two-Layer AI Governance in action:
 
   Layer 1  Operational agents INVESTIGATE real Azure data with GPT-4.1
            before proposing any action (no hardcoded rules).
-  Layer 2  SentinelLayer INDEPENDENTLY evaluates every proposal with its
+  Layer 2  RuriSkry INDEPENDENTLY evaluates every proposal with its
            own four-agent pipeline (blast radius, policy, historical, cost).
 
 Demo scenarios
@@ -16,7 +16,7 @@ Demo scenarios
 Each scenario shows:
   ✦ Which Azure tools the ops agent called (Resource Graph, Monitor metrics …)
   ✦ The evidence-backed reason the agent produced
-  ✦ SentinelLayer's independent SRI score and governance verdict
+  ✦ RuriSkry's independent SRI score and governance verdict
 
 Run
 ---
@@ -37,7 +37,7 @@ logging.basicConfig(level=logging.WARNING)
 
 from src.a2a.ruriskry_a2a_server import app as _a2a_app  # noqa: E402
 from src.core.decision_tracker import DecisionTracker  # noqa: E402
-from src.core.pipeline import SentinelLayerPipeline  # noqa: E402
+from src.core.pipeline import RuriSkryPipeline  # noqa: E402
 from src.operational_agents.cost_agent import CostOptimizationAgent  # noqa: E402
 from src.operational_agents.monitoring_agent import MonitoringAgent  # noqa: E402
 from src.operational_agents.deploy_agent import DeployAgent  # noqa: E402
@@ -50,7 +50,7 @@ _a2a_server: uvicorn.Server | None = None
 
 
 async def _start_a2a_server() -> None:
-    """Run the SentinelLayer A2A server in the background on port 8001."""
+    """Run the RuriSkry A2A server in the background on port 8001."""
     global _a2a_server
     config = uvicorn.Config(_a2a_app, host="0.0.0.0", port=8001, log_level="warning")
     _a2a_server = uvicorn.Server(config)
@@ -95,7 +95,7 @@ def _print_proposal(proposal, idx: int) -> None:
 
 
 def _print_verdict(verdict) -> None:
-    sri = verdict.sentinel_risk_index
+    sri = verdict.skry_risk_index
     decision = verdict.decision.value
     icons = {
         "approved": "[APPROVED]",
@@ -106,7 +106,7 @@ def _print_verdict(verdict) -> None:
     llm_label = "[GPT-4.1 active]" if llm_used else "[rule-based fallback]"
 
     print(_bar())
-    print(f"  SentinelLayer verdict : {icons.get(decision, decision.upper())}")
+    print(f"  RuriSkry verdict : {icons.get(decision, decision.upper())}")
     print(f"  LLM                   : {llm_label}")
     print(f"  SRI Composite         : {sri.sri_composite:.1f} / 100")
     print(f"    Infrastructure      : {sri.sri_infrastructure:.1f}")
@@ -126,7 +126,7 @@ def _print_verdict(verdict) -> None:
 
 
 async def scenario_1_alert_driven_scaleup(
-    pipeline: SentinelLayerPipeline,
+    pipeline: RuriSkryPipeline,
     tracker: DecisionTracker,
     resource_group: str | None = None,
 ) -> None:
@@ -159,7 +159,7 @@ async def scenario_1_alert_driven_scaleup(
 
     for i, proposal in enumerate(proposals):
         _print_proposal(proposal, i)
-        print("\n  Submitting to SentinelLayer for governance evaluation ...")
+        print("\n  Submitting to RuriSkry for governance evaluation ...")
         verdict = await pipeline.evaluate(proposal)
         tracker.record(verdict)
         _print_verdict(verdict)
@@ -171,7 +171,7 @@ async def scenario_1_alert_driven_scaleup(
 
 
 async def scenario_2_cost_scan(
-    pipeline: SentinelLayerPipeline,
+    pipeline: RuriSkryPipeline,
     tracker: DecisionTracker,
     resource_group: str | None = None,
 ) -> None:
@@ -196,7 +196,7 @@ async def scenario_2_cost_scan(
     print(f"  Agent identified {len(proposals)} proposal(s):")
     for i, proposal in enumerate(proposals):
         _print_proposal(proposal, i)
-        print("\n  Submitting to SentinelLayer for governance evaluation ...")
+        print("\n  Submitting to RuriSkry for governance evaluation ...")
         verdict = await pipeline.evaluate(proposal)
         tracker.record(verdict)
         _print_verdict(verdict)
@@ -209,7 +209,7 @@ async def scenario_2_cost_scan(
 
 
 async def scenario_3_security_review(
-    pipeline: SentinelLayerPipeline,
+    pipeline: RuriSkryPipeline,
     tracker: DecisionTracker,
     resource_group: str | None = None,
 ) -> None:
@@ -234,7 +234,7 @@ async def scenario_3_security_review(
     print(f"  Agent identified {len(proposals)} proposal(s):")
     for i, proposal in enumerate(proposals):
         _print_proposal(proposal, i)
-        print("\n  Submitting to SentinelLayer for governance evaluation ...")
+        print("\n  Submitting to RuriSkry for governance evaluation ...")
         verdict = await pipeline.evaluate(proposal)
         tracker.record(verdict)
         _print_verdict(verdict)
@@ -249,13 +249,13 @@ async def scenario_3_security_review(
 async def main(resource_group: str | None = None) -> None:
     print()
     print(_header())
-    print("  SentinelLayer — Phase 12: Two-Layer AI Governance Demo")
+    print("  RuriSkry — Phase 12: Two-Layer AI Governance Demo")
     print("  Intelligent Ops Agents + Independent Governance Evaluation")
     print(_header())
     print()
     print("  Layer 1: Ops agents query REAL Azure data, reason with GPT-4.1,")
     print("           and submit EVIDENCE-BACKED proposals.")
-    print("  Layer 2: SentinelLayer INDEPENDENTLY evaluates each proposal")
+    print("  Layer 2: RuriSkry INDEPENDENTLY evaluates each proposal")
     print("           with its four-agent SRI pipeline.")
     print()
     rg_display = resource_group or "whole subscription (no --resource-group specified)"
@@ -273,7 +273,7 @@ async def main(resource_group: str | None = None) -> None:
     print("  A2A server ready.")
 
     print("  Initialising pipeline ...")
-    pipeline = SentinelLayerPipeline()
+    pipeline = RuriSkryPipeline()
     tracker = DecisionTracker()
     print("  Pipeline ready.")
 
@@ -302,7 +302,7 @@ async def main(resource_group: str | None = None) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="SentinelLayer Phase 12 two-layer intelligence demo"
+        description="RuriSkry Phase 12 two-layer intelligence demo"
     )
     parser.add_argument(
         "--resource-group",

@@ -1,5 +1,5 @@
 # ============================================
-# SentinelLayer — Python Dependencies
+# RuriSkry — Python Dependencies
 # ============================================
 
 # --- Azure Services ---

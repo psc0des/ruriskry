@@ -1,4 +1,4 @@
-"""Azure Functions entry point for SentinelLayer.
+"""Azure Functions entry point for RuriSkry.
 
 Triggers:
   - HTTP: Dashboard API endpoints

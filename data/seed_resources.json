@@ -21,7 +21,7 @@
         "purpose": "governance-demo"
       },
       "dependencies": [
-        "sentinelprodprod",
+        "ruriskryprodprod",
         "nsg-east-prod"
       ],
       "dependents": [
@@ -48,7 +48,7 @@
       },
       "dependencies": [
         "payment-api-prod",
-        "sentinelprodprod",
+        "ruriskryprodprod",
         "nsg-east-prod"
       ],
       "dependents": []
@@ -69,7 +69,7 @@
         "purpose": "governance-demo"
       },
       "dependencies": [
-        "sentinelprodprod"
+        "ruriskryprodprod"
       ],
       "dependents": [
         "vm-web-01"
@@ -98,8 +98,8 @@
       ]
     },
     {
-      "id": "/subscriptions/44caae19-24a6-4c48-9f94-b3aa3865a3f7/resourceGroups/ruriskry-prod-rg/providers/Microsoft.Storage/storageAccounts/sentinelprodprod",
-      "name": "sentinelprodprod",
+      "id": "/subscriptions/44caae19-24a6-4c48-9f94-b3aa3865a3f7/resourceGroups/ruriskry-prod-rg/providers/Microsoft.Storage/storageAccounts/ruriskryprodprod",
+      "name": "ruriskryprodprod",
       "type": "Microsoft.Storage/storageAccounts",
       "location": "canadacentral",
       "monthly_cost": 1.00,
@@ -251,12 +251,12 @@
     }
   ],
   "dependency_edges": [
-    {"from": "vm-dr-01",        "to": "sentinelprodprod",  "type": "storage_dependency"},
+    {"from": "vm-dr-01",        "to": "ruriskryprodprod",  "type": "storage_dependency"},
     {"from": "vm-dr-01",        "to": "nsg-east-prod",     "type": "network_governance"},
     {"from": "vm-web-01",       "to": "payment-api-prod",  "type": "service_dependency"},
-    {"from": "vm-web-01",       "to": "sentinelprodprod",  "type": "storage_dependency"},
+    {"from": "vm-web-01",       "to": "ruriskryprodprod",  "type": "storage_dependency"},
     {"from": "vm-web-01",       "to": "nsg-east-prod",     "type": "network_governance"},
-    {"from": "payment-api-prod","to": "sentinelprodprod",  "type": "storage_dependency"},
+    {"from": "payment-api-prod","to": "ruriskryprodprod",  "type": "storage_dependency"},
     {"from": "web-tier-01",     "to": "api-server-03",     "type": "http_dependency"},
     {"from": "api-server-03",   "to": "aks-prod",          "type": "service_dependency"},
     {"from": "payment-api",     "to": "notification-service", "type": "circular_dependency"},

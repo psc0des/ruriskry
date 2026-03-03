@@ -1,0 +1,19 @@
+{
+  "id": "35479e20-09fc-470a-8d69-80d6beb02197",
+  "scan_id": "35479e20-09fc-470a-8d69-80d6beb02197",
+  "status": "running",
+  "agent_type": "cost",
+  "resource_group": "custom-rg",
+  "started_at": "2026-03-02T15:43:12.704084+00:00",
+  "completed_at": null,
+  "proposed_actions": [],
+  "evaluations": [],
+  "totals": {
+    "approved": 0,
+    "escalated": 0,
+    "denied": 0
+  },
+  "event_count": 0,
+  "last_event_at": null,
+  "error": null
+}

@@ -1,5 +1,5 @@
 [project]
-name = "sentinellayer"
+name = "ruriskry"
 version = "0.1.0"
 description = "AI Action Governance & Simulation Engine"
 requires-python = ">=3.11"

@@ -1,0 +1,19 @@
+{
+  "id": "a30ee7b1-e4ba-4266-9315-c145a63bb15c",
+  "scan_id": "a30ee7b1-e4ba-4266-9315-c145a63bb15c",
+  "status": "running",
+  "agent_type": "deploy",
+  "resource_group": null,
+  "started_at": "2026-03-02T15:43:12.697200+00:00",
+  "completed_at": null,
+  "proposed_actions": [],
+  "evaluations": [],
+  "totals": {
+    "approved": 0,
+    "escalated": 0,
+    "denied": 0
+  },
+  "event_count": 0,
+  "last_event_at": null,
+  "error": null
+}

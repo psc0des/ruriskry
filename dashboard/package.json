@@ -1,7 +1,7 @@
 {
-  "name": "sentinellayer-dashboard",
+  "name": "ruriskry-dashboard",
   "version": "0.1.0",
-  "description": "SentinelLayer Governance Dashboard — SRI™ visualization",
+  "description": "RuriSkry Governance Dashboard — SRI™ visualization",
   "private": true,
   "type": "module",
   "scripts": {

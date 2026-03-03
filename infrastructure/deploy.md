@@ -1,6 +1,6 @@
 # Infrastructure Deployment Runbook
 
-This file is the practical guide for deploying and testing SentinelLayer infrastructure from GitHub.
+This file is the practical guide for deploying and testing RuriSkry infrastructure from GitHub.
 
 ## Scope
 

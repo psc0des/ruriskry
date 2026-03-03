@@ -1,8 +1,8 @@
-"""SentinelLayer — A2A Protocol Demo (Phase 10).
+"""RuriSkry — A2A Protocol Demo (Phase 10).
 
 What this demo shows
 ---------------------
-Three operational agents talk to SentinelLayer using the A2A protocol:
+Three operational agents talk to RuriSkry using the A2A protocol:
 
   1. Cost agent    proposes deleting  vm-23 (disaster-recovery VM)  → DENIED
   2. Monitoring agent proposes scaling web-tier-01                  → APPROVED
@@ -10,7 +10,7 @@ Three operational agents talk to SentinelLayer using the A2A protocol:
 
 How it works
 ------------
-1. SentinelLayer A2A server starts in a background thread (uvicorn).
+1. RuriSkry A2A server starts in a background thread (uvicorn).
 2. Each operational agent resolves the Agent Card from
    /.well-known/agent-card.json (agent discovery).
 3. Each agent sends its ProposedAction as a streaming A2A task.
@@ -37,7 +37,7 @@ import uvicorn
 os.environ.setdefault("A2A_SERVER_URL", "http://127.0.0.1:8765")
 
 from src.a2a.agent_registry import AgentRegistry
-from src.a2a.operational_a2a_clients import send_action_to_sentinel
+from src.a2a.operational_a2a_clients import send_action_to_skry
 from src.core.models import ActionTarget, ActionType, ProposedAction, Urgency
 
 logging.basicConfig(
@@ -56,7 +56,7 @@ _A2A_PORT = 8765  # Use a different port from the dashboard API (8000)
 
 
 def _run_server_in_thread() -> None:
-    """Start the SentinelLayer A2A server in a background daemon thread.
+    """Start the RuriSkry A2A server in a background daemon thread.
 
     Why a daemon thread?
     A daemon thread is automatically killed when the main program exits.
@@ -133,7 +133,7 @@ async def scenario_1_cost_agent_denied() -> dict[str, Any] | None:
         target=ActionTarget(
             resource_id="vm-23",
             resource_type="Microsoft.Compute/virtualMachines",
-            resource_group="rg-sentinellayer",
+            resource_group="rg-ruriskry",
             current_monthly_cost=847.0,
         ),
         reason="VM vm-23 appears idle — proposing deletion to save $847/month.",
@@ -141,7 +141,7 @@ async def scenario_1_cost_agent_denied() -> dict[str, Any] | None:
         projected_savings_monthly=847.0,
     )
 
-    verdict = await send_action_to_sentinel(
+    verdict = await send_action_to_skry(
         action, _A2A_SERVER_URL, "cost-optimization-agent"
     )
 
@@ -168,7 +168,7 @@ async def scenario_2_monitoring_agent_approved() -> dict[str, Any] | None:
         target=ActionTarget(
             resource_id="web-tier-01",
             resource_type="Microsoft.Compute/virtualMachines",
-            resource_group="rg-sentinellayer",
+            resource_group="rg-ruriskry",
             current_sku="Standard_D4s_v3",
             proposed_sku="Standard_D8s_v3",
             current_monthly_cost=420.0,
@@ -177,7 +177,7 @@ async def scenario_2_monitoring_agent_approved() -> dict[str, Any] | None:
         urgency=Urgency.HIGH,
     )
 
-    verdict = await send_action_to_sentinel(
+    verdict = await send_action_to_skry(
         action, _A2A_SERVER_URL, "monitoring-agent"
     )
 
@@ -204,13 +204,13 @@ async def scenario_3_deploy_agent_escalated() -> dict[str, Any] | None:
         target=ActionTarget(
             resource_id="nsg-east",
             resource_type="Microsoft.Network/networkSecurityGroups",
-            resource_group="rg-sentinellayer",
+            resource_group="rg-ruriskry",
         ),
         reason="Adding deny-all inbound rule to enforce zero-trust posture.",
         urgency=Urgency.MEDIUM,
     )
 
-    verdict = await send_action_to_sentinel(
+    verdict = await send_action_to_skry(
         action, _A2A_SERVER_URL, "deploy-agent"
     )
 
@@ -235,7 +235,7 @@ def _update_registry(agent_name: str, decision: str) -> None:
 
 def _print_verdict(label: str, verdict: Any) -> None:
     """Pretty-print a GovernanceVerdict to the console."""
-    sri = verdict.sentinel_risk_index
+    sri = verdict.skry_risk_index
     llm_used = "Agent Framework Analysis (GPT-4.1):" in verdict.reason
     llm_label = "[GPT-4.1 active]" if llm_used else "[rule-based fallback — GPT-4.1 not used]"
     print(f"\n{'━' * 60}")
@@ -280,17 +280,17 @@ async def main() -> None:
     """Run the full A2A demo end-to-end.
 
     Steps:
-    1. Start the SentinelLayer A2A server in a background thread.
+    1. Start the RuriSkry A2A server in a background thread.
     2. Wait for it to be ready (polls /.well-known/agent-card.json).
     3. Run three scenarios sequentially.
     4. Print the agent registry summary.
     """
     print("\n" + "═" * 60)
-    print("  SentinelLayer — A2A Protocol Demo (Phase 10)")
+    print("  RuriSkry — A2A Protocol Demo (Phase 10)")
     print("═" * 60)
 
     # ── Start A2A server in a background thread ───────────────────────
-    print(f"\nStarting SentinelLayer A2A server on {_A2A_SERVER_URL} ...")
+    print(f"\nStarting RuriSkry A2A server on {_A2A_SERVER_URL} ...")
     server_thread = threading.Thread(target=_run_server_in_thread, daemon=True)
     server_thread.start()
 

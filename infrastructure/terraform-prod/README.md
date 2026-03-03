@@ -1,6 +1,6 @@
 # Mini Production Environment — Terraform
 
-This folder creates a **real Azure environment** that SentinelLayer governs in live demos.
+This folder creates a **real Azure environment** that RuriSkry governs in live demos.
 Every resource here has a specific role in the governance story.
 
 ---
@@ -13,7 +13,7 @@ Every resource here has a specific role in the governance story.
 | `vm-web-01` | Linux VM (`var.vm_size`) | Active web server — cloud-init installs CPU stress cron | **APPROVED** (safe scale-up, no policy violations) |
 | `payment-api-prod-<suffix>` | App Service F1 (free) | Payment microservice | Critical dependency (raises blast radius of vm-web-01 actions) |
 | `nsg-east-prod` | Network Security Group | Subnet gateway for both VMs | **ESCALATED** (opening port 8080 affects all governed workloads) |
-| `sentinelprod<suffix>` | Storage Account LRS | Shared dependency for all three | Deletion would cascade to all three resources |
+| `ruriskryprod<suffix>` | Storage Account LRS | Shared dependency for all three | Deletion would cascade to all three resources |
 | Auto-shutdown | Dev/Test Schedule | Shutdown VMs at 22:00 UTC | Saves money while not demoing |
 | CPU alert | Monitor Metric Alert | Fires when vm-web-01 CPU > 80% | Triggers monitoring agent → scale-up proposal |
 | Heartbeat alert | Scheduled Query Alert | Fires when vm-dr-01 goes silent | Triggers cost agent → deletion proposal |
@@ -27,7 +27,7 @@ Every resource here has a specific role in the governance story.
 
 ```
 Cost agent: "vm-dr-01 has been idle for 30+ days. Proposing deletion. Savings: $15/month."
-SentinelLayer evaluates:
+RuriSkry evaluates:
   SRI:Policy      = 90  ← disaster-recovery=true tag → protected resource violation
   SRI:Blast Radius= 75  ← dr-failover-service and backup-coordinator depend on it
   SRI:Historical  = 80  ← similar DR deletions caused 2h outages
@@ -39,7 +39,7 @@ SentinelLayer evaluates:
 
 ```
 Monitoring agent: "vm-web-01 CPU at 87% for 15 minutes. Proposing scale-up to Standard_B2ms."
-SentinelLayer evaluates:
+RuriSkry evaluates:
   SRI:Policy      = 10  ← no policy violations (not a protected resource)
   SRI:Blast Radius= 15  ← vm-web-01 has no critical downstream services
   SRI:Historical  = 5   ← web VM scaling has zero incident history
@@ -51,7 +51,7 @@ SentinelLayer evaluates:
 
 ```
 Deploy agent: "Opening port 8080 on nsg-east-prod for new microservice."
-SentinelLayer evaluates:
+RuriSkry evaluates:
   SRI:Policy      = 55  ← NSG changes need human review (managed-by=platform-team)
   SRI:Blast Radius= 60  ← nsg-east-prod governs both vm-dr-01 and vm-web-01
   SRI:Historical  = 40  ← similar NSG changes caused brief connectivity issues
@@ -110,7 +110,7 @@ After `terraform apply`, run:
 terraform output seed_resources_ids
 ```
 
-Copy the real Azure resource IDs into `data/seed_resources.json`. This makes SentinelLayer's
+Copy the real Azure resource IDs into `data/seed_resources.json`. This makes RuriSkry's
 mock Azure Resource Graph point to the actual resources, so the dashboard shows real IDs.
 
 ---
@@ -141,8 +141,8 @@ This removes all resources and stops all charges. Always run this after the demo
 
 Auto-shutdown is configured at 22:00 UTC. Remember to start VMs manually before a demo:
 ```bash
-az vm start --resource-group sentinel-prod-rg --name vm-dr-01
-az vm start --resource-group sentinel-prod-rg --name vm-web-01
+az vm start --resource-group ruriskry-prod-rg --name vm-dr-01
+az vm start --resource-group ruriskry-prod-rg --name vm-web-01
 ```
 
 ---
@@ -179,7 +179,7 @@ infrastructure/terraform-prod/
 - **CPU stress (vm-web-01 only):** A cloud-init script runs on first boot. It installs `stress-ng`
   and adds a cron job (`*/30 * * * *`) that pegs all CPUs for 20 minutes every 30 minutes.
   This ensures the CPU alert fires naturally during a demo without any manual intervention.
-  To verify or stop the cron: `az vm run-command invoke --resource-group sentinel-prod-rg
+  To verify or stop the cron: `az vm run-command invoke --resource-group ruriskry-prod-rg
   --name vm-web-01 --command-id RunShellScript --scripts "cat /etc/crontab"`
 
 - **No Azure Bastion** — SSH access is not needed for these demo VMs. They are governance targets,
@@ -189,7 +189,7 @@ infrastructure/terraform-prod/
   App Service names must be globally unique across all Azure customers.
   In `seed_resources.json` we refer to it as `payment-api-prod` for readability.
 
-- **Storage account name** similarly includes your suffix (`sentinelprod<suffix>`).
+- **Storage account name** similarly includes your suffix (`ruriskryprod<suffix>`).
 
 - All resources use **Standard_LRS** or **Free tier** — no zone redundancy, no SLA.
   This is intentional: this is a demo environment, not production-grade.

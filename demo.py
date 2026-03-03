@@ -1,4 +1,4 @@
-"""SentinelLayer -- end-to-end governance demo.
+"""RuriSkry -- end-to-end governance demo.
 
 Runs three real-world scenarios through the full pipeline and prints the
 SRI breakdown and governance verdict for each.
@@ -27,7 +27,7 @@ logging.basicConfig(level=logging.WARNING)
 
 from src.core.decision_tracker import DecisionTracker  # noqa: E402
 from src.core.models import ActionTarget, ActionType, ProposedAction, Urgency  # noqa: E402
-from src.core.pipeline import SentinelLayerPipeline  # noqa: E402
+from src.core.pipeline import RuriSkryPipeline  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -52,7 +52,7 @@ def _print_verdict(
     verdict,
 ) -> None:
     """Pretty-print a single governance verdict with the full SRI breakdown."""
-    sri = verdict.sentinel_risk_index
+    sri = verdict.skry_risk_index
     decision = verdict.decision.value
 
     icons = {
@@ -107,7 +107,7 @@ def _print_verdict(
 # ---------------------------------------------------------------------------
 
 
-async def scenario_1(pipeline: SentinelLayerPipeline, tracker: DecisionTracker) -> None:
+async def scenario_1(pipeline: RuriSkryPipeline, tracker: DecisionTracker) -> None:
     """Cost agent deletes idle disaster-recovery VM. Expect: DENIED."""
     action = ProposedAction(
         agent_id="cost-optimization-agent",
@@ -115,7 +115,7 @@ async def scenario_1(pipeline: SentinelLayerPipeline, tracker: DecisionTracker) 
         target=ActionTarget(
             resource_id=(
                 "/subscriptions/44caae19-24a6-4c48-9f94-b3aa3865a3f7"
-                "/resourceGroups/sentinel-prod-rg"
+                "/resourceGroups/ruriskry-prod-rg"
                 "/providers/Microsoft.Compute/virtualMachines/vm-dr-01"
             ),
             resource_type="Microsoft.Compute/virtualMachines",
@@ -138,7 +138,7 @@ async def scenario_1(pipeline: SentinelLayerPipeline, tracker: DecisionTracker) 
     )
 
 
-async def scenario_2(pipeline: SentinelLayerPipeline, tracker: DecisionTracker) -> None:
+async def scenario_2(pipeline: RuriSkryPipeline, tracker: DecisionTracker) -> None:
     """SRE agent scales vm-web-01 B2ls_v2 to B4ms for CPU spike. Expect: APPROVED."""
     action = ProposedAction(
         agent_id="monitoring-agent",
@@ -146,7 +146,7 @@ async def scenario_2(pipeline: SentinelLayerPipeline, tracker: DecisionTracker) 
         target=ActionTarget(
             resource_id=(
                 "/subscriptions/44caae19-24a6-4c48-9f94-b3aa3865a3f7"
-                "/resourceGroups/sentinel-prod-rg"
+                "/resourceGroups/ruriskry-prod-rg"
                 "/providers/Microsoft.Compute/virtualMachines/vm-web-01"
             ),
             resource_type="Microsoft.Compute/virtualMachines",
@@ -170,7 +170,7 @@ async def scenario_2(pipeline: SentinelLayerPipeline, tracker: DecisionTracker) 
     )
 
 
-async def scenario_3(pipeline: SentinelLayerPipeline, tracker: DecisionTracker) -> None:
+async def scenario_3(pipeline: RuriSkryPipeline, tracker: DecisionTracker) -> None:
     """Deploy agent opens port 8080 on nsg-east-prod. Expect: ESCALATED."""
     action = ProposedAction(
         agent_id="deploy-agent",
@@ -178,7 +178,7 @@ async def scenario_3(pipeline: SentinelLayerPipeline, tracker: DecisionTracker) 
         target=ActionTarget(
             resource_id=(
                 "/subscriptions/44caae19-24a6-4c48-9f94-b3aa3865a3f7"
-                "/resourceGroups/sentinel-prod-rg"
+                "/resourceGroups/ruriskry-prod-rg"
                 "/providers/Microsoft.Network/networkSecurityGroups/nsg-east-prod"
             ),
             resource_type="Microsoft.Network/networkSecurityGroups",
@@ -207,8 +207,8 @@ async def scenario_3(pipeline: SentinelLayerPipeline, tracker: DecisionTracker) 
 async def main() -> None:
     print()
     print(_header())
-    print("       SentinelLayer -- AI Action Governance Demo")
-    print("       Sentinel Risk Index (SRI) End-to-End Pipeline")
+    print("       RuriSkry -- AI Action Governance Demo")
+    print("       Skry Risk Index (SRI) End-to-End Pipeline")
     print(_header())
     print()
     print("  Thresholds:")
@@ -219,7 +219,7 @@ async def main() -> None:
     print()
     print("  Initialising pipeline...")
 
-    pipeline = SentinelLayerPipeline()
+    pipeline = RuriSkryPipeline()
     tracker = DecisionTracker()
     print("  Pipeline ready.")
     print()
