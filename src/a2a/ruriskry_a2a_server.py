@@ -126,16 +126,18 @@ class RuriSkryAgentExecutor(AgentExecutor):
         # ── Stream progress — these are sent to the client via SSE ─────────
         # new_agent_message() enqueues a TaskStatusUpdateEvent. Clients that
         # called send_message_streaming() will receive each of these in order.
-        updater.new_agent_message(
+        # Must be awaited (same as add_artifact / complete) — unawaited calls
+        # silently drop the coroutine and the event is never enqueued.
+        await updater.new_agent_message(
             [Part(root=TextPart(kind="text", text="Evaluating blast radius..."))]
         )
-        updater.new_agent_message(
+        await updater.new_agent_message(
             [Part(root=TextPart(kind="text", text="Checking policy compliance..."))]
         )
-        updater.new_agent_message(
+        await updater.new_agent_message(
             [Part(root=TextPart(kind="text", text="Querying historical incidents..."))]
         )
-        updater.new_agent_message(
+        await updater.new_agent_message(
             [Part(root=TextPart(kind="text", text="Calculating financial impact..."))]
         )
 
@@ -152,7 +154,7 @@ class RuriSkryAgentExecutor(AgentExecutor):
         decision = verdict.decision.value.upper()
 
         # ── Stream final SRI summary ─────────────────────────────────────
-        updater.new_agent_message(
+        await updater.new_agent_message(
             [
                 Part(
                     root=TextPart(

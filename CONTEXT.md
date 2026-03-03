@@ -17,11 +17,13 @@ src/
 │   ├── historical_agent.py      # SRI:Historical (0-100)
 │   └── financial_agent.py       # SRI:Cost (0-100)
 ├── core/
+│   ├── models.py                # ALL Pydantic data models (READ THIS FIRST)
+│   ├── pipeline.py              # asyncio.gather() orchestration — 4 governance agents concurrent
 │   ├── governance_engine.py     # Calculates SRI™ Composite + verdict
 │   ├── decision_tracker.py      # Audit trail storage (verdicts → Cosmos / JSON)
-│   ├── scan_run_tracker.py      # Scan-run lifecycle store (scan records → Cosmos / JSON) ← NEW Phase 16
-│   ├── interception.py          # MCP action interception
-│   └── models.py                # ALL Pydantic data models (READ THIS FIRST)
+│   ├── scan_run_tracker.py      # Scan-run lifecycle store (scan records → Cosmos / JSON)
+│   ├── explanation_engine.py    # DecisionExplainer — factors, counterfactuals, LLM summary
+│   └── interception.py          # ActionInterceptor façade (async)
 ├── mcp_server/
 │   └── server.py                # Exposes governance tools via MCP
 ├── a2a/                         # A2A Protocol layer (Phase 10)
@@ -29,19 +31,19 @@ src/
 │   ├── operational_a2a_clients.py  # Operational agent A2A client wrappers
 │   └── agent_registry.py        # Tracks connected A2A agents with stats
 ├── infrastructure/              # Azure service clients (live + mock fallback)
-│   ├── azure_tools.py           # 5 generic investigation tools (Phase 12) ← NEW
-│   │                            #   query_resource_graph, query_metrics,
-│   │                            #   get_resource_details, query_activity_log,
-│   │                            #   list_nsg_rules — used by all ops agents
+│   ├── azure_tools.py           # 5 sync + 5 async (*_async) investigation tools
+│   │                            #   query_resource_graph(_async), query_metrics(_async),
+│   │                            #   get_resource_details(_async), query_activity_log(_async),
+│   │                            #   list_nsg_rules(_async) — used by all ops agents
 │   ├── llm_throttle.py          # asyncio.Semaphore + exponential backoff (Phase 12)
 │   ├── resource_graph.py        # Azure Resource Graph — live: KQL + _azure_enrich_topology()
 │   │                            #   (tags + NSG topology + cost_lookup); mock: seed_resources.json
-│   ├── cost_lookup.py           # Azure Retail Prices REST API — SKU→monthly cost; no auth ← NEW Phase 19
+│   ├── cost_lookup.py           # Azure Retail Prices REST API — sync + async; _extract_monthly_cost() shared helper
 │   ├── cosmos_client.py         # Cosmos DB decisions (mock: data/decisions/*.json)
 │   ├── search_client.py         # Azure AI Search incidents (mock: seed_incidents.json)
 │   ├── openai_client.py         # Azure OpenAI / GPT-4.1 (mock: canned string)
 │   └── secrets.py               # Key Vault secret resolver (env → KV → empty)
-├── notifications/               # Outbound alerting ← NEW Phase 17
+├── notifications/               # Outbound alerting
 │   └── teams_notifier.py        # send_teams_notification() — Adaptive Card to Teams webhook
 ├── api/
 │   └── dashboard_api.py         # FastAPI REST endpoints — 18 total (Phase 10 agents,
@@ -166,12 +168,12 @@ RuriSkry (Layer 2 — independent second opinion)
     → Decision logged to audit trail
 ```
 
-**Current state (Phase 19 complete):** Ops agents query real Azure data with GPT-4.1 before
-proposing (5 generic tools from `azure_tools.py`). Governance agents (`BlastRadiusAgent`,
-`FinancialImpactAgent`) now also query Azure live in production — `ResourceGraphClient`
-infers dependency topology from tags and KQL network joins; `cost_lookup.py` fetches real
-SKU pricing from Azure Retail Prices API. Mock mode (`USE_LOCAL_MOCKS=true`) is unchanged
-for all tests. See STATUS.md for full phase breakdown.
+**Current state (Phase 20 complete):** All `@af.tool` callbacks in every agent are `async def`
+and use async Azure SDK variants underneath. Ops agents use 5 async azure_tools (`*_async`).
+Governance agents use `_evaluate_rules_async()` and `_find_resource_async()`. The topology
+enrichment method uses `asyncio.gather()` to run 4 KQL queries + 1 HTTP call concurrently.
+`asyncio.gather(4 governance agents)` is now truly parallel — no blocking. See STATUS.md for
+full phase breakdown.
 
 ## Important Files to Read First
 1. `src/core/models.py` — ALL Pydantic models. Every agent uses these.
@@ -190,6 +192,25 @@ for all tests. See STATUS.md for full phase breakdown.
 
 ## Current Development Phase
 > For detailed progress tracking see **STATUS.md** at the project root.
+
+**Phase 20 — Async End-to-End Migration (complete)**
+
+- `src/infrastructure/cost_lookup.py` — `_extract_monthly_cost(items, os_type)` shared helper
+  (DRY: used by both sync + async paths). `get_sku_monthly_cost_async()` via `httpx.AsyncClient`;
+  shares the same `_cache` dict with the sync version.
+- `src/infrastructure/resource_graph.py` — `_async_rg_client` (`azure.mgmt.resourcegraph.aio`);
+  `get_resource_async()`, `list_all_async()`, `_azure_enrich_topology_async()` which uses
+  `asyncio.gather()` for 4 concurrent KQL/HTTP calls.
+- `src/infrastructure/azure_tools.py` — 5 async variants: `query_resource_graph_async`,
+  `query_metrics_async`, `get_resource_details_async`, `query_activity_log_async`,
+  `list_nsg_rules_async`. Mock mode unchanged.
+- `src/governance_agents/blast_radius_agent.py` + `financial_agent.py` — `_evaluate_rules_async()`,
+  `_find_resource_async()`, and all helpers now `async def`; `@af.tool` callbacks `async def`.
+- `src/operational_agents/cost_agent.py`, `monitoring_agent.py`, `deploy_agent.py` — all
+  `@af.tool` azure_tool callbacks `async def` + `await *_async()`. `propose_action` stays sync.
+- `tests/test_async_migration.py` (NEW) — 34 tests: cache sharing, `asyncio.gather` call count,
+  mock parity, `inspect.iscoroutinefunction` assertions, dynamic arg count via `inspect.signature`.
+- **Test result: 500 passed, 0 failed** ✅
 
 **Phase 19 — Live Azure Topology for Governance Agents (complete)**
 
@@ -211,7 +232,7 @@ for all tests. See STATUS.md for full phase breakdown.
 - `tests/test_live_topology.py` (NEW) — 16 tests covering all new live-mode paths.
 - `tests/test_decision_tracker.py` — 10 `@pytest.mark.xfail` markers removed from `TestRecord`;
   `tracker._dir` → `tracker._cosmos._decisions_dir` (stale since Phase 7 Cosmos migration).
-- **Test result: 460 passed, 0 failed** ✅
+- **Test result: 466 passed, 0 failed** ✅ (500 after Phase 20)
 
 **Phase 18 — Decision Explanation Engine (complete)**
 

@@ -63,6 +63,7 @@ Action multipliers
 * MODIFY_NSG      : 0.3   (no cost change expected)
 """
 
+import asyncio
 import json
 import logging
 from pathlib import Path
@@ -212,7 +213,11 @@ class FinancialImpactAgent:
             * ``reasoning`` — human-readable explanation
         """
         if not self._use_framework:
-            return self._evaluate_rules(action)
+            if self._rg_client is not None:
+                # Live topology: use the fully async path so Azure SDK calls
+                # don't block the event loop (Phase 20 — async end-to-end).
+                return await self._evaluate_rules_async(action)
+            return self._evaluate_rules(action)  # mock: pure in-memory, no IO
 
         try:
             return await self._evaluate_with_framework(action)
@@ -220,6 +225,8 @@ class FinancialImpactAgent:
             logger.warning(
                 "FinancialImpactAgent: framework call failed (%s) — falling back to rules.", exc
             )
+            if self._rg_client is not None:
+                return await self._evaluate_rules_async(action)
             return self._evaluate_rules(action)
 
     # ------------------------------------------------------------------
@@ -258,13 +265,13 @@ class FinancialImpactAgent:
                 "and reasoning."
             ),
         )
-        def evaluate_financial_rules(action_json: str) -> str:
+        async def evaluate_financial_rules(action_json: str) -> str:
             """Calculate financial impact and over-optimisation risk."""
             try:
                 a = ProposedAction.model_validate_json(action_json)
             except Exception:
                 a = action
-            r = self._evaluate_rules(a)
+            r = await self._evaluate_rules_async(a)
             result_holder.append(r)
             return r.model_dump_json()
 
@@ -293,6 +300,50 @@ class FinancialImpactAgent:
             )
 
         return self._evaluate_rules(action)
+
+    # ------------------------------------------------------------------
+    # Async rule-based evaluation (Phase 20 — used when rg_client is set)
+    # ------------------------------------------------------------------
+
+    async def _evaluate_rules_async(self, action: ProposedAction) -> FinancialResult:
+        """Async variant of :meth:`_evaluate_rules` — non-blocking Azure calls.
+
+        Only ``_find_resource`` is async (it queries Azure Resource Graph).
+        All other helpers are pure computation and remain synchronous.
+        """
+        resource = await self._find_resource_async(action.target.resource_id)
+        monthly_change, cost_uncertain = self._estimate_cost_change(action, resource)
+        over_opt = self._detect_over_optimisation(action, resource, monthly_change)
+        projection = self._build_projection(monthly_change)
+        score = self._calculate_score(action, monthly_change, cost_uncertain, over_opt)
+
+        logger.info(
+            "FinancialImpactAgent(async): action=%s change=%.2f uncertain=%s score=%.1f",
+            action.action_type.value,
+            monthly_change,
+            cost_uncertain,
+            score,
+        )
+
+        reasoning = self._build_reasoning(action, monthly_change, cost_uncertain, over_opt, score)
+
+        return FinancialResult(
+            sri_cost=score,
+            immediate_monthly_change=monthly_change,
+            projection_90_day=projection,
+            over_optimization_risk=over_opt,
+            reasoning=reasoning,
+        )
+
+    async def _find_resource_async(self, resource_id: str) -> dict | None:
+        """Async resource lookup — uses async ResourceGraphClient in live mode."""
+        if self._rg_client is not None:
+            return await self._rg_client.get_resource_async(resource_id)
+        # Mock mode: in-memory dict lookup, no I/O
+        if resource_id in self._resources:
+            return self._resources[resource_id]
+        name = resource_id.split("/")[-1]
+        return self._resources.get(name)
 
     # ------------------------------------------------------------------
     # Deterministic rule-based evaluation

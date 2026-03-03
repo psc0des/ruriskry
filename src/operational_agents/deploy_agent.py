@@ -185,10 +185,10 @@ class DeployAgent:
         import agent_framework as af
         from agent_framework.openai import OpenAIResponsesClient
         from src.infrastructure.azure_tools import (
-            query_resource_graph,
-            list_nsg_rules,
-            get_resource_details,
-            query_activity_log,
+            query_resource_graph_async,
+            list_nsg_rules_async,
+            get_resource_details_async,
+            query_activity_log_async,
         )
 
         credential = DefaultAzureCredential()
@@ -214,9 +214,9 @@ class DeployAgent:
                 "resources. Returns JSON array with id, name, type, resourceGroup, tags."
             ),
         )
-        def tool_query_resource_graph(kusto_query: str) -> str:
+        async def tool_query_resource_graph(kusto_query: str) -> str:
             """Discover NSGs, VMs, and other resources."""
-            results = query_resource_graph(kusto_query)
+            results = await query_resource_graph_async(kusto_query)
             return json.dumps(results, default=str)
 
         @af.tool(
@@ -227,9 +227,9 @@ class DeployAgent:
                 "priority, and direction fields."
             ),
         )
-        def tool_list_nsg_rules(nsg_resource_id: str) -> str:
+        async def tool_list_nsg_rules(nsg_resource_id: str) -> str:
             """Inspect actual NSG security rules to check for deny-all rules."""
-            rules = list_nsg_rules(nsg_resource_id)
+            rules = await list_nsg_rules_async(nsg_resource_id)
             return json.dumps(rules, default=str)
 
         @af.tool(
@@ -239,9 +239,9 @@ class DeployAgent:
                 "short name. Returns SKU, tags, location, and other properties."
             ),
         )
-        def tool_get_resource_details(resource_id: str) -> str:
+        async def tool_get_resource_details(resource_id: str) -> str:
             """Check resource tags and configuration."""
-            details = get_resource_details(resource_id)
+            details = await get_resource_details_async(resource_id)
             return json.dumps(details, default=str)
 
         @af.tool(
@@ -253,12 +253,12 @@ class DeployAgent:
                 "timespan uses ISO 8601 format (e.g. 'P7D' for last 7 days)."
             ),
         )
-        def tool_query_activity_log(
+        async def tool_query_activity_log(
             resource_group: str,
             timespan: str = "P7D",
         ) -> str:
             """Review recent changes and look for failed operations."""
-            entries = query_activity_log(resource_group, timespan)
+            entries = await query_activity_log_async(resource_group, timespan)
             return json.dumps(entries, default=str)
 
         @af.tool(

@@ -222,7 +222,7 @@ npm run dev
 ### Run Tests
 
 ```bash
-# Expected: 460 passed, 0 failed
+# Expected: 500 passed, 0 failed
 pytest tests/ -v
 ```
 
@@ -256,7 +256,7 @@ ruriskry/
 │   ├── mcp_server/             # RuriSkry as MCP provider
 │   │   └── server.py
 │   ├── infrastructure/         # Azure service clients (mock fallback)
-│   │   ├── azure_tools.py           # 5 generic sync tools: Resource Graph, metrics, NSG, activity log
+│   │   ├── azure_tools.py           # 5 sync + 5 async (*_async) tools: Resource Graph, metrics, NSG, activity log
 │   │   ├── resource_graph.py        # Live: KQL topology enrichment (tags + NSG join + cost)
 │   │   ├── cost_lookup.py           # Azure Retail Prices API — SKU→monthly cost (no auth)
 │   │   ├── cosmos_client.py

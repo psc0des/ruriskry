@@ -4,7 +4,7 @@
 > picking up this project. It tells you exactly what is done, what is live,
 > and what comes next. Architecture and coding standards are in `CONTEXT.md`.
 
-**Last updated:** 2026-03-03 (Phase 19 Live Azure Topology complete)
+**Last updated:** 2026-03-04 (Phase 20 Async End-to-End Migration complete)
 **Active branch:** `main`
 **Demo verdict:** All 3 scenarios pass with real prod resource IDs (DENIED / APPROVED / ESCALATED)
 
@@ -31,6 +31,7 @@
 | Dashboard API | ✅ Complete | FastAPI REST (18 endpoints; scan runs durable; SSE live log; Teams status + test; explanation engine) |
 | Teams notifications (Phase 17) | ✅ Complete | `src/notifications/teams_notifier.py` — Adaptive Card to Teams webhook on DENIED/ESCALATED |
 | Live Azure topology (Phase 19) | ✅ Complete | `ResourceGraphClient._azure_enrich_topology()` — tag-based + KQL network topology; `cost_lookup.py` — Azure Retail Prices API; `USE_LIVE_TOPOLOGY=true` opt-in flag |
+| Async end-to-end migration (Phase 20) | ✅ Complete | All `@af.tool` callbacks `async def`; async Azure SDK clients (`aio.*`); `asyncio.gather()` for 4 concurrent KQL queries in topology enrichment; `get_sku_monthly_cost_async()`; 5 async `azure_tools` variants; shared `_extract_monthly_cost()` helper |
 | Decision explanation engine (Phase 18) | ✅ Complete | `src/core/explanation_engine.py` — counterfactual analysis, per-dimension factors, LLM summary |
 | Evaluation drilldown (Phase 18) | ✅ Complete | `EvaluationDrilldown.jsx` — 6-section full-page drilldown: SRI bars, explanation, counterfactuals, reasoning |
 | Agent scan triggers (Phase 13) | ✅ Complete | POST /api/scan/cost\|monitoring\|deploy\|all + GET status |
@@ -107,7 +108,7 @@
 - [x] Commit: `d9c467e` — `feat(azure): wire live Azure services with Key Vault secret resolution`
 - [x] Learning: `learning/15-azure-integration.md`
 
-### Phase 8 — Microsoft Agent Framework SDK  ← LATEST
+### Phase 8 — Microsoft Agent Framework SDK
 - [x] `requirements.txt` — added `agent-framework-core>=1.0.0rc2`
 - [x] All 4 governance agents refactored: rule-based logic extracted to `_evaluate_rules()`
   and registered as `@af.tool`; GPT-4.1 (via `agent.run()`) calls the tool and synthesises reasoning
@@ -128,7 +129,50 @@
 - [x] Commit: `6fac593` — `feat(framework): rebuild all agents on Microsoft Agent Framework SDK`
 - [x] Learning: `learning/16-microsoft-agent-framework.md`
 
-### Phase 19 — Live Azure Topology for Governance Agents  ← LATEST
+### Phase 20 — Async End-to-End Migration  ← LATEST
+
+**Problem:** The Microsoft Agent Framework's `FunctionTool._invoke` calls sync `@af.tool`
+callbacks **directly on the event loop** — no thread pool, no executor. Every sync Azure SDK
+call inside a tool blocked all 4 governance agents' `asyncio.gather()` from running in parallel,
+making concurrent evaluation effectively sequential (~1,100ms per evaluation instead of ~300ms).
+
+**Solution:** Make all `@af.tool` callbacks `async def` and use async Azure SDK variants underneath.
+
+- `src/infrastructure/cost_lookup.py`:
+  - `_extract_monthly_cost(items, os_type) -> float | None` — new module-level shared helper
+    (OS-aware PAYG filtering, extracted from both sync and async code paths).
+  - `get_sku_monthly_cost_async(sku, location, *, os_type="")` — async variant using
+    `httpx.AsyncClient`; shares the same `_cache` dict with the sync version (GIL-safe).
+- `src/infrastructure/resource_graph.py`:
+  - `_async_rg_client` — `azure.mgmt.resourcegraph.aio.ResourceGraphClient` created in `__init__`.
+  - `get_resource_async()`, `list_all_async()` — public async API.
+  - `_azure_enrich_topology_async()` — uses `asyncio.gather(nsg_for_vm, vms_behind_nsg,
+    reverse_dependents, get_cost)` so 4 KQL queries + 1 HTTP call run concurrently.
+- `src/governance_agents/blast_radius_agent.py` + `financial_agent.py`:
+  - `_evaluate_rules_async()`, `_find_resource_async()`, and zone/SPOF helpers all `async def`.
+  - `evaluate()` non-framework path: `await self._evaluate_rules_async(action)`.
+  - `@af.tool evaluate_blast_radius_rules` / `evaluate_financial_rules` → `async def`.
+- `src/infrastructure/azure_tools.py`:
+  - 5 async variants added: `query_resource_graph_async`, `query_metrics_async`,
+    `get_resource_details_async`, `query_activity_log_async`, `list_nsg_rules_async`.
+  - Each uses the corresponding `azure.*.aio.*` SDK client in live mode; same mock fallback.
+- `src/operational_agents/cost_agent.py`, `monitoring_agent.py`, `deploy_agent.py`:
+  - All `@af.tool` callbacks that call Azure (`query_resource_graph`, `query_metrics`, etc.)
+    changed to `async def` and use `await azure_tool_async(...)` instead.
+  - `propose_action` remains sync (no I/O).
+- `tests/test_async_migration.py` (NEW) — 34 tests across 6 test classes:
+  - `TestCostLookupAsync` (6): async cost lookup, cache sharing, transient failure non-caching.
+  - `TestExtractMonthlyCost` (5): shared OS-aware helper.
+  - `TestResourceGraphClientAsync` (4): async methods + `asyncio.gather` call verification.
+  - `TestAsyncAzureTools` (7): async variants return same mock data as sync.
+  - `TestGovernanceAgentAsyncTools` (2): `@af.tool` callbacks are `async def`.
+  - `TestOpsAgentAsyncTools` (4): ops agent tools async; `propose_action` stays sync.
+  - `TestAsyncHelperMethods` (6): regression guards for all new async methods/functions.
+- `tests/test_live_topology.py` — updated 2 live-mode tests to use `AsyncMock` for
+  `get_resource_async` (previously used sync `get_resource` mock, now fails to await).
+- **Test result: 500 passed, 0 failed** ✅ (+34 new tests)
+
+### Phase 19 — Live Azure Topology for Governance Agents
 
 **Problem:** `BlastRadiusAgent` and `FinancialImpactAgent` loaded `data/seed_resources.json`
 at startup and evaluated every live action against a static snapshot. In live mode, governance
@@ -819,7 +863,7 @@ through RuriSkry automatically — fully autonomous cloud governance loop.
 | `src/governance_agents/historical_agent.py` | SRI:Historical — Agent Framework + `@tool` | Phase 8 |
 | `src/governance_agents/financial_agent.py` | SRI:Cost — Agent Framework + `@tool` | Phase 8 |
 | `src/infrastructure/cost_lookup.py` | `get_sku_monthly_cost(sku, location)` — Azure Retail Prices API; module-level cache; None on failure | Phase 19 |
-| `src/infrastructure/azure_tools.py` | 5 generic sync Azure tools; `"current"` field in metrics; RuntimeError on live failure | Phase 15 |
+| `src/infrastructure/azure_tools.py` | 5 sync + 5 async (`*_async`) Azure tools; `"current"` field in metrics; RuntimeError on live failure | Phase 15/20 |
 | `src/operational_agents/cost_agent.py` | FinOps proposals — 5 tools; `scan()` framework-only; `_scan_rules()` for tests | Phase 15 |
 | `src/operational_agents/monitoring_agent.py` | SRE anomaly detection — 5 tools; `scan()` framework-only; `_scan_rules()` for tests | Phase 15 |
 | `src/operational_agents/deploy_agent.py` | Security/config proposals — 5 tools; generic lifecycle tag logic | Phase 15 |

@@ -208,11 +208,11 @@ class MonitoringAgent:
         import agent_framework as af
         from agent_framework.openai import OpenAIResponsesClient
         from src.infrastructure.azure_tools import (
-            query_metrics,
-            get_resource_details,
-            query_resource_graph,
-            query_activity_log,
-            list_nsg_rules,
+            query_metrics_async,
+            get_resource_details_async,
+            query_resource_graph_async,
+            query_activity_log_async,
+            list_nsg_rules_async,
         )
 
         credential = DefaultAzureCredential()
@@ -240,14 +240,14 @@ class MonitoringAgent:
                 "timespan uses ISO 8601 format (e.g. 'P7D' for 7 days, 'PT24H' for 24 hours)."
             ),
         )
-        def tool_query_metrics(
+        async def tool_query_metrics(
             resource_id: str,
             metric_names: str,
             timespan: str = "P7D",
         ) -> str:
             """Confirm alert metrics or check resource health."""
             names = [m.strip() for m in metric_names.split(",")]
-            results = query_metrics(resource_id, names, timespan)
+            results = await query_metrics_async(resource_id, names, timespan)
             return json.dumps(results, default=str)
 
         @af.tool(
@@ -257,9 +257,9 @@ class MonitoringAgent:
                 "or short name. Returns SKU, tags, dependents, cost, and other properties."
             ),
         )
-        def tool_get_resource_details(resource_id: str) -> str:
+        async def tool_get_resource_details(resource_id: str) -> str:
             """Retrieve resource details to understand impact and dependencies."""
-            details = get_resource_details(resource_id)
+            details = await get_resource_details_async(resource_id)
             return json.dumps(details, default=str)
 
         @af.tool(
@@ -269,9 +269,9 @@ class MonitoringAgent:
                 "Returns a JSON array with id, name, type, location, resourceGroup, tags."
             ),
         )
-        def tool_query_resource_graph(kusto_query: str) -> str:
+        async def tool_query_resource_graph(kusto_query: str) -> str:
             """Discover resources for proactive scanning."""
-            results = query_resource_graph(kusto_query)
+            results = await query_resource_graph_async(kusto_query)
             return json.dumps(results, default=str)
 
         @af.tool(
@@ -285,9 +285,9 @@ class MonitoringAgent:
                 "timespan uses ISO 8601 format (e.g. 'P7D' for last 7 days)."
             ),
         )
-        def tool_query_activity_log(resource_group: str, timespan: str = "P7D") -> str:
+        async def tool_query_activity_log(resource_group: str, timespan: str = "P7D") -> str:
             """Check recent changes that may correlate with reliability issues."""
-            entries = query_activity_log(resource_group, timespan)
+            entries = await query_activity_log_async(resource_group, timespan)
             return json.dumps(entries, default=str)
 
         @af.tool(
@@ -299,9 +299,9 @@ class MonitoringAgent:
                 "may be contributing to network-related reliability issues."
             ),
         )
-        def tool_list_nsg_rules(nsg_resource_id: str) -> str:
+        async def tool_list_nsg_rules(nsg_resource_id: str) -> str:
             """Inspect NSG rules when diagnosing network-layer incidents."""
-            rules = list_nsg_rules(nsg_resource_id)
+            rules = await list_nsg_rules_async(nsg_resource_id)
             return json.dumps(rules, default=str)
 
         @af.tool(

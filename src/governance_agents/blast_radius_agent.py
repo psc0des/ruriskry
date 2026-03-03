@@ -47,6 +47,7 @@ Score components
 All component scores accumulate and are capped at 100.
 """
 
+import asyncio
 import json
 import logging
 from pathlib import Path
@@ -198,7 +199,11 @@ class BlastRadiusAgent:
             * ``reasoning`` — human-readable explanation of the score
         """
         if not self._use_framework:
-            return self._evaluate_rules(action)
+            if self._rg_client is not None:
+                # Live topology: use the fully async path so Azure SDK calls
+                # don't block the event loop (Phase 20 — async end-to-end).
+                return await self._evaluate_rules_async(action)
+            return self._evaluate_rules(action)  # mock: pure in-memory, no IO
 
         try:
             return await self._evaluate_with_framework(action)
@@ -206,6 +211,8 @@ class BlastRadiusAgent:
             logger.warning(
                 "BlastRadiusAgent: framework call failed (%s) — falling back to rules.", exc
             )
+            if self._rg_client is not None:
+                return await self._evaluate_rules_async(action)
             return self._evaluate_rules(action)
 
     # ------------------------------------------------------------------
@@ -246,13 +253,13 @@ class BlastRadiusAgent:
                 "availability_zones_impacted, and reasoning."
             ),
         )
-        def evaluate_blast_radius_rules(action_json: str) -> str:
+        async def evaluate_blast_radius_rules(action_json: str) -> str:
             """Evaluate infrastructure blast radius using rule-based scoring."""
             try:
                 a = ProposedAction.model_validate_json(action_json)
             except Exception:
                 a = action  # fallback to the outer action if JSON parse fails
-            r = self._evaluate_rules(a)
+            r = await self._evaluate_rules_async(a)
             result_holder.append(r)
             return r.model_dump_json()
 
@@ -323,6 +330,97 @@ class BlastRadiusAgent:
             availability_zones_impacted=zones,
             reasoning=reasoning,
         )
+
+    # ------------------------------------------------------------------
+    # Async rule-based evaluation (Phase 20 — used when rg_client is set)
+    # ------------------------------------------------------------------
+
+    async def _evaluate_rules_async(self, action: ProposedAction) -> BlastRadiusResult:
+        """Async variant of :meth:`_evaluate_rules` — non-blocking Azure calls.
+
+        Uses async ResourceGraphClient methods so all Azure SDK calls happen
+        without blocking the event loop.  Pure-computation helpers
+        (``_get_affected_resources``, ``_get_affected_services``,
+        ``_calculate_score``, ``_build_reasoning``) are sync — they do no I/O
+        and are safe to call from an async context.
+        """
+        resource = await self._find_resource_async(action.target.resource_id)
+        affected_resources = self._get_affected_resources(resource)  # no I/O
+        affected_services = self._get_affected_services(resource)    # no I/O
+        spofs = await self._detect_spofs_async(resource, affected_resources)
+        zones = await self._get_affected_zones_async(resource, affected_resources)
+
+        score = self._calculate_score(
+            action=action,
+            resource=resource,
+            affected_resources=affected_resources,
+            affected_services=affected_services,
+            spofs=spofs,
+        )
+        logger.info(
+            "BlastRadiusAgent(async): resource=%s action=%s score=%.1f spofs=%s",
+            action.target.resource_id,
+            action.action_type.value,
+            score,
+            spofs,
+        )
+        reasoning = self._build_reasoning(action, resource, score, affected_resources, spofs)
+
+        return BlastRadiusResult(
+            sri_infrastructure=score,
+            affected_resources=affected_resources,
+            affected_services=affected_services,
+            single_points_of_failure=spofs,
+            availability_zones_impacted=zones,
+            reasoning=reasoning,
+        )
+
+    async def _find_resource_async(self, resource_id: str) -> dict | None:
+        """Async resource lookup — uses async ResourceGraphClient in live mode."""
+        if self._rg_client is not None:
+            return await self._rg_client.get_resource_async(resource_id)
+        # Mock mode: in-memory dict lookup, no I/O
+        if resource_id in self._resources:
+            return self._resources[resource_id]
+        name = resource_id.split("/")[-1]
+        return self._resources.get(name)
+
+    async def _detect_spofs_async(
+        self, resource: dict | None, affected_resources: list[str]
+    ) -> list[str]:
+        """Async variant of :meth:`_detect_spofs` — non-blocking resource lookups."""
+        spofs: list[str] = []
+        if resource and resource.get("tags", {}).get("criticality") == "critical":
+            spofs.append(resource["name"])
+        for name in affected_resources:
+            if self._rg_client is not None:
+                r = await self._rg_client.get_resource_async(name)
+            else:
+                r = self._resources.get(name)
+            if r and r.get("tags", {}).get("criticality") == "critical":
+                if name not in spofs:
+                    spofs.append(name)
+        return spofs
+
+    async def _get_affected_zones_async(
+        self, resource: dict | None, affected_resources: list[str]
+    ) -> list[str]:
+        """Async variant of :meth:`_get_affected_zones` — non-blocking resource lookups."""
+        zones: list[str] = []
+        if resource:
+            loc = resource.get("location")
+            if loc:
+                zones.append(loc)
+        for name in affected_resources:
+            if self._rg_client is not None:
+                r = await self._rg_client.get_resource_async(name)
+            else:
+                r = self._resources.get(name)
+            if r:
+                loc = r.get("location")
+                if loc and loc not in zones:
+                    zones.append(loc)
+        return zones
 
     # ------------------------------------------------------------------
     # Graph traversal helpers

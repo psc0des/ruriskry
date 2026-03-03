@@ -10,9 +10,13 @@ Mock mode (USE_LOCAL_MOCKS=true, or subscription ID not set):
 Azure mode (USE_LOCAL_MOCKS=false + AZURE_SUBSCRIPTION_ID set):
     Uses ``azure-mgmt-resourcegraph`` with ``DefaultAzureCredential``
     to query the real Azure Resource Graph API using KQL (Kusto Query
-    Language).  Dependency edges are not natively exposed by Resource
-    Graph, so they are returned empty — a future enhancement would store
-    custom dependency data in Cosmos DB or tags.
+    Language).  Dependency edges are populated via ``depends-on`` /
+    ``governs`` tag parsing and VM→NIC→NSG network topology KQL queries
+    (added in Phase 19 via ``_azure_enrich_topology``).
+
+    Async variants (Phase 20) use ``azure.mgmt.resourcegraph.aio`` and
+    ``asyncio.gather()`` to run the 4 topology KQL queries concurrently,
+    reducing per-resource enrichment from ~1,100ms (sequential) to ~300ms.
 
 Usage::
 
@@ -22,8 +26,13 @@ Usage::
     resource = client.get_resource("vm-23")
     print(resource["tags"])          # {"purpose": "disaster-recovery", ...}
     print(client.get_dependents("vm-23"))  # ["dr-failover-service", ...]
+
+Async usage (non-blocking, for use inside async @af.tool callbacks)::
+
+    resource = await client.get_resource_async("vm-23")
 """
 
+import asyncio
 import json
 import logging
 from pathlib import Path
@@ -32,6 +41,17 @@ from src.config import settings as _default_settings
 
 logger = logging.getLogger(__name__)
 
+
+def _kql_escape(value: str) -> str:
+    """Escape a string value for safe interpolation into a KQL string literal.
+
+    KQL string delimiters are single quotes; a literal single quote is escaped
+    by doubling it (``'`` → ``''``).  Use this for every user- or
+    data-derived value interpolated into a KQL query to prevent query breakage
+    or injection from resource names / IDs containing special characters.
+    """
+    return value.replace("'", "''")
+
 _DEFAULT_RESOURCES_PATH = (
     Path(__file__).parent.parent.parent / "data" / "seed_resources.json"
 )
@@ -39,6 +59,15 @@ _DEFAULT_RESOURCES_PATH = (
 
 class ResourceGraphClient:
     """Query Azure resource topology from Resource Graph or local JSON seed data.
+
+    Provides both synchronous and asynchronous APIs:
+
+    * Sync methods (``get_resource``, ``list_all``, etc.) — used by the
+      non-framework evaluation path and ``asyncio.to_thread()`` callers.
+    * Async methods (``get_resource_async``, ``list_all_async``, etc.) —
+      used by ``async def`` ``@af.tool`` callbacks inside the Microsoft Agent
+      Framework.  The async enrichment method runs 4 KQL queries concurrently
+      via ``asyncio.gather()`` for a ~3–4× throughput improvement.
 
     Args:
         cfg: Settings object (defaults to module singleton from ``src.config``).
@@ -61,12 +90,17 @@ class ResourceGraphClient:
             )
             self._resources: dict[str, dict] = self._load_local_resources()
             self._rg_client = None
+            self._async_rg_client = None
         else:
             from azure.identity import DefaultAzureCredential  # type: ignore[import]
             from azure.mgmt.resourcegraph import ResourceGraphClient as AzRGClient  # type: ignore[import]
+            from azure.mgmt.resourcegraph.aio import ResourceGraphClient as AsyncAzRGClient  # type: ignore[import]
 
             credential = DefaultAzureCredential()
             self._rg_client = AzRGClient(credential)
+            # Async client — same credential works; token acquisition is a fast
+            # local operation handled by the credential object.
+            self._async_rg_client = AsyncAzRGClient(credential)
             self._resources = {}
             logger.info(
                 "ResourceGraphClient: connected (subscription=%s)",
@@ -74,7 +108,7 @@ class ResourceGraphClient:
             )
 
     # ------------------------------------------------------------------
-    # Public API
+    # Public API — synchronous
     # ------------------------------------------------------------------
 
     def get_resource(self, resource_id: str) -> dict | None:
@@ -103,8 +137,9 @@ class ResourceGraphClient:
             resource_id: Short name or full Azure resource ID.
 
         Returns:
-            List of dependency resource names.  Empty if not found or
-            if running in Azure mode (dependency edges not yet stored).
+            List of dependency resource names.  Empty if not found.
+            In Azure mode, dependencies are populated from ``depends-on``
+            tags and VM→NIC→NSG network joins by ``_azure_enrich_topology``.
         """
         resource = self.get_resource(resource_id)
         if resource is None:
@@ -143,6 +178,37 @@ class ResourceGraphClient:
         return self._is_mock
 
     # ------------------------------------------------------------------
+    # Public API — asynchronous (Phase 20)
+    # ------------------------------------------------------------------
+
+    async def get_resource_async(self, resource_id: str) -> dict | None:
+        """Async variant of :meth:`get_resource` — non-blocking Azure API calls.
+
+        In mock mode, returns the same result as the sync variant instantly
+        (in-memory dict lookup — no I/O).  In Azure mode, uses the async
+        Resource Graph client and runs topology enrichment concurrently.
+
+        Args:
+            resource_id: Short name or full Azure resource ID.
+
+        Returns:
+            Resource dict or ``None`` if not found.
+        """
+        if self._is_mock:
+            return self._mock_find(resource_id)
+        return await self._azure_get_resource_async(resource_id)
+
+    async def list_all_async(self) -> list[dict]:
+        """Async variant of :meth:`list_all` — non-blocking Azure API calls.
+
+        Returns:
+            List of resource dicts.
+        """
+        if self._is_mock:
+            return list(self._resources.values())
+        return await self._azure_list_all_async()
+
+    # ------------------------------------------------------------------
     # Mock helpers
     # ------------------------------------------------------------------
 
@@ -165,19 +231,37 @@ class ResourceGraphClient:
         return self._resources.get(name)
 
     # ------------------------------------------------------------------
-    # Azure Resource Graph helpers
+    # Azure Resource Graph helpers — synchronous
     # ------------------------------------------------------------------
 
     def _azure_get_resource(self, resource_id: str) -> dict | None:
-        """Query Resource Graph for a single resource by name, then enrich topology."""
+        """Query Resource Graph for a single resource, then enrich topology.
+
+        When a full ARM resource ID is supplied (starts with ``/`` and
+        contains ``/providers/``), the query filters on the exact ``id``
+        field, avoiding false matches when multiple resources share a name
+        across resource groups or subscriptions.
+
+        For short names the query filters on ``name`` (case-insensitive).
+        """
         from azure.mgmt.resourcegraph.models import QueryRequest  # type: ignore[import]
 
-        name = resource_id.split("/")[-1]
-        kql = (
-            f"Resources"
-            f" | where name =~ '{name}'"
-            f" | project id, name, type, location, tags, sku, resourceGroup"
-        )
+        is_arm_id = resource_id.startswith("/") and "/providers/" in resource_id
+        if is_arm_id:
+            kql = (
+                "Resources"
+                f" | where id =~ '{_kql_escape(resource_id)}'"
+                " | extend osType = tostring(properties.storageProfile.osDisk.osType)"
+                " | project id, name, type, location, tags, sku, resourceGroup, osType"
+            )
+        else:
+            name = resource_id.split("/")[-1]
+            kql = (
+                "Resources"
+                f" | where name =~ '{_kql_escape(name)}'"
+                " | extend osType = tostring(properties.storageProfile.osDisk.osType)"
+                " | project id, name, type, location, tags, sku, resourceGroup, osType"
+            )
         request = QueryRequest(
             subscriptions=[self._cfg.azure_subscription_id],
             query=kql,
@@ -185,6 +269,17 @@ class ResourceGraphClient:
         try:
             response = self._rg_client.resources(request)
             if response.data:
+                if not is_arm_id and len(response.data) > 1:
+                    # Multiple resources share this short name across resource
+                    # groups or types.  We proceed with the first result, but
+                    # callers should use full ARM IDs to avoid ambiguity.
+                    logger.warning(
+                        "ResourceGraphClient: short-name lookup for %r matched %d resources"
+                        " — using first result; provide a full ARM ID for a deterministic"
+                        " lookup.",
+                        resource_id,
+                        len(response.data),
+                    )
                 row = response.data[0]
                 resource = {
                     "id": row.get("id"),
@@ -194,6 +289,8 @@ class ResourceGraphClient:
                     "tags": row.get("tags") or {},
                     "sku": row.get("sku") or {},
                     "resource_group": row.get("resourceGroup", ""),
+                    # "Windows" | "Linux" for VMs; "" for all other resource types
+                    "os_type": row.get("osType", ""),
                 }
                 return self._azure_enrich_topology(resource)
         except Exception as exc:  # noqa: BLE001
@@ -206,7 +303,8 @@ class ResourceGraphClient:
 
         kql = (
             "Resources"
-            " | project id, name, type, location, tags, sku, resourceGroup"
+            " | extend osType = tostring(properties.storageProfile.osDisk.osType)"
+            " | project id, name, type, location, tags, sku, resourceGroup, osType"
             " | limit 1000"
         )
         request = QueryRequest(
@@ -225,6 +323,7 @@ class ResourceGraphClient:
                     "tags": row.get("tags") or {},
                     "sku": row.get("sku") or {},
                     "resource_group": row.get("resourceGroup", ""),
+                    "os_type": row.get("osType", ""),
                 }
                 results.append(self._azure_enrich_topology(resource))
             return results
@@ -283,7 +382,7 @@ class ResourceGraphClient:
             try:
                 kql = f"""
 Resources
-| where name =~ '{name}'
+| where name =~ '{_kql_escape(name)}'
 | extend nicIds = properties.networkProfile.networkInterfaces
 | mv-expand nic = nicIds
 | extend nicId = tolower(tostring(nic.id))
@@ -291,7 +390,7 @@ Resources
     Resources
     | where type =~ 'microsoft.network/networkinterfaces'
     | extend nsgId = tolower(tostring(properties.networkSecurityGroup.id))
-    | project id, nsgId
+    | project id=tolower(id), nsgId
 ) on $left.nicId == $right.id
 | extend nsgName = tostring(split(nsgId, '/')[8])
 | where isnotempty(nsgName)
@@ -314,8 +413,8 @@ Resources
                 kql = f"""
 Resources
 | where type =~ 'microsoft.network/networkinterfaces'
-| where resourceGroup =~ '{rg}'
-| where properties.networkSecurityGroup.id =~ '{rid}'
+| where resourceGroup =~ '{_kql_escape(rg)}'
+| where properties.networkSecurityGroup.id =~ '{_kql_escape(rid)}'
 | extend vmId = tostring(properties.virtualMachine.id)
 | where isnotempty(vmId)
 | extend vmName = tostring(split(vmId, '/')[8])
@@ -334,13 +433,20 @@ Resources
 
         # ── 5. Reverse lookup → dependents (who tags depends-on: {name}) ──
         dependents: list[str] = []
-        if name and rg:
+        if name:
             try:
+                # Subscription-wide reverse lookup: find every resource in any
+                # resource group whose 'depends-on' tag lists this resource.
+                # Scoping by RG would miss cross-RG dependents and understate
+                # blast radius in multi-RG environments.
+                # isnotempty() pre-filter keeps the scan cheap even at scale.
                 kql = f"""
 Resources
-| where resourceGroup =~ '{rg}'
-| where tags['depends-on'] contains '{name}'
-| project name
+| where isnotempty(tags['depends-on'])
+| extend _deps = split(tags['depends-on'], ',')
+| mv-expand _dep = _deps
+| where trim(' ', tostring(_dep)) =~ '{_kql_escape(name)}'
+| distinct name
 """
                 req = QueryRequest(
                     subscriptions=[self._cfg.azure_subscription_id], query=kql
@@ -358,7 +464,265 @@ Resources
         # ── 6. Monthly cost from Azure Retail Prices API ──────────────────
         sku_name = (resource.get("sku") or {}).get("name", "")
         location = resource.get("location", "")
-        monthly_cost = get_sku_monthly_cost(sku_name, location)
+        os_type = resource.get("os_type", "")  # "Windows" | "Linux" | ""
+        monthly_cost = get_sku_monthly_cost(sku_name, location, os_type=os_type)
+
+        resource.update(
+            {
+                "dependencies": dependencies,
+                "dependents": dependents,
+                "governs": governs,
+                "services_hosted": [],
+                "consumers": [],
+                "monthly_cost": monthly_cost,
+            }
+        )
+        return resource
+
+    # ------------------------------------------------------------------
+    # Azure Resource Graph helpers — asynchronous (Phase 20)
+    # ------------------------------------------------------------------
+
+    async def _azure_get_resource_async(self, resource_id: str) -> dict | None:
+        """Async version of :meth:`_azure_get_resource`.
+
+        Uses the async Resource Graph client so the event loop is not blocked
+        while waiting for the Azure API response.
+        """
+        from azure.mgmt.resourcegraph.models import QueryRequest  # type: ignore[import]
+
+        is_arm_id = resource_id.startswith("/") and "/providers/" in resource_id
+        if is_arm_id:
+            kql = (
+                "Resources"
+                f" | where id =~ '{_kql_escape(resource_id)}'"
+                " | extend osType = tostring(properties.storageProfile.osDisk.osType)"
+                " | project id, name, type, location, tags, sku, resourceGroup, osType"
+            )
+        else:
+            name = resource_id.split("/")[-1]
+            kql = (
+                "Resources"
+                f" | where name =~ '{_kql_escape(name)}'"
+                " | extend osType = tostring(properties.storageProfile.osDisk.osType)"
+                " | project id, name, type, location, tags, sku, resourceGroup, osType"
+            )
+        request = QueryRequest(
+            subscriptions=[self._cfg.azure_subscription_id],
+            query=kql,
+        )
+        try:
+            response = await self._async_rg_client.resources(request)
+            if response.data:
+                if not is_arm_id and len(response.data) > 1:
+                    logger.warning(
+                        "ResourceGraphClient(async): short-name lookup for %r matched %d resources"
+                        " — using first result; provide a full ARM ID for a deterministic lookup.",
+                        resource_id,
+                        len(response.data),
+                    )
+                row = response.data[0]
+                resource = {
+                    "id": row.get("id"),
+                    "name": row.get("name"),
+                    "type": row.get("type"),
+                    "location": row.get("location"),
+                    "tags": row.get("tags") or {},
+                    "sku": row.get("sku") or {},
+                    "resource_group": row.get("resourceGroup", ""),
+                    "os_type": row.get("osType", ""),
+                }
+                return await self._azure_enrich_topology_async(resource)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("ResourceGraphClient(async): Azure query failed: %s", exc)
+        return None
+
+    async def _azure_list_all_async(self) -> list[dict]:
+        """Async version of :meth:`_azure_list_all`."""
+        from azure.mgmt.resourcegraph.models import QueryRequest  # type: ignore[import]
+
+        kql = (
+            "Resources"
+            " | extend osType = tostring(properties.storageProfile.osDisk.osType)"
+            " | project id, name, type, location, tags, sku, resourceGroup, osType"
+            " | limit 1000"
+        )
+        request = QueryRequest(
+            subscriptions=[self._cfg.azure_subscription_id],
+            query=kql,
+        )
+        try:
+            response = await self._async_rg_client.resources(request)
+            results = []
+            for row in (response.data or []):
+                resource = {
+                    "id": row.get("id"),
+                    "name": row.get("name"),
+                    "type": row.get("type"),
+                    "location": row.get("location"),
+                    "tags": row.get("tags") or {},
+                    "sku": row.get("sku") or {},
+                    "resource_group": row.get("resourceGroup", ""),
+                    "os_type": row.get("osType", ""),
+                }
+                results.append(await self._azure_enrich_topology_async(resource))
+            return results
+        except Exception as exc:  # noqa: BLE001
+            logger.error("ResourceGraphClient(async): Azure list failed: %s", exc)
+            return []
+
+    async def _azure_enrich_topology_async(self, resource: dict) -> dict:
+        """Async version of :meth:`_azure_enrich_topology`.
+
+        Runs 4 KQL queries **concurrently** via ``asyncio.gather()`` instead
+        of sequentially.  On a typical Azure subscription with ~275ms per KQL
+        round-trip, this reduces total enrichment time from ~1,100ms to ~300ms
+        (the latency of the slowest individual query).
+
+        Args:
+            resource: Partially-built resource dict.
+
+        Returns:
+            The same dict mutated in-place with topology fields added.
+        """
+        from azure.mgmt.resourcegraph.models import QueryRequest  # type: ignore[import]
+        from src.infrastructure.cost_lookup import get_sku_monthly_cost_async
+
+        name = resource.get("name", "")
+        tags = resource.get("tags", {})
+        rg = resource.get("resource_group", "")
+        rid = resource.get("id", "")
+        rtype = (resource.get("type") or "").lower()
+
+        # ── Tag-based fields (instant, no I/O) ───────────────────────────
+        depends_on_tag = tags.get("depends-on", "")
+        dependencies: list[str] = (
+            [d.strip() for d in depends_on_tag.split(",") if d.strip()]
+            if depends_on_tag else []
+        )
+        governs_tag = tags.get("governs", "")
+        governs: list[str] = (
+            [g.strip() for g in governs_tag.split(",") if g.strip()]
+            if governs_tag else []
+        )
+
+        # ── Concurrent KQL coroutines ─────────────────────────────────────
+
+        async def _nsg_for_vm() -> list[str]:
+            """VM → NIC → NSG network join (VMs only)."""
+            if "microsoft.compute/virtualmachines" not in rtype or not name:
+                return []
+            kql = f"""
+Resources
+| where name =~ '{_kql_escape(name)}'
+| extend nicIds = properties.networkProfile.networkInterfaces
+| mv-expand nic = nicIds
+| extend nicId = tolower(tostring(nic.id))
+| join kind=leftouter (
+    Resources
+    | where type =~ 'microsoft.network/networkinterfaces'
+    | extend nsgId = tolower(tostring(properties.networkSecurityGroup.id))
+    | project id=tolower(id), nsgId
+) on $left.nicId == $right.id
+| extend nsgName = tostring(split(nsgId, '/')[8])
+| where isnotempty(nsgName)
+| project nsgName
+"""
+            try:
+                req = QueryRequest(
+                    subscriptions=[self._cfg.azure_subscription_id], query=kql
+                )
+                resp = await self._async_rg_client.resources(req)
+                return [
+                    row.get("nsgName", "")
+                    for row in (resp.data or [])
+                    if row.get("nsgName")
+                ]
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("enrich_topology(async): NSG KQL failed for %s: %s", name, exc)
+                return []
+
+        async def _vms_behind_nsg() -> list[str]:
+            """NSG governs — which VMs sit behind this NSG (NSGs only)."""
+            if "microsoft.network/networksecuritygroups" not in rtype or not rid:
+                return []
+            kql = f"""
+Resources
+| where type =~ 'microsoft.network/networkinterfaces'
+| where resourceGroup =~ '{_kql_escape(rg)}'
+| where properties.networkSecurityGroup.id =~ '{_kql_escape(rid)}'
+| extend vmId = tostring(properties.virtualMachine.id)
+| where isnotempty(vmId)
+| extend vmName = tostring(split(vmId, '/')[8])
+| project vmName
+"""
+            try:
+                req = QueryRequest(
+                    subscriptions=[self._cfg.azure_subscription_id], query=kql
+                )
+                resp = await self._async_rg_client.resources(req)
+                return [
+                    row.get("vmName", "")
+                    for row in (resp.data or [])
+                    if row.get("vmName")
+                ]
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("enrich_topology(async): NSG-governs KQL failed for %s: %s", name, exc)
+                return []
+
+        async def _reverse_dependents() -> list[str]:
+            """Subscription-wide reverse lookup: who has depends-on pointing at this resource."""
+            if not name:
+                return []
+            kql = f"""
+Resources
+| where isnotempty(tags['depends-on'])
+| extend _deps = split(tags['depends-on'], ',')
+| mv-expand _dep = _deps
+| where trim(' ', tostring(_dep)) =~ '{_kql_escape(name)}'
+| distinct name
+"""
+            try:
+                req = QueryRequest(
+                    subscriptions=[self._cfg.azure_subscription_id], query=kql
+                )
+                resp = await self._async_rg_client.resources(req)
+                return [
+                    row.get("name", "")
+                    for row in (resp.data or [])
+                    if row.get("name") and row.get("name") != name
+                ]
+            except Exception as exc:  # noqa: BLE001
+                logger.debug(
+                    "enrich_topology(async): reverse-lookup failed for %s: %s", name, exc
+                )
+                return []
+
+        async def _get_cost() -> float | None:
+            """Monthly cost from Azure Retail Prices API (non-blocking)."""
+            sku_name = (resource.get("sku") or {}).get("name", "")
+            location = resource.get("location", "")
+            os_type = resource.get("os_type", "")
+            return await get_sku_monthly_cost_async(sku_name, location, os_type=os_type)
+
+        # ── Run all 4 queries concurrently ────────────────────────────────
+        # asyncio.gather() schedules all coroutines on the same event loop
+        # and suspends until ALL complete.  Network latency for each query
+        # overlaps — total wait ≈ max(individual_latencies) instead of sum.
+        nsg_names, governed_vms, dependents, monthly_cost = await asyncio.gather(
+            _nsg_for_vm(),
+            _vms_behind_nsg(),
+            _reverse_dependents(),
+            _get_cost(),
+        )
+
+        # Merge KQL results into dependency / governs lists
+        for nsg in nsg_names:
+            if nsg not in dependencies:
+                dependencies.append(nsg)
+        for vm in governed_vms:
+            if vm not in governs:
+                governs.append(vm)
 
         resource.update(
             {

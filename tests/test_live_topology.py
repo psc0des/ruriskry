@@ -8,7 +8,7 @@ NEW live-mode code paths added in Phase 19.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -36,13 +36,25 @@ def _make_action(
     )
 
 
-def _make_live_cfg(*, mocks: bool = False, sub: str = "sub-123", endpoint: str = ""):
-    """Build a minimal settings-like object for live-mode testing."""
+def _make_live_cfg(
+    *,
+    mocks: bool = False,
+    sub: str = "sub-123",
+    endpoint: str = "",
+    live_topology: bool = True,
+):
+    """Build a minimal settings-like object for live-mode testing.
+
+    ``live_topology`` is set **explicitly** on the MagicMock so that
+    ``getattr(cfg, 'use_live_topology', False)`` returns a real bool
+    rather than a truthy auto-created MagicMock attribute.
+    """
     cfg = MagicMock()
     cfg.use_local_mocks = mocks
     cfg.azure_subscription_id = sub
     cfg.azure_openai_endpoint = endpoint
     cfg.azure_openai_deployment = "gpt-4o"
+    cfg.use_live_topology = live_topology
     return cfg
 
 
@@ -125,6 +137,83 @@ class TestCostLookup:
         assert r1 is None
         assert r2 is None
         assert mock_get.call_count == 1
+
+    def test_windows_os_selects_windows_meter(self):
+        """os_type='Windows' must select the Windows-labeled meter, not Linux."""
+        from src.infrastructure.cost_lookup import get_sku_monthly_cost
+
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {
+            "Items": [
+                # Linux base tier — must be EXCLUDED for a Windows VM
+                {"retailPrice": 0.05, "skuName": "D2s v3"},
+                # Windows tier — must be SELECTED
+                {"retailPrice": 0.10, "skuName": "D2s v3 Windows"},
+            ]
+        }
+        mock_resp.raise_for_status.return_value = None
+
+        with patch("httpx.get", return_value=mock_resp):
+            result = get_sku_monthly_cost("Standard_D2s_v3", "eastus", os_type="Windows")
+
+        # 0.10 (Windows meter) × 730 = 73.00 — NOT 0.05 (Linux)
+        assert result == pytest.approx(73.00, rel=1e-3)
+
+    def test_linux_os_excludes_windows_meter(self):
+        """os_type='Linux' must exclude Windows-labeled meters."""
+        from src.infrastructure.cost_lookup import get_sku_monthly_cost
+
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {
+            "Items": [
+                {"retailPrice": 0.05, "skuName": "D2s v3"},           # Linux base
+                {"retailPrice": 0.10, "skuName": "D2s v3 Windows"},   # Windows — excluded
+            ]
+        }
+        mock_resp.raise_for_status.return_value = None
+
+        with patch("httpx.get", return_value=mock_resp):
+            result = get_sku_monthly_cost("Standard_D2s_v3", "eastus", os_type="Linux")
+
+        assert result == pytest.approx(36.50, rel=1e-3)  # 0.05 × 730
+
+    def test_os_type_is_part_of_cache_key(self):
+        """Linux and Windows costs for the same SKU/region must be cached separately."""
+        from src.infrastructure.cost_lookup import get_sku_monthly_cost
+
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {
+            "Items": [
+                {"retailPrice": 0.05, "skuName": "D2s v3"},
+                {"retailPrice": 0.10, "skuName": "D2s v3 Windows"},
+            ]
+        }
+        mock_resp.raise_for_status.return_value = None
+
+        with patch("httpx.get", return_value=mock_resp):
+            linux_cost = get_sku_monthly_cost("Standard_D2s_v3", "eastus", os_type="Linux")
+            windows_cost = get_sku_monthly_cost("Standard_D2s_v3", "eastus", os_type="Windows")
+
+        assert linux_cost == pytest.approx(36.50, rel=1e-3)
+        assert windows_cost == pytest.approx(73.00, rel=1e-3)
+        assert linux_cost != windows_cost
+
+    def test_windows_fallback_when_no_labeled_meter(self):
+        """Windows path falls back to unlabelled PAYG meter if no 'Windows' meter exists."""
+        from src.infrastructure.cost_lookup import get_sku_monthly_cost
+
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {
+            # SKU has only one unlabelled meter (Windows-only SKU with no OS suffix)
+            "Items": [{"retailPrice": 0.08, "skuName": "Some SKU"}]
+        }
+        mock_resp.raise_for_status.return_value = None
+
+        with patch("httpx.get", return_value=mock_resp):
+            result = get_sku_monthly_cost("Special_SKU", "canadacentral", os_type="Windows")
+
+        # Must use the only available meter rather than returning None
+        assert result == pytest.approx(0.08 * 730, rel=1e-3)
 
 
 # ---------------------------------------------------------------------------
@@ -322,13 +411,28 @@ class TestBlastRadiusAgentLiveMode:
         assert agent._rg_client is None
         assert len(agent._resources) > 0  # JSON was loaded
 
+    def test_use_live_topology_false_uses_json_even_with_subscription(self):
+        """use_live_topology=False must keep JSON path even when subscription is set.
+
+        This guards against the flag-logic regression where a truthy MagicMock
+        attribute would accidentally activate live mode when the flag is False.
+        """
+        from src.governance_agents.blast_radius_agent import BlastRadiusAgent
+
+        cfg = _make_live_cfg(live_topology=False)
+        agent = BlastRadiusAgent(cfg=cfg)
+
+        # Live topology disabled → must NOT create a ResourceGraphClient
+        assert agent._rg_client is None
+        assert len(agent._resources) > 0  # seed JSON was loaded
+
     async def test_live_find_resource_calls_rg_client(self):
-        """_find_resource() in live mode must delegate to _rg_client.get_resource()."""
+        """_find_resource_async() in live mode must delegate to _rg_client.get_resource_async()."""
         from src.governance_agents.blast_radius_agent import BlastRadiusAgent
 
         cfg = _make_live_cfg()
         mock_rg = MagicMock()
-        mock_rg.get_resource.return_value = {
+        resource_dict = {
             "name": "vm-dr-01",
             "type": "Microsoft.Compute/virtualMachines",
             "tags": {"criticality": "high", "disaster-recovery": "true"},
@@ -340,6 +444,8 @@ class TestBlastRadiusAgentLiveMode:
             "monthly_cost": 36.50,
             "location": "canadacentral",
         }
+        # Phase 20: live mode calls the async variant
+        mock_rg.get_resource_async = AsyncMock(return_value=resource_dict)
 
         with patch(
             "src.infrastructure.resource_graph.ResourceGraphClient",
@@ -350,7 +456,7 @@ class TestBlastRadiusAgentLiveMode:
         action = _make_action("vm-dr-01", ActionType.DELETE_RESOURCE)
         result = await agent.evaluate(action)
 
-        mock_rg.get_resource.assert_called()
+        mock_rg.get_resource_async.assert_called()
         assert result.sri_infrastructure > 0
         assert "vm-dr-01" in result.affected_resources or result.sri_infrastructure > 40
 
@@ -389,13 +495,23 @@ class TestFinancialAgentLiveMode:
         assert agent._rg_client is None
         assert len(agent._resources) > 0
 
+    def test_use_live_topology_false_uses_json_even_with_subscription(self):
+        """use_live_topology=False must keep JSON path even when subscription is set."""
+        from src.governance_agents.financial_agent import FinancialImpactAgent
+
+        cfg = _make_live_cfg(live_topology=False)
+        agent = FinancialImpactAgent(cfg=cfg)
+
+        assert agent._rg_client is None
+        assert len(agent._resources) > 0
+
     async def test_live_monthly_cost_from_rg_client(self):
         """FinancialImpactAgent uses monthly_cost returned by ResourceGraphClient."""
         from src.governance_agents.financial_agent import FinancialImpactAgent
 
         cfg = _make_live_cfg()
         mock_rg = MagicMock()
-        mock_rg.get_resource.return_value = {
+        resource_dict = {
             "name": "vm-dr-01",
             "type": "Microsoft.Compute/virtualMachines",
             "tags": {},
@@ -407,6 +523,8 @@ class TestFinancialAgentLiveMode:
             "monthly_cost": 36.50,  # from Azure Retail Prices API
             "location": "canadacentral",
         }
+        # Phase 20: live mode calls the async variant
+        mock_rg.get_resource_async = AsyncMock(return_value=resource_dict)
 
         with patch(
             "src.infrastructure.resource_graph.ResourceGraphClient",
@@ -417,6 +535,6 @@ class TestFinancialAgentLiveMode:
         action = _make_action("vm-dr-01", ActionType.DELETE_RESOURCE)
         result = await agent.evaluate(action)
 
-        mock_rg.get_resource.assert_called()
+        mock_rg.get_resource_async.assert_called()
         # DELETE of a $36.50/month VM should yield savings of -$36.50
         assert result.immediate_monthly_change == pytest.approx(-36.50, abs=0.01)

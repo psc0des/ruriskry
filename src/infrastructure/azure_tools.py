@@ -9,30 +9,30 @@ returns realistic data sourced from ``data/seed_resources.json``.
 
 Design principles
 -----------------
-- All functions are **synchronous** so they can be called directly from
-  ``@af.tool`` decorated functions inside the Microsoft Agent Framework
-  without needing ``asyncio.run()`` (which cannot be called inside a
-  running event loop).
-- Every function catches all exceptions and falls back to mock data — a
-  permissions gap or missing SDK never crashes an agent; it just reduces
-  data fidelity and logs a warning.
+- Sync functions (``query_resource_graph``, ``query_metrics``, etc.) are
+  provided for backward compatibility and mock-mode usage.
+- Async variants (``query_resource_graph_async``, ``query_metrics_async``,
+  etc.) are used by ``async def`` ``@af.tool`` callbacks so Azure SDK calls
+  don't block the event loop (Phase 20 — async end-to-end).
+- Every function catches all exceptions — a permissions gap or missing SDK
+  never crashes an agent; it raises RuntimeError in live mode so the agent
+  framework can handle the error gracefully.
 - Functions accept resource IDs and resource group names as parameters —
-  they are NOT hard-coded to ruriskry-prod-rg.  They work in ANY Azure
-  environment.
+  they are NOT hard-coded to any specific environment.
 
-Usage (inside an agent's ``@af.tool`` function)::
+Usage (inside an agent's async ``@af.tool`` function)::
 
     from src.infrastructure.azure_tools import (
-        query_resource_graph,
-        query_metrics,
-        get_resource_details,
-        query_activity_log,
-        list_nsg_rules,
+        query_resource_graph_async,
+        query_metrics_async,
+        get_resource_details_async,
+        query_activity_log_async,
+        list_nsg_rules_async,
     )
 
     @af.tool(name="check_cpu", description="Get CPU metrics for a VM")
-    def check_cpu(resource_id: str) -> str:
-        data = query_metrics(resource_id, ["Percentage CPU"], "P7D")
+    async def check_cpu(resource_id: str) -> str:
+        data = await query_metrics_async(resource_id, ["Percentage CPU"], "P7D")
         return json.dumps(data)
 """
 
@@ -577,3 +577,240 @@ def _parse_duration(iso_duration: str) -> timedelta:
         if "M" in s:
             return timedelta(days=float(s.rstrip("M")) * 30)
     return timedelta(hours=24)
+
+
+# ---------------------------------------------------------------------------
+# Async variants (Phase 20 — used by async @af.tool callbacks)
+# ---------------------------------------------------------------------------
+# Mock paths delegate to the same sync mock helpers — they are pure in-memory
+# and return instantly with no I/O, so no async wrapper is needed there.
+# Live paths use async Azure SDK clients so the event loop is not blocked.
+# ---------------------------------------------------------------------------
+
+
+async def query_resource_graph_async(
+    kusto_query: str, subscription_id: str = ""
+) -> list[dict]:
+    """Async variant of :func:`query_resource_graph` — non-blocking Azure API calls.
+
+    Args:
+        kusto_query:     KQL query string.
+        subscription_id: Azure subscription to scope the query to.
+
+    Returns:
+        List of resource dicts in Azure Resource Graph format.
+
+    Raises:
+        RuntimeError: In live mode when the Azure Resource Graph call fails.
+    """
+    if _use_mocks():
+        return _mock_query_resource_graph(kusto_query)
+
+    try:
+        from azure.identity import DefaultAzureCredential  # type: ignore[import]
+        from azure.mgmt.resourcegraph.aio import ResourceGraphClient  # type: ignore[import]
+        from azure.mgmt.resourcegraph.models import QueryRequest  # type: ignore[import]
+        from src.config import settings
+
+        sub_id = subscription_id or settings.azure_subscription_id
+        credential = DefaultAzureCredential()
+        async with ResourceGraphClient(credential) as client:
+            request = QueryRequest(
+                subscriptions=[sub_id] if sub_id else [],
+                query=kusto_query,
+            )
+            result = await client.resources(request)
+            return [dict(row) for row in (result.data or [])]
+    except Exception as exc:
+        raise RuntimeError(
+            f"azure_tools.query_resource_graph_async failed. "
+            f"Query attempted: {kusto_query!r}. "
+            f"Error: {exc}. "
+            "Run 'az login' and ensure AZURE_SUBSCRIPTION_ID is configured."
+        ) from exc
+
+
+async def query_metrics_async(
+    resource_id: str,
+    metric_names: list[str],
+    timespan: str = "PT24H",
+) -> dict:
+    """Async variant of :func:`query_metrics` — non-blocking Azure Monitor calls.
+
+    Args:
+        resource_id:  Full Azure ARM resource ID.
+        metric_names: List of Azure Monitor metric names.
+        timespan:     ISO 8601 duration string (e.g. ``"P7D"``).
+
+    Returns:
+        Metrics dict (same structure as sync variant).
+
+    Raises:
+        RuntimeError: In live mode when the Azure Monitor call fails.
+    """
+    if _use_mocks():
+        return _mock_query_metrics(resource_id, metric_names, timespan)
+
+    try:
+        from azure.identity import DefaultAzureCredential  # type: ignore[import]
+        from azure.monitor.query.aio import MetricsQueryClient  # type: ignore[import]
+
+        credential = DefaultAzureCredential()
+        async with MetricsQueryClient(credential) as client:
+            result = await client.query_resource(
+                resource_uri=resource_id,
+                metric_names=metric_names,
+                timespan=_parse_duration(timespan),
+            )
+
+        output: dict = {"resource_id": resource_id, "timespan": timespan, "metrics": {}}
+        for metric in result.metrics:
+            values: list[float] = []
+            for ts in metric.timeseries:
+                for dp in ts.data:
+                    if dp.average is not None:
+                        values.append(dp.average)
+            if values:
+                output["metrics"][metric.name] = {
+                    "average": round(sum(values) / len(values), 2),
+                    "maximum": round(max(values), 2),
+                    "minimum": round(min(values), 2),
+                    "current": round(values[-1], 2),
+                    "unit": metric.unit.value if metric.unit else "unknown",
+                }
+        return output
+    except Exception as exc:
+        raise RuntimeError(
+            f"azure_tools.query_metrics_async failed for resource {resource_id!r} "
+            f"(metrics: {metric_names}, timespan: {timespan}). "
+            f"Error: {exc}. "
+            "Run 'az login' and ensure the resource ID is a valid ARM ID."
+        ) from exc
+
+
+async def get_resource_details_async(resource_id: str) -> dict:
+    """Async variant of :func:`get_resource_details` — non-blocking Azure calls.
+
+    Args:
+        resource_id: Full Azure ARM resource ID or short name.
+
+    Returns:
+        Resource detail dict. Empty dict if not found.
+
+    Raises:
+        RuntimeError: In live mode when the underlying Resource Graph call fails.
+    """
+    safe_id = resource_id.replace("'", "''")
+    results = await query_resource_graph_async(f"Resources | where id =~ '{safe_id}'")
+    if results:
+        return results[0]
+
+    if _use_mocks():
+        name = resource_id.split("/")[-1] if "/" in resource_id else resource_id
+        for r in _seed().get("resources", []):
+            if r.get("name", "").lower() == name.lower():
+                return r
+
+    return {}
+
+
+async def query_activity_log_async(
+    resource_group: str, timespan: str = "P7D"
+) -> list[dict]:
+    """Async variant of :func:`query_activity_log` — non-blocking Log Analytics calls.
+
+    Args:
+        resource_group: Azure resource group name to filter logs for.
+        timespan:       ISO 8601 duration (e.g. ``"P7D"``).
+
+    Returns:
+        List of activity log entry dicts, newest-first.
+
+    Raises:
+        RuntimeError: In live mode when the Log Analytics call fails.
+    """
+    if _use_mocks():
+        return _mock_activity_log(resource_group)
+
+    try:
+        from azure.identity import DefaultAzureCredential  # type: ignore[import]
+        from azure.monitor.query.aio import LogsQueryClient  # type: ignore[import]
+        from azure.monitor.query import LogsQueryStatus  # type: ignore[import]
+        from src.config import settings
+
+        workspace_id = settings.log_analytics_workspace_id
+        if not workspace_id:
+            raise ValueError(
+                "LOG_ANALYTICS_WORKSPACE_ID is not configured. "
+                "Set this environment variable to the Log Analytics workspace ID."
+            )
+
+        credential = DefaultAzureCredential()
+        kql = (
+            "AzureActivity "
+            f"| where ResourceGroup =~ '{resource_group}' "
+            "| order by TimeGenerated desc "
+            "| take 50 "
+            "| project TimeGenerated, OperationNameValue, ActivityStatusValue, "
+            "Caller, ResourceType, Resource, Level"
+        )
+        async with LogsQueryClient(credential) as client:
+            result = await client.query_workspace(
+                workspace_id=workspace_id,
+                query=kql,
+                timespan=_parse_duration(timespan),
+            )
+
+        if result.status == LogsQueryStatus.SUCCESS:
+            rows: list[dict] = []
+            for row in result.table.rows:
+                rows.append({
+                    "timestamp": str(row[0]),
+                    "operation": str(row[1]),
+                    "status": str(row[2]),
+                    "caller": str(row[3]),
+                    "resource_type": str(row[4]),
+                    "resource": str(row[5]),
+                    "level": str(row[6]),
+                })
+            return rows
+        return []
+    except Exception as exc:
+        raise RuntimeError(
+            f"azure_tools.query_activity_log_async failed for resource group {resource_group!r} "
+            f"(timespan: {timespan}). "
+            f"Error: {exc}. "
+            "Run 'az login' and ensure LOG_ANALYTICS_WORKSPACE_ID is set."
+        ) from exc
+
+
+async def list_nsg_rules_async(nsg_resource_id: str) -> list[dict]:
+    """Async variant of :func:`list_nsg_rules` — non-blocking resource lookup.
+
+    Args:
+        nsg_resource_id: Full Azure ARM resource ID of the NSG or short name.
+
+    Returns:
+        List of security rule dicts.
+    """
+    details = await get_resource_details_async(nsg_resource_id)
+
+    props = details.get("properties", {})
+    rules = props.get("securityRules", [])
+    if rules:
+        return rules
+
+    seed_rules = details.get("rules", [])
+    if seed_rules:
+        return seed_rules
+
+    if _use_mocks():
+        name = nsg_resource_id.split("/")[-1] if "/" in nsg_resource_id else nsg_resource_id
+        for r in _seed().get("resources", []):
+            if (
+                r.get("name", "").lower() == name.lower()
+                and "networkSecurityGroups" in r.get("type", "")
+            ):
+                return r.get("rules", [])
+
+    return []

@@ -204,11 +204,11 @@ class CostOptimizationAgent:
         import agent_framework as af
         from agent_framework.openai import OpenAIResponsesClient
         from src.infrastructure.azure_tools import (
-            query_resource_graph,
-            query_metrics,
-            get_resource_details,
-            query_activity_log,
-            list_nsg_rules,
+            query_resource_graph_async,
+            query_metrics_async,
+            get_resource_details_async,
+            query_activity_log_async,
+            list_nsg_rules_async,
         )
 
         credential = DefaultAzureCredential()
@@ -235,9 +235,9 @@ class CostOptimizationAgent:
                 "objects with id, name, type, location, resourceGroup, tags, sku."
             ),
         )
-        def tool_query_resource_graph(kusto_query: str) -> str:
+        async def tool_query_resource_graph(kusto_query: str) -> str:
             """Discover Azure resources via Resource Graph KQL query."""
-            results = query_resource_graph(kusto_query)
+            results = await query_resource_graph_async(kusto_query)
             return json.dumps(results, default=str)
 
         @af.tool(
@@ -249,14 +249,14 @@ class CostOptimizationAgent:
                 "timespan uses ISO 8601 duration format (e.g. 'P7D' for 7 days)."
             ),
         )
-        def tool_query_metrics(
+        async def tool_query_metrics(
             resource_id: str,
             metric_names: str,
             timespan: str = "P7D",
         ) -> str:
             """Get actual utilisation metrics for a resource."""
             names = [m.strip() for m in metric_names.split(",")]
-            results = query_metrics(resource_id, names, timespan)
+            results = await query_metrics_async(resource_id, names, timespan)
             return json.dumps(results, default=str)
 
         @af.tool(
@@ -266,9 +266,9 @@ class CostOptimizationAgent:
                 "or short name. Returns SKU, tags, cost, location, and other properties."
             ),
         )
-        def tool_get_resource_details(resource_id: str) -> str:
+        async def tool_get_resource_details(resource_id: str) -> str:
             """Retrieve full resource details including SKU and tags."""
-            details = get_resource_details(resource_id)
+            details = await get_resource_details_async(resource_id)
             return json.dumps(details, default=str)
 
         @af.tool(
@@ -282,9 +282,9 @@ class CostOptimizationAgent:
                 "timespan uses ISO 8601 format (e.g. 'P7D' for last 7 days)."
             ),
         )
-        def tool_query_activity_log(resource_group: str, timespan: str = "P7D") -> str:
+        async def tool_query_activity_log(resource_group: str, timespan: str = "P7D") -> str:
             """Check recent resource changes before flagging waste."""
-            entries = query_activity_log(resource_group, timespan)
+            entries = await query_activity_log_async(resource_group, timespan)
             return json.dumps(entries, default=str)
 
         @af.tool(
@@ -295,9 +295,9 @@ class CostOptimizationAgent:
                 "priority, and direction. Use this to check security posture alongside cost."
             ),
         )
-        def tool_list_nsg_rules(nsg_resource_id: str) -> str:
+        async def tool_list_nsg_rules(nsg_resource_id: str) -> str:
             """Inspect NSG security rules when reviewing network-related cost items."""
-            rules = list_nsg_rules(nsg_resource_id)
+            rules = await list_nsg_rules_async(nsg_resource_id)
             return json.dumps(rules, default=str)
 
         @af.tool(

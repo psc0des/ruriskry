@@ -367,6 +367,7 @@ src/
 │   ├── governance_engine.py   # SRI composite + verdict logic
 │   ├── decision_tracker.py    # Audit trail → Cosmos DB / JSON (verdicts)
 │   ├── scan_run_tracker.py    # Scan-run lifecycle → Cosmos DB / JSON (scan records)
+│   ├── explanation_engine.py  # DecisionExplainer — factors, counterfactuals, LLM summary
 │   └── interception.py        # ActionInterceptor façade (async)
 ├── governance_agents/         # 4 governors — all async def evaluate()
 ├── operational_agents/        # 3 governed agents — all async def scan()
@@ -381,7 +382,7 @@ src/
 │                              #   scan triggers, SSE stream, cancel, last-run,
 │                              #   notification-status, test-notification, explanation)
 ├── infrastructure/            # Azure clients with mock fallback
-│   ├── azure_tools.py         # 5 sync tools: Resource Graph, metrics, NSG, activity log; mock fallbacks
+│   ├── azure_tools.py         # 5 sync tools + 5 async variants (*_async): Resource Graph, metrics, NSG, activity log; mock fallbacks
 │   ├── resource_graph.py      # Live: _azure_enrich_topology() — tags + KQL topology + cost_lookup
 │   └── cost_lookup.py         # Azure Retail Prices API — SKU→monthly cost; no auth; module-level cache
 └── config.py                  # SRI thresholds + env vars + DEMO_MODE + Teams settings
