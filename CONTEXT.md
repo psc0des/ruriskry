@@ -209,8 +209,10 @@ STATUS.md for full phase breakdown.
   concurrent KQL/HTTP calls. `async def aclose()` — closes the connection pool at shutdown.
 - `src/infrastructure/azure_tools.py` — 5 async variants: `query_resource_graph_async`,
   `query_metrics_async`, `get_resource_details_async`, `query_activity_log_async`,
-  `list_nsg_rules_async`. Each uses `azure.identity.aio.DefaultAzureCredential` (async
-  credential type required for `.aio` clients). Mock mode unchanged.
+  `list_nsg_rules_async`. Each uses `async with DefaultAzureCredential() as credential:`
+  nested inside `async with SomeClient(credential) as client:` — both are closed
+  deterministically on exit (async credential type required for `.aio` clients; credentials
+  hold their own internal HTTP connections for token acquisition). Mock mode unchanged.
 - `src/governance_agents/blast_radius_agent.py` + `financial_agent.py` — `_evaluate_rules_async()`,
   `_find_resource_async()`, and all helpers now `async def`; `@af.tool` callbacks `async def`;
   framework "tool not called" fallback → `await self._evaluate_rules_async(action)` (was sync).

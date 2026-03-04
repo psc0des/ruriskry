@@ -613,13 +613,14 @@ async def query_resource_graph_async(
         from src.config import settings
 
         sub_id = subscription_id or settings.azure_subscription_id
-        async with ResourceGraphClient(DefaultAzureCredential()) as client:
-            request = QueryRequest(
-                subscriptions=[sub_id] if sub_id else [],
-                query=kusto_query,
-            )
-            result = await client.resources(request)
-            return [dict(row) for row in (result.data or [])]
+        async with DefaultAzureCredential() as credential:
+            async with ResourceGraphClient(credential) as client:
+                request = QueryRequest(
+                    subscriptions=[sub_id] if sub_id else [],
+                    query=kusto_query,
+                )
+                result = await client.resources(request)
+                return [dict(row) for row in (result.data or [])]
     except Exception as exc:
         raise RuntimeError(
             f"azure_tools.query_resource_graph_async failed. "
@@ -654,12 +655,13 @@ async def query_metrics_async(
         from azure.identity.aio import DefaultAzureCredential  # type: ignore[import]
         from azure.monitor.query.aio import MetricsQueryClient  # type: ignore[import]
 
-        async with MetricsQueryClient(DefaultAzureCredential()) as client:
-            result = await client.query_resource(
-                resource_uri=resource_id,
-                metric_names=metric_names,
-                timespan=_parse_duration(timespan),
-            )
+        async with DefaultAzureCredential() as credential:
+            async with MetricsQueryClient(credential) as client:
+                result = await client.query_resource(
+                    resource_uri=resource_id,
+                    metric_names=metric_names,
+                    timespan=_parse_duration(timespan),
+                )
 
         output: dict = {"resource_id": resource_id, "timespan": timespan, "metrics": {}}
         for metric in result.metrics:
@@ -751,12 +753,13 @@ async def query_activity_log_async(
             "| project TimeGenerated, OperationNameValue, ActivityStatusValue, "
             "Caller, ResourceType, Resource, Level"
         )
-        async with LogsQueryClient(DefaultAzureCredential()) as client:
-            result = await client.query_workspace(
-                workspace_id=workspace_id,
-                query=kql,
-                timespan=_parse_duration(timespan),
-            )
+        async with DefaultAzureCredential() as credential:
+            async with LogsQueryClient(credential) as client:
+                result = await client.query_workspace(
+                    workspace_id=workspace_id,
+                    query=kql,
+                    timespan=_parse_duration(timespan),
+                )
 
         if result.status == LogsQueryStatus.SUCCESS:
             rows: list[dict] = []

@@ -203,6 +203,16 @@ making concurrent evaluation effectively sequential (~1,100ms per evaluation ins
   (historical + policy); `TestAsyncHelperMethods` grows from 6→9 (aclose × 2 + historical helper).
 - **Test result: 505 passed, 0 failed** ✅ (+5 new tests)
 
+**Post-Phase-20 Audit Round 3 (testing team — low severity):**
+- `azure_tools.py` — `query_resource_graph_async`, `query_metrics_async`,
+  `query_activity_log_async`: credentials were instantiated inline (`ResourceGraphClient(DefaultAzureCredential())`).
+  When the client's `async with` block exited, the *client's* HTTP session was closed but the
+  `DefaultAzureCredential` object (which holds its own internal HTTP connections for token
+  acquisition) was never explicitly closed. Fixed: each site now nests
+  `async with DefaultAzureCredential() as credential:` around `async with SomeClient(credential) as client:`.
+  Both are closed deterministically. No behaviour change in mock mode or test suite.
+- **Test result: 505 passed, 0 failed** ✅ (no new tests needed — mock path unchanged)
+
 ### Phase 19 — Live Azure Topology for Governance Agents
 
 **Problem:** `BlastRadiusAgent` and `FinancialImpactAgent` loaded `data/seed_resources.json`

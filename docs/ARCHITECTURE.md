@@ -103,11 +103,15 @@ boundary — minimal overhead. Used by `demo.py` and all unit tests.
    `agent-framework-core==1.0.0rc2`). The LLM calls a deterministic `@af.tool`, then synthesises
    a human-readable reasoning narrative. Mock mode bypasses the framework entirely (no Azure needed).
 
-5. **DefaultAzureCredential (sync vs async)** — sync clients use `azure.identity.DefaultAzureCredential`;
-   async clients (`.aio.*` packages) use `azure.identity.aio.DefaultAzureCredential`. Both resolve
-   credentials the same way (`az login` locally, Managed Identity in Azure) — no code changes
-   between environments. Using the wrong variant causes `TypeError` when the async SDK client
-   tries to `await credential.get_token()` on a sync credential.
+5. **DefaultAzureCredential (sync vs async, lifecycle)** — sync clients use
+   `azure.identity.DefaultAzureCredential`; async clients (`.aio.*` packages) use
+   `azure.identity.aio.DefaultAzureCredential`. Both resolve credentials the same way (`az login`
+   locally, Managed Identity in Azure) — no code changes between environments. Using the wrong
+   variant causes `TypeError` when the async SDK client tries to `await credential.get_token()`
+   on a sync credential. The async credential must also be closed — it holds its own internal HTTP
+   connections for token acquisition. Pattern: nest `async with DefaultAzureCredential() as
+   credential:` around `async with SomeClient(credential) as client:` so both are closed
+   deterministically when the block exits.
 
 6. **Branded scoring (SRI™)** — consistent 0–100 scale per dimension, weighted composite,
    configurable thresholds in `src/config.py`.
