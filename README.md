@@ -9,7 +9,7 @@
 
 RuriSkry intercepts, simulates, and scores every AI agent action **before** it touches your infrastructure. It sits between operational AI agents (SRE bots, cost optimizers, deployment agents) and Azure cloud resources, acting as a production-grade supervisory intelligence layer.
 
-Born at the Microsoft AI Dev Days Hackathon 2026, RuriSkry has evolved into a fully async, enterprise-ready governance engine with live Azure topology analysis, durable audit trails (Cosmos DB), Microsoft Teams alerting, explainable AI verdicts with counterfactual analysis, and 500+ automated tests.
+Born at the Microsoft AI Dev Days Hackathon 2026, RuriSkry has evolved into a fully async, enterprise-ready governance engine with live Azure topology analysis, durable audit trails (Cosmos DB), Microsoft Teams alerting, explainable AI verdicts with counterfactual analysis, and 505+ automated tests.
 
 ---
 
@@ -249,7 +249,7 @@ npm run dev
 ### Run Tests
 
 ```bash
-# Expected: 500 passed, 0 failed
+# Expected: 505 passed, 0 failed
 pytest tests/ -v
 ```
 
@@ -343,7 +343,7 @@ challenge track: *Automate and Optimize Software Delivery — Leverage Agentic D
 Since its hackathon origins, the project has matured into a production-grade governance engine
 with fully async internals, live Azure topology analysis (Resource Graph + Retail Prices API),
 durable Cosmos DB audit trails, Microsoft Teams alerting, explainable AI with counterfactual
-drilldowns, and a comprehensive 500-test suite.
+drilldowns, and a comprehensive 505-test suite.
 
 ---
 

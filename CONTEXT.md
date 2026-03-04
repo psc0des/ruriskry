@@ -4,7 +4,7 @@
 ## What Is This Project?
 RuriSkry is a production-grade AI Action Governance & Simulation Engine. It intercepts AI agent infrastructure actions, simulates their impact, and scores them using the Skry Risk Index (SRI™) before allowing execution.
 
-Originally built for the Microsoft AI Dev Days Hackathon 2026, RuriSkry has evolved into a fully async, enterprise-ready governance engine with live Azure topology analysis, durable Cosmos DB audit trails, Microsoft Teams alerting, explainable AI verdicts with counterfactual analysis, and 500+ automated tests.
+Originally built for the Microsoft AI Dev Days Hackathon 2026, RuriSkry has evolved into a fully async, enterprise-ready governance engine with live Azure topology analysis, durable Cosmos DB audit trails, Microsoft Teams alerting, explainable AI verdicts with counterfactual analysis, and 505+ automated tests.
 
 ## Project Structure
 ```
@@ -170,12 +170,15 @@ RuriSkry (Layer 2 — independent second opinion)
     → Decision logged to audit trail
 ```
 
-**Current state (Phase 20 complete):** All `@af.tool` callbacks in every agent are `async def`
-and use async Azure SDK variants underneath. Ops agents use 5 async azure_tools (`*_async`).
-Governance agents use `_evaluate_rules_async()` and `_find_resource_async()`. The topology
-enrichment method uses `asyncio.gather()` to run 4 KQL queries + 1 HTTP call concurrently.
-`asyncio.gather(4 governance agents)` is now truly parallel — no blocking. See STATUS.md for
-full phase breakdown.
+**Current state (Phase 20 complete + two audit rounds):** All `@af.tool` callbacks in every agent
+are `async def` — including `historical_agent` (fixed in audit round 2; live mode wraps Azure AI
+Search call in `asyncio.to_thread()`) and `policy_agent` (pure computation; fixed for architecture
+contract compliance). Ops agents use 5 async azure_tools (`*_async`). Governance agents use
+`_evaluate_rules_async()` and `_find_resource_async()`. The topology enrichment method uses
+`asyncio.gather()` to run 4 KQL queries + 1 HTTP call concurrently. `asyncio.gather(4 governance
+agents)` is now truly parallel — no blocking. `BlastRadiusAgent` and `FinancialImpactAgent` expose
+`async def aclose()` to release the underlying `ResourceGraphClient` connection pool. See
+STATUS.md for full phase breakdown.
 
 ## Important Files to Read First
 1. `src/core/models.py` — ALL Pydantic models. Every agent uses these.
@@ -211,11 +214,18 @@ full phase breakdown.
 - `src/governance_agents/blast_radius_agent.py` + `financial_agent.py` — `_evaluate_rules_async()`,
   `_find_resource_async()`, and all helpers now `async def`; `@af.tool` callbacks `async def`;
   framework "tool not called" fallback → `await self._evaluate_rules_async(action)` (was sync).
+  Both agents expose `async def aclose()` delegating to `self._rg_client.aclose()`.
+- `src/governance_agents/historical_agent.py` — `@af.tool evaluate_historical_rules` changed to
+  `async def`; added `_evaluate_rules_async()` using `asyncio.to_thread()` in live mode (Azure AI
+  Search I/O is blocking; thread pool prevents event loop stall). Mock mode: sync call (no I/O).
+- `src/governance_agents/policy_agent.py` — `@af.tool evaluate_policy_rules` changed to
+  `async def` (pure computation; no I/O; fixes architecture contract compliance).
 - `src/operational_agents/cost_agent.py`, `monitoring_agent.py`, `deploy_agent.py` — all
   `@af.tool` azure_tool callbacks `async def` + `await *_async()`. `propose_action` stays sync.
-- `tests/test_async_migration.py` (NEW) — 34 tests: cache sharing, `asyncio.gather` call count,
-  mock parity, `inspect.iscoroutinefunction` assertions, dynamic arg count via `inspect.signature`.
-- **Test result: 500 passed, 0 failed** ✅
+- `tests/test_async_migration.py` (NEW) — 39 tests: cache sharing, `asyncio.gather` call count,
+  mock parity, `inspect.iscoroutinefunction` assertions, `aclose()` existence checks, historical
+  + policy tool async assertions.
+- **Test result: 505 passed, 0 failed** ✅
 
 **Phase 19 — Live Azure Topology for Governance Agents (complete)**
 
@@ -237,7 +247,7 @@ full phase breakdown.
 - `tests/test_live_topology.py` (NEW) — 16 tests covering all new live-mode paths.
 - `tests/test_decision_tracker.py` — 10 `@pytest.mark.xfail` markers removed from `TestRecord`;
   `tracker._dir` → `tracker._cosmos._decisions_dir` (stale since Phase 7 Cosmos migration).
-- **Test result: 466 passed, 0 failed** ✅ (500 after Phase 20)
+- **Test result: 466 passed, 0 failed** ✅ (505 after Phase 20 + audit fixes)
 
 **Phase 18 — Decision Explanation Engine (complete)**
 

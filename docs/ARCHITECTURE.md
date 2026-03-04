@@ -86,6 +86,9 @@ boundary — minimal overhead. Used by `demo.py` and all unit tests.
    governance agents run truly in parallel — no thread pool, no event-loop blocking. Topology
    enrichment fans out 4 concurrent KQL queries + 1 HTTP cost lookup via `asyncio.gather()`.
    Safe under FastAPI, MCP server (FastMCP), and async test runners.
+   The Azure AI Search client (used by `HistoricalPatternAgent`) has no async variant, so its
+   `search_incidents()` call is wrapped in `asyncio.to_thread()` — the standard Python pattern
+   for bridging sync I/O into an async context without rewriting the underlying client library.
 
 2. **A2A as the network protocol layer** — `src/a2a/ruriskry_a2a_server.py` exposes
    RuriSkry as an A2A-compliant HTTP server. Any A2A-capable agent discovers it via
@@ -299,8 +302,9 @@ BlastRadiusAgent / FinancialImpactAgent
   in KQL queries to prevent quote injection.
 - **Subscription-wide reverse lookup** — reverse depends-on scans are not scoped to a single
   resource group, so cross-RG dependents are always detected.
-- **`async def aclose()`** — `ResourceGraphClient` exposes this method to close the async
-  SDK client's connection pool at application shutdown.
+- **`async def aclose()`** — `ResourceGraphClient` exposes this to close the async SDK client's
+  connection pool. `BlastRadiusAgent` and `FinancialImpactAgent` expose their own `aclose()` that
+  delegates to `self._rg_client.aclose()`, so callers only need to close the agent.
 
 Three flags must be set for live topology: `USE_LOCAL_MOCKS=false`, `AZURE_SUBSCRIPTION_ID`,
 and `USE_LIVE_TOPOLOGY=true`. Defaulting the third flag to `false` prevents tests from making

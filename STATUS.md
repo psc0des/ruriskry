@@ -4,7 +4,7 @@
 > picking up this project. It tells you exactly what is done, what is live,
 > and what comes next. Architecture and coding standards are in `CONTEXT.md`.
 
-**Last updated:** 2026-03-04 (Phase 20 Async End-to-End Migration complete + post-audit credential/fallback fixes)
+**Last updated:** 2026-03-04 (Phase 20 Async End-to-End Migration complete + two rounds of post-audit fixes; 505 tests passing)
 **Active branch:** `main`
 **Demo verdict:** All 3 scenarios pass with real prod resource IDs (DENIED / APPROVED / ESCALATED)
 
@@ -31,7 +31,7 @@
 | Dashboard API | ✅ Complete | FastAPI REST (18 endpoints; scan runs durable; SSE live log; Teams status + test; explanation engine) |
 | Teams notifications (Phase 17) | ✅ Complete | `src/notifications/teams_notifier.py` — Adaptive Card to Teams webhook on DENIED/ESCALATED |
 | Live Azure topology (Phase 19) | ✅ Complete | `ResourceGraphClient._azure_enrich_topology()` — tag-based + KQL network topology; `cost_lookup.py` — Azure Retail Prices API; `USE_LIVE_TOPOLOGY=true` opt-in flag |
-| Async end-to-end migration (Phase 20) | ✅ Complete | All `@af.tool` callbacks `async def`; async Azure SDK clients (`aio.*`); `asyncio.gather()` for 4 concurrent KQL queries in topology enrichment; `get_sku_monthly_cost_async()`; 5 async `azure_tools` variants; shared `_extract_monthly_cost()` helper |
+| Async end-to-end migration (Phase 20) | ✅ Complete | All 7 agents: every `@af.tool` callback `async def` (incl. historical + policy, fixed post-audit); async Azure SDK clients (`aio.*`); `asyncio.gather()` for 4 concurrent KQL queries; `aclose()` on `ResourceGraphClient`, `BlastRadiusAgent`, `FinancialImpactAgent` |
 | Decision explanation engine (Phase 18) | ✅ Complete | `src/core/explanation_engine.py` — counterfactual analysis, per-dimension factors, LLM summary |
 | Evaluation drilldown (Phase 18) | ✅ Complete | `EvaluationDrilldown.jsx` — 6-section full-page drilldown: SRI bars, explanation, counterfactuals, reasoning |
 | Agent scan triggers (Phase 13) | ✅ Complete | POST /api/scan/cost\|monitoring\|deploy\|all + GET status |
@@ -165,14 +165,14 @@ making concurrent evaluation effectively sequential (~1,100ms per evaluation ins
   - `TestExtractMonthlyCost` (5): shared OS-aware helper.
   - `TestResourceGraphClientAsync` (4): async methods + `asyncio.gather` call verification.
   - `TestAsyncAzureTools` (7): async variants return same mock data as sync.
-  - `TestGovernanceAgentAsyncTools` (2): `@af.tool` callbacks are `async def`.
+  - `TestGovernanceAgentAsyncTools` (4): `@af.tool` callbacks are `async def` (blast, financial, historical, policy).
   - `TestOpsAgentAsyncTools` (4): ops agent tools async; `propose_action` stays sync.
-  - `TestAsyncHelperMethods` (6): regression guards for all new async methods/functions.
+  - `TestAsyncHelperMethods` (9): regression guards for all new async methods/functions + `aclose()` + historical helper.
 - `tests/test_live_topology.py` — updated 2 live-mode tests to use `AsyncMock` for
   `get_resource_async` (previously used sync `get_resource` mock, now fails to await).
 - **Test result: 500 passed, 0 failed** ✅ (+34 new tests)
 
-**Post-Phase-20 Audit Fixes (testing team deep audit):**
+**Post-Phase-20 Audit Round 1 (testing team deep audit):**
 - `resource_graph.py` + `azure_tools.py`: all async client instantiation sites changed from
   `azure.identity.DefaultAzureCredential` (sync) to `azure.identity.aio.DefaultAzureCredential`
   (async). Async SDK clients call `await credential.get_token()` — a sync credential raises
@@ -184,6 +184,24 @@ making concurrent evaluation effectively sequential (~1,100ms per evaluation ins
   the aiohttp connection pool. Call at application shutdown to silence `ResourceWarning`.
 - `.gitignore`: `data/scans/` added alongside `data/decisions/` — both are runtime-generated
   directories that should never be committed.
+
+**Post-Phase-20 Audit Round 2 (testing team follow-up):**
+- `historical_agent.py`: `@af.tool evaluate_historical_rules` was still `def` (sync). In live
+  mode it calls `self._search.search_incidents()` — a blocking Azure AI Search network call that
+  would block the event loop. Fixed: changed to `async def`; added `_evaluate_rules_async()` that
+  wraps the blocking call in `asyncio.to_thread()` in live mode; mock mode calls sync directly
+  (pure computation, no I/O).
+- `policy_agent.py`: `@af.tool evaluate_policy_rules` was still `def` (sync). Policy evaluation
+  is pure JSON rule matching (no Azure calls), so it doesn't block the event loop, but the
+  documented "all `@af.tool` callbacks `async def`" architecture contract was violated. Fixed:
+  changed to `async def`.
+- `blast_radius_agent.py` + `financial_agent.py`: `aclose()` was defined on `ResourceGraphClient`
+  but neither agent exposed it to callers. Added `async def aclose()` to both agents, delegating
+  to `self._rg_client.aclose()` when in live topology mode.
+- `.gitignore`: added `.claude/` (session-local AI context, not source code).
+- `tests/test_async_migration.py`: +5 tests — `TestGovernanceAgentAsyncTools` grows from 2→4
+  (historical + policy); `TestAsyncHelperMethods` grows from 6→9 (aclose × 2 + historical helper).
+- **Test result: 505 passed, 0 failed** ✅ (+5 new tests)
 
 ### Phase 19 — Live Azure Topology for Governance Agents
 
