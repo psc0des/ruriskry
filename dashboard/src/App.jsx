@@ -180,9 +180,9 @@ export default function App() {
               ) : (
                 <div
                   className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border bg-slate-700/50 border-slate-600/30 text-slate-500"
-                  title="Teams webhook not configured — set TEAMS_WEBHOOK_URL in .env"
+                  title="Microsoft Teams chat alerts are off — set TEAMS_WEBHOOK_URL in .env to enable"
                 >
-                  🔔 Teams Not configured
+                  💬 Teams Alerts: Off
                 </div>
               )
             )}

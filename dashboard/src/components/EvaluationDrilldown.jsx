@@ -136,13 +136,20 @@ export default function EvaluationDrilldown({ evaluation, onBack }) {
                         <span className="text-slate-200 font-mono truncate block" title={ev.resource_id}>
                             {shortResource(ev.resource_id)}
                         </span>
+                        {ev.resource_type && (
+                            <span className="text-slate-600 block truncate" title={ev.resource_type}>
+                                {ev.resource_type.split('/').pop()}
+                            </span>
+                        )}
                     </div>
                     <div>
-                        <span className="text-slate-500 block">Type</span>
-                        <span className="text-slate-300">{ev.resource_type ?? ev.action_type?.replace(/_/g, ' ') ?? '—'}</span>
+                        <span className="text-slate-500 block">Action Proposed</span>
+                        <span className="text-slate-200 font-medium capitalize">
+                            {ev.action_type?.replace(/_/g, ' ') ?? '—'}
+                        </span>
                     </div>
                     <div>
-                        <span className="text-slate-500 block">Proposing Agent</span>
+                        <span className="text-slate-500 block">Proposed By</span>
                         <span className="text-blue-400 font-mono">{ev.agent_id ?? '—'}</span>
                     </div>
                     <div>
@@ -150,6 +157,16 @@ export default function EvaluationDrilldown({ evaluation, onBack }) {
                         <span className="text-slate-300">{formatTime(ev.timestamp)}</span>
                     </div>
                 </div>
+
+                {/* Why the agent proposed this action */}
+                {ev.action_reason && (
+                    <div className="mt-4 text-xs">
+                        <span className="text-slate-500 block mb-1">Why proposed</span>
+                        <p className={`${vc.bg} ${vc.border} border rounded-lg px-3 py-2 text-slate-300 leading-relaxed`}>
+                            {ev.action_reason}
+                        </p>
+                    </div>
+                )}
             </div>
 
             {/* ═══════════════════════════════════════════════════════════════
@@ -304,7 +321,7 @@ export default function EvaluationDrilldown({ evaluation, onBack }) {
                         Proposing Agent — {ev.agent_id ?? 'unknown'}
                     </h3>
                     <p className="text-sm text-slate-300 bg-slate-900/40 rounded-lg p-3 border border-slate-700/40">
-                        {ev.proposed_action?.reason ?? ev.reason ?? 'No reasoning provided.'}
+                        {ev.proposed_action?.reason ?? ev.action_reason ?? ev.verdict_reason ?? ev.reason ?? 'No reasoning provided.'}
                     </p>
                 </div>
 
