@@ -117,7 +117,7 @@ export default function AgentControls({ onScanComplete }) {
   const [lastStatus, setLastStatus] = useState({ cost: null, monitoring: null, deploy: null })
 
   // Live log panel state: which scan_id + agent_type to show.
-  const [liveLog, setLiveLog] = useState({ open: false, scanId: null, agentType: null })
+  const [liveLog, setLiveLog] = useState({ open: false, scanId: null, agentType: null, scanEntries: null })
 
   // Store polling interval IDs so we can clear them when done.
   const pollRefs = useRef({ cost: null, monitoring: null, deploy: null })
@@ -179,9 +179,14 @@ export default function AgentControls({ onScanComplete }) {
     try {
       const { scan_ids } = await triggerAllScans(rg)
       const types = ['cost', 'monitoring', 'deploy']
-      // Open log panel for the cost scan (first one)
-      if (scan_ids[0]) {
-        setLiveLog({ open: true, scanId: scan_ids[0], agentType: 'cost' })
+      // Open merged log panel showing all 3 agents' streams simultaneously
+      if (scan_ids.length) {
+        setLiveLog({
+          open: true,
+          scanId: null,
+          agentType: 'all',
+          scanEntries: scan_ids.map((id, i) => ({ scanId: id, agentType: types[i] })),
+        })
       }
       scan_ids.forEach((scanId, i) => startPolling(scanId, types[i]))
     } catch (err) {
@@ -274,6 +279,7 @@ export default function AgentControls({ onScanComplete }) {
       <LiveLogPanel
         scanId={liveLog.scanId}
         agentType={liveLog.agentType}
+        scanEntries={liveLog.scanEntries}
         isOpen={liveLog.open}
         onClose={() => setLiveLog(prev => ({ ...prev, open: false }))}
       />

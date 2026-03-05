@@ -1,98 +1,93 @@
 /**
  * LiveLogPanel.jsx — slide-out panel showing real-time SSE scan progress.
  *
- * Opens when a scan is triggered and streams events from:
- *   GET /api/scan/{scanId}/stream
+ * Supports two modes:
+ *   Single agent  — pass scanId + agentType (individual scan buttons)
+ *   All agents    — pass scanEntries=[{scanId,agentType},…] (Run All Agents)
  *
- * Each event is displayed as a color-coded log line.  Events buffer in the
- * backend queue so connecting after scan start works fine — all prior events
- * are delivered immediately.
+ * In all-agents mode the three SSE streams are merged into one chronological
+ * log and each line is tagged with a coloured agent badge.
  *
  * Props:
- *   scanId    — UUID from POST /api/scan/*  (null hides the panel)
- *   agentType — "cost" | "monitoring" | "deploy"
- *   onClose   — callback to close the panel
- *   isOpen    — bool, controls visibility
+ *   scanId       — UUID from POST /api/scan/* (single-agent mode)
+ *   agentType    — "cost" | "monitoring" | "deploy"  (single-agent mode)
+ *   scanEntries  — [{scanId, agentType}, …]           (all-agents mode)
+ *   onClose      — callback to close the panel
+ *   isOpen       — bool, controls visibility
  */
 
 import React, { useEffect, useRef, useState, useCallback } from 'react'
 import { BASE } from '../api'
 
-// ── Helpers ────────────────────────────────────────────────────────────────
+// ── Constants ───────────────────────────────────────────────────────────────
 
 const AGENT_LABELS = {
   cost:       'Cost Agent',
   monitoring: 'SRE Agent',
   deploy:     'Deploy Agent',
+  all:        'All Agents',
 }
 
-/**
- * Map an event type + optional decision to display properties.
- * Returns { icon, colour, label }.
- */
+const AGENT_BADGE_STYLE = {
+  cost:       'bg-yellow-900/60 text-yellow-300',
+  monitoring: 'bg-blue-900/60  text-blue-300',
+  deploy:     'bg-orange-900/60 text-orange-300',
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
 function eventStyle(event) {
   switch (event.event) {
-    case 'scan_started':
-      return { icon: '🚀', colour: 'text-slate-400', label: 'Started' }
-    case 'discovery':
-      return { icon: '🔍', colour: 'text-blue-400', label: 'Discovery' }
-    case 'analysis':
-      return { icon: '🧠', colour: 'text-purple-400', label: 'Analysis' }
-    case 'reasoning':
-      return { icon: '🤔', colour: 'text-purple-300', label: 'Reasoning' }
-    case 'proposal':
-      return { icon: '📋', colour: 'text-orange-400', label: 'Proposal' }
-    case 'evaluation':
-      return { icon: '⚖️', colour: 'text-yellow-400', label: 'Evaluation' }
+    case 'scan_started':  return { icon: '🚀', colour: 'text-slate-400' }
+    case 'discovery':     return { icon: '🔍', colour: 'text-blue-400' }
+    case 'analysis':      return { icon: '🧠', colour: 'text-purple-400' }
+    case 'reasoning':     return { icon: '🤔', colour: 'text-purple-300' }
+    case 'proposal':      return { icon: '📋', colour: 'text-orange-400' }
+    case 'evaluation':    return { icon: '⚖️', colour: 'text-yellow-400' }
+    case 'execution':     return { icon: '⚙️', colour: 'text-cyan-400' }
+    case 'persisted':     return { icon: '💾', colour: 'text-slate-500' }
+    case 'scan_complete': return { icon: '✔️', colour: 'text-green-300' }
+    case 'scan_error':    return { icon: '❌', colour: 'text-red-400' }
+    // Backward compat
+    case 'agent_returned': return { icon: '🔍', colour: 'text-blue-400' }
+    case 'evaluating':     return { icon: '⚖️', colour: 'text-yellow-400' }
     case 'verdict': {
       const d = event.decision?.toLowerCase()
-      if (d === 'approved')  return { icon: '✅', colour: 'text-green-400',  label: 'Approved' }
-      if (d === 'escalated') return { icon: '⚠️', colour: 'text-orange-400', label: 'Escalated' }
-      if (d === 'denied')    return { icon: '🚫', colour: 'text-red-400',    label: 'Denied' }
-      return { icon: '⚖️', colour: 'text-yellow-400', label: 'Verdict' }
+      if (d === 'approved')  return { icon: '✅', colour: 'text-green-400' }
+      if (d === 'escalated') return { icon: '⚠️', colour: 'text-orange-400' }
+      if (d === 'denied')    return { icon: '🚫', colour: 'text-red-400' }
+      return { icon: '⚖️', colour: 'text-yellow-400' }
     }
-    // Backward compatibility for older event names during transition.
-    case 'agent_returned':
-      return { icon: '🔍', colour: 'text-blue-400', label: 'Discovery' }
-    case 'evaluating':
-      return { icon: '⚖️', colour: 'text-yellow-400', label: 'Evaluation' }
-    case 'persisted':
-      return { icon: '💾', colour: 'text-slate-500', label: 'Persisted' }
-    case 'scan_complete':
-      return { icon: '✔️', colour: 'text-green-300', label: 'Complete' }
-    case 'scan_error':
-      return { icon: '❌', colour: 'text-red-400', label: 'Error' }
-    default:
-      return { icon: '•', colour: 'text-slate-400', label: event.event }
+    default: return { icon: '•', colour: 'text-slate-400' }
   }
 }
 
-/** Format ISO timestamp to HH:MM:SS */
 function fmtTime(iso) {
   try {
     return new Date(iso).toLocaleTimeString(undefined, {
       hour: '2-digit', minute: '2-digit', second: '2-digit',
     })
-  } catch {
-    return ''
-  }
+  } catch { return '' }
 }
 
-// ── Log line ───────────────────────────────────────────────────────────────
+// ── Log line ─────────────────────────────────────────────────────────────────
 
-function LogLine({ event }) {
-  const { icon, colour, label } = eventStyle(event)
+function LogLine({ event, showAgent }) {
+  const { icon, colour } = eventStyle(event)
   const msg = event.message || JSON.stringify(event)
+  const badgeStyle = AGENT_BADGE_STYLE[event._agentType] || 'bg-slate-800 text-slate-400'
 
   return (
     <div className="flex items-start gap-2 py-1 border-b border-slate-800/60 last:border-0">
-      {/* Timestamp */}
       <span className="text-slate-600 font-mono text-xs shrink-0 w-20 pt-0.5">
         {fmtTime(event.timestamp)}
       </span>
-      {/* Icon */}
       <span className="shrink-0 text-sm">{icon}</span>
-      {/* Message */}
+      {showAgent && event._agentType && (
+        <span className={`shrink-0 text-xs font-mono px-1.5 py-0.5 rounded ${badgeStyle}`}>
+          {AGENT_LABELS[event._agentType] ?? event._agentType}
+        </span>
+      )}
       <span className={`text-xs font-mono leading-relaxed ${colour} break-words min-w-0`}>
         {msg}
       </span>
@@ -100,105 +95,106 @@ function LogLine({ event }) {
   )
 }
 
-// ── Main panel ─────────────────────────────────────────────────────────────
+// ── Main panel ───────────────────────────────────────────────────────────────
 
-export default function LiveLogPanel({ scanId, agentType, onClose, isOpen }) {
-  const [events, setEvents]   = useState([])
-  const [done, setDone]       = useState(false)
+export default function LiveLogPanel({ scanId, agentType, scanEntries, onClose, isOpen }) {
+  // Normalise: always work with an array of {scanId, agentType} entries.
+  const isMulti   = !!scanEntries?.length
+  const entries   = isMulti ? scanEntries : (scanId ? [{ scanId, agentType }] : [])
+
+  const [events,  setEvents]  = useState([])
+  const [doneSet, setDoneSet] = useState(new Set())  // scanIds that have finished
+  const esMapRef              = useRef({})            // scanId → EventSource
   const bottomRef             = useRef(null)
-  const esRef                 = useRef(null)   // EventSource ref for cleanup
 
-  // Reset and reconnect whenever scanId changes
+  const done = entries.length > 0 && doneSet.size >= entries.length
+
+  // Open one EventSource per entry; merge events into one list.
   useEffect(() => {
-    if (!scanId || !isOpen) return
+    if (!isOpen || !entries.length) return
 
-    // Reset state for new scan
     setEvents([])
-    setDone(false)
+    setDoneSet(new Set())
 
-    // Close any previous EventSource
-    if (esRef.current) {
-      esRef.current.close()
-      esRef.current = null
-    }
+    // Close any leftover connections from a previous render
+    Object.values(esMapRef.current).forEach(es => es.close())
+    esMapRef.current = {}
 
-    const es = new EventSource(`${BASE}/scan/${scanId}/stream`)
-    esRef.current = es
+    entries.forEach(({ scanId: sid, agentType: atype }) => {
+      const es = new EventSource(`${BASE}/scan/${sid}/stream`)
+      esMapRef.current[sid] = es
 
-    es.onmessage = (e) => {
-      try {
-        const event = JSON.parse(e.data)
-        setEvents(prev => [...prev, event])
-        if (event.event === 'scan_complete' || event.event === 'scan_error') {
-          setDone(true)
-          es.close()
-          esRef.current = null
-        }
-      } catch {
-        // Ignore malformed events
+      es.onmessage = (e) => {
+        try {
+          const event = JSON.parse(e.data)
+          // Tag every event with which agent it came from
+          setEvents(prev => [...prev, { ...event, _agentType: atype }])
+          if (event.event === 'scan_complete' || event.event === 'scan_error') {
+            setDoneSet(prev => new Set([...prev, sid]))
+            es.close()
+            delete esMapRef.current[sid]
+          }
+        } catch { /* ignore malformed events */ }
       }
-    }
 
-    es.onerror = () => {
-      // SSE connection dropped — mark done so user isn't stuck
-      setDone(true)
-      es.close()
-      esRef.current = null
-    }
+      es.onerror = () => {
+        setDoneSet(prev => new Set([...prev, sid]))
+        es.close()
+        delete esMapRef.current[sid]
+      }
+    })
 
-    // Cleanup: close EventSource when component unmounts or scanId changes
     return () => {
-      es.close()
-      esRef.current = null
+      Object.values(esMapRef.current).forEach(es => es.close())
+      esMapRef.current = {}
     }
-  }, [scanId, isOpen])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, scanId, JSON.stringify(scanEntries)])
 
-  // Auto-scroll to bottom on each new event
+  // Auto-scroll to bottom on new events
   useEffect(() => {
-    if (bottomRef.current) {
-      bottomRef.current.scrollIntoView({ behavior: 'smooth' })
-    }
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [events])
 
   const handleClose = useCallback(() => {
-    if (esRef.current) {
-      esRef.current.close()
-      esRef.current = null
-    }
+    Object.values(esMapRef.current).forEach(es => es.close())
+    esMapRef.current = {}
     onClose()
   }, [onClose])
 
-  if (!isOpen || !scanId) return null
+  if (!isOpen || !entries.length) return null
 
-  const agentLabel = AGENT_LABELS[agentType] ?? agentType
+  const title = isMulti ? 'All Agents — Live Scan Log' : `${AGENT_LABELS[agentType] ?? agentType} — Live Scan Log`
+  const subtitle = isMulti
+    ? entries.map(e => e.scanId.slice(0, 6)).join(' · ')
+    : entries[0]?.scanId.slice(0, 8) + '…'
+
+  // How many agents have finished (for the status line in multi mode)
+  const doneCount = doneSet.size
 
   return (
     <>
-      {/* Backdrop — semi-transparent overlay */}
+      {/* Backdrop */}
       <div
         className="fixed inset-0 bg-black/40 z-30"
         onClick={handleClose}
         aria-hidden="true"
       />
 
-      {/* Slide-out panel — fixed right side */}
+      {/* Panel */}
       <div className="fixed top-0 right-0 h-full w-full max-w-lg bg-slate-900 border-l border-slate-700 shadow-2xl z-40 flex flex-col">
 
-        {/* ── Header ── */}
+        {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700 shrink-0">
           <div>
-            <h2 className="text-sm font-semibold text-slate-200">
-              {agentLabel} — Live Scan Log
-            </h2>
-            <p className="text-xs text-slate-500 font-mono mt-0.5">
-              {scanId.slice(0, 8)}…
-            </p>
+            <h2 className="text-sm font-semibold text-slate-200">{title}</h2>
+            <p className="text-xs text-slate-500 font-mono mt-0.5">{subtitle}</p>
           </div>
           <div className="flex items-center gap-3">
             {!done && (
               <span className="flex items-center gap-1.5 text-xs text-yellow-400 font-mono">
                 <span className="w-1.5 h-1.5 rounded-full bg-yellow-400 animate-pulse" />
-                Scanning…
+                {isMulti ? `${doneCount}/${entries.length} done` : 'Scanning…'}
               </span>
             )}
             {done && (
@@ -214,7 +210,18 @@ export default function LiveLogPanel({ scanId, agentType, onClose, isOpen }) {
           </div>
         </div>
 
-        {/* ── Log body ── */}
+        {/* Agent legend (multi mode only) */}
+        {isMulti && (
+          <div className="flex gap-2 px-4 py-2 border-b border-slate-800 shrink-0">
+            {entries.map(({ agentType: atype }) => (
+              <span key={atype} className={`text-xs font-mono px-2 py-0.5 rounded ${AGENT_BADGE_STYLE[atype] ?? 'bg-slate-800 text-slate-400'}`}>
+                {AGENT_LABELS[atype]}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {/* Log body */}
         <div className="flex-1 overflow-y-auto px-4 py-3 font-mono">
           {events.length === 0 && (
             <p className="text-slate-600 text-xs text-center py-8">
@@ -222,16 +229,15 @@ export default function LiveLogPanel({ scanId, agentType, onClose, isOpen }) {
             </p>
           )}
           {events.map((ev, i) => (
-            <LogLine key={i} event={ev} />
+            <LogLine key={i} event={ev} showAgent={isMulti} />
           ))}
-          {/* Invisible sentinel for auto-scroll */}
           <div ref={bottomRef} />
         </div>
 
-        {/* ── Footer ── */}
+        {/* Footer */}
         <div className="px-4 py-3 border-t border-slate-700 shrink-0">
           <p className="text-xs text-slate-600">
-            {events.length} event{events.length !== 1 ? 's' : ''} received
+            {events.length} event{events.length !== 1 ? 's' : ''}
             {!done && ' · streaming…'}
           </p>
         </div>
