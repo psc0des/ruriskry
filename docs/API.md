@@ -534,7 +534,17 @@ Get the execution status for a governance verdict.
 }
 ```
 
-Returns `{"status": "no_execution"}` if the verdict has no execution record.
+Returns the following if the verdict has no execution record:
+```json
+{
+  "status": "no_execution",
+  "action_id": "c68c25ca-...",
+  "gateway_enabled": true
+}
+```
+`gateway_enabled` reflects the current `EXECUTION_GATEWAY_ENABLED` setting.
+When `true` and `no_execution`, the verdict predates gateway enablement — run a new scan
+to generate an execution record. When `false`, the gateway is disabled globally.
 
 ---
 

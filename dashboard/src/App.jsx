@@ -14,7 +14,7 @@
  */
 
 import React, { useEffect, useState, useCallback } from 'react'
-import { fetchEvaluations, fetchMetrics, fetchAgents, fetchNotificationStatus, testTeamsNotification } from './api'
+import { fetchEvaluations, fetchMetrics, fetchAgents, fetchNotificationStatus, testTeamsNotification, adminReset } from './api'
 import MetricsBar from './components/MetricsBar'
 import SRIGauge from './components/SRIGauge'
 import DecisionTable from './components/DecisionTable'
@@ -199,6 +199,24 @@ export default function App() {
             >
               ↺ Refresh
             </button>
+
+            {/* Dev/test reset button */}
+            <button
+              onClick={async () => {
+                if (!window.confirm('⚠ Delete ALL local evaluation data and start fresh?')) return
+                try {
+                  const result = await adminReset()
+                  await load()
+                  alert(`Reset complete — deleted ${result.total} records (${result.deleted.decisions} decisions, ${result.deleted.executions} executions, ${result.deleted.scans} scans).`)
+                } catch (e) {
+                  alert(`Reset failed: ${e.message}`)
+                }
+              }}
+              className="text-red-500/60 hover:text-red-400 transition-colors text-xs font-mono border border-red-500/20 hover:border-red-500/40 px-2 py-0.5 rounded"
+              title="Dev/test only — wipe all local data"
+            >
+              🗑 Reset
+            </button>
           </div>
         </div>
       </header>
@@ -218,7 +236,13 @@ export default function App() {
             <ConnectedAgents agents={agents} />
 
             {/* ② Agent Controls — trigger scans from the dashboard */}
-            <AgentControls onScanComplete={fetchAll} />
+            <AgentControls
+              onScanComplete={fetchAll}
+              onViewVerdicts={(actionId) => {
+                const ev = evaluations.find(e => e.action_id === actionId)
+                if (ev) setDrilldownEval(ev)
+              }}
+            />
 
             {metrics && <MetricsBar metrics={metrics} />}
 

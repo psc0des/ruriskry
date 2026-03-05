@@ -146,8 +146,8 @@ class CostOptimizationAgent:
 
         self._resources: list[dict] = data.get("resources", [])
         self._cfg = cfg or _default_settings
-
         self._use_framework: bool = bool(self._cfg.azure_openai_endpoint)
+        self.scan_error: str | None = None  # populated if framework call fails
 
     # ------------------------------------------------------------------
     # Public API
@@ -181,9 +181,11 @@ class CostOptimizationAgent:
             )
             return []
 
+        self.scan_error = None
         try:
             return await self._scan_with_framework(target_resource_group)
         except Exception as exc:  # noqa: BLE001
+            self.scan_error = str(exc)
             logger.warning(
                 "CostOptimizationAgent: framework call failed (%s) — returning no proposals "
                 "(live-mode fallback to seed data would generate false positives).",

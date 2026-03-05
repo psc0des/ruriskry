@@ -143,8 +143,8 @@ class MonitoringAgent:
         self._edges: list[dict] = data.get("dependency_edges", [])
 
         self._cfg = cfg or _default_settings
-
         self._use_framework: bool = bool(self._cfg.azure_openai_endpoint)
+        self.scan_error: str | None = None  # populated if framework call fails
 
     # ------------------------------------------------------------------
     # Public API
@@ -183,9 +183,11 @@ class MonitoringAgent:
             )
             return []
 
+        self.scan_error = None
         try:
             return await self._scan_with_framework(alert_payload, target_resource_group)
         except Exception as exc:  # noqa: BLE001
+            self.scan_error = str(exc)
             logger.warning(
                 "MonitoringAgent: framework call failed (%s) — returning no proposals "
                 "(live-mode fallback to seed data would generate false positives).",

@@ -58,7 +58,7 @@ function Spinner() {
 
 // ── Single agent button ────────────────────────────────────────────────────
 
-function AgentButton({ type, scanning, lastStatus, onTrigger }) {
+function AgentButton({ type, scanning, lastStatus, onTrigger, onViewResults }) {
   const isRunning = scanning[type]
 
   return (
@@ -87,13 +87,27 @@ function AgentButton({ type, scanning, lastStatus, onTrigger }) {
 
       {/* Status line */}
       {lastStatus[type] && (
-        <p className={`text-xs font-mono mt-0.5 ${statusColour(lastStatus[type].status)}`}>
-          {lastStatus[type].status === 'running' && 'Scanning…'}
-          {lastStatus[type].status === 'complete' && (
-            `Done · ${lastStatus[type].evaluations_count ?? 0} verdict(s)`
-          )}
-          {lastStatus[type].status === 'error' && `Error: ${lastStatus[type].error}`}
-        </p>
+        lastStatus[type].status === 'complete' ? (
+          // Clickable only when there are verdicts to show
+          (lastStatus[type].evaluations_count ?? 0) > 0 ? (
+            <span
+              className="text-xs font-mono mt-0.5 text-green-400 underline decoration-dotted cursor-pointer hover:text-green-300"
+              title="Click to view verdict details"
+              onClick={(e) => { e.stopPropagation(); onViewResults?.() }}
+            >
+              Done · {lastStatus[type].evaluations_count} verdict(s) →
+            </span>
+          ) : (
+            <span className="text-xs font-mono mt-0.5 text-slate-500">
+              Done · 0 verdicts (no issues found)
+            </span>
+          )
+        ) : (
+          <p className={`text-xs font-mono mt-0.5 ${statusColour(lastStatus[type].status)}`}>
+            {lastStatus[type].status === 'running' && 'Scanning…'}
+            {lastStatus[type].status === 'error' && `Error: ${lastStatus[type].error}`}
+          </p>
+        )
       )}
     </button>
   )
@@ -106,7 +120,7 @@ function AgentButton({ type, scanning, lastStatus, onTrigger }) {
  *   onScanComplete — called when any scan finishes so the parent can re-fetch
  *   evaluation data and update the dashboard.
  */
-export default function AgentControls({ onScanComplete }) {
+export default function AgentControls({ onScanComplete, onViewVerdicts }) {
   // Default empty → API sends null resource_group → agents scan whole subscription.
   const [resourceGroup, setResourceGroup] = useState('')
 
@@ -247,9 +261,25 @@ export default function AgentControls({ onScanComplete }) {
               scanning={scanning}
               lastStatus={lastStatus}
               onTrigger={handleTrigger}
+              onViewResults={() => {
+                // Pick the first action_id from this scan's evaluations.
+                // The parent looks it up in its evaluations[] and opens drilldown.
+                const firstId = lastStatus[type]?.evaluations?.[0]?.action_id
+                if (firstId) onViewVerdicts?.(firstId)
+              }}
             />
           ))}
         </div>
+
+        {/* ── View Log button — reopen a closed-but-still-active scan log ── */}
+        {!liveLog.open && (liveLog.scanId || liveLog.scanEntries?.length) && (
+          <button
+            onClick={() => setLiveLog(prev => ({ ...prev, open: true }))}
+            className="w-full mb-3 py-2 rounded-xl text-sm font-semibold border border-slate-500/60 bg-slate-700/30 hover:bg-slate-700/50 text-slate-300 hover:text-slate-100 cursor-pointer transition-all"
+          >
+            📋 View Scan Log
+          </button>
+        )}
 
         {/* ── Run All button ── */}
         <button

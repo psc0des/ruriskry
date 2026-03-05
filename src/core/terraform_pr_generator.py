@@ -264,14 +264,7 @@ class TerraformPRGenerator:
 """
 
         elif action_type == "modify_nsg":
-            return header + f"""# CHANGE REQUIRED: NSG modification for {resource_short}
-# Agent reason: {action.reason}
-#
-# In the existing azurerm_network_security_group or
-# azurerm_network_security_rule block for {resource_short}:
-# - Add/modify the security rule as described above
-# Then delete this file.
-"""
+            return self._generate_nsg_fix(header, action, resource_short, resource_id)
 
         elif action_type == "restart_service":
             return header + f"""# CHANGE REQUIRED: Restart service on {resource_short}
@@ -298,6 +291,121 @@ class TerraformPRGenerator:
 # Agent reason: {action.reason}
 #
 # Apply the change described above.  Then delete this file.
+"""
+
+    def _generate_nsg_fix(
+        self,
+        header: str,
+        action,
+        resource_short: str,
+        resource_id: str,
+    ) -> str:
+        """Generate real, actionable Terraform for an NSG security rule fix.
+
+        Parses the agent's reason string to extract rule name, port, and source,
+        then generates three concrete remediation options the reviewer can choose from.
+        """
+        import re  # noqa: PLC0415
+
+        # Extract resource group from ARM ID
+        # /subscriptions/.../resourceGroups/ruriskry-prod-rg/providers/.../nsg-east-prod
+        rg = action.target.resource_group or ""
+        if not rg and "/" in resource_id:
+            parts = resource_id.split("/")
+            for i, part in enumerate(parts):
+                if part.lower() == "resourcegroups" and i + 1 < len(parts):
+                    rg = parts[i + 1]
+                    break
+        rg = rg or "<YOUR_RESOURCE_GROUP>"
+
+        # Parse agent reason for specific rule details
+        reason = action.reason
+        rule_match = re.search(r"rule ['\"]([^'\"]+)['\"]", reason, re.IGNORECASE)
+        rule_name = rule_match.group(1) if rule_match else None
+
+        port_match = re.search(r"destinationPortRange=['\"]?(\d+|\*)['\"]?", reason) or \
+                     re.search(r"port (\d+)", reason, re.IGNORECASE)
+        port = port_match.group(1) if port_match else "*"
+
+        tf_rule_name = rule_name.replace("-", "_") if rule_name else "offending_rule"
+
+        if rule_name:
+            # We know the specific rule — generate targeted fix
+            return header + f"""# ===========================================================================
+# REAL TERRAFORM FIX — Choose ONE option below, then delete the others.
+# After applying, run: terraform plan → verify → terraform apply
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# OPTION A (Recommended): Remove the insecure rule entirely
+# ---------------------------------------------------------------------------
+# 1. Find the azurerm_network_security_rule resource named "{rule_name}"
+#    OR the inline security_rule block inside azurerm_network_security_group.
+# 2. Delete that resource block (or the inline block).
+# 3. Run: terraform plan   ← confirm only that rule is removed
+# 4. Merge this PR to apply via CI/CD.
+#
+# If defined as a standalone resource, it looks like:
+#
+# resource "azurerm_network_security_rule" "{tf_rule_name}" {{  ← DELETE THIS BLOCK
+#   name  = "{rule_name}"
+#   ...
+# }}
+
+# ---------------------------------------------------------------------------
+# OPTION B: Restrict source to your specific IP (keeps SSH access for you)
+# ---------------------------------------------------------------------------
+resource "azurerm_network_security_rule" "{tf_rule_name}" {{
+  name                        = "{rule_name}"
+  priority                    = 140        # Keep existing priority
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "Tcp"
+  source_port_range           = "*"
+  destination_port_range      = "{port}"
+  source_address_prefix       = "YOUR_IP_ADDRESS/32"  # ← Replace with your IP
+  destination_address_prefix  = "*"
+  resource_group_name         = "{rg}"
+  network_security_group_name = "{resource_short}"
+}}
+
+# ---------------------------------------------------------------------------
+# OPTION C: Add a higher-priority deny rule to block internet access
+#           (keeps the existing rule, blocks it for internet sources)
+# ---------------------------------------------------------------------------
+resource "azurerm_network_security_rule" "deny_{tf_rule_name}_internet" {{
+  name                        = "deny-{rule_name}-internet"
+  priority                    = 100        # Higher priority than {rule_name} (140)
+  direction                   = "Inbound"
+  access                      = "Deny"
+  protocol                    = "Tcp"
+  source_port_range           = "*"
+  destination_port_range      = "{port}"
+  source_address_prefix       = "Internet"
+  destination_address_prefix  = "*"
+  resource_group_name         = "{rg}"
+  network_security_group_name = "{resource_short}"
+}}
+"""
+        else:
+            # Fallback when rule name can't be parsed — still generate real HCL
+            return header + f"""# ===========================================================================
+# REAL TERRAFORM FIX — Add deny rule to block dangerous inbound access
+# ===========================================================================
+resource "azurerm_network_security_rule" "deny_dangerous_inbound" {{
+  name                        = "deny-dangerous-inbound"
+  priority                    = 100
+  direction                   = "Inbound"
+  access                      = "Deny"
+  protocol                    = "Tcp"
+  source_port_range           = "*"
+  destination_port_range      = "{port}"
+  source_address_prefix       = "Internet"
+  destination_address_prefix  = "*"
+  resource_group_name         = "{rg}"
+  network_security_group_name = "{resource_short}"
+}}
+# Agent reason: {action.reason}
 """
 
     def _build_pr_body(

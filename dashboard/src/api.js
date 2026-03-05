@@ -215,3 +215,26 @@ export async function dismissExecution(executionId, reviewedBy = 'dashboard-user
   if (!res.ok) throw new Error(`API error ${res.status}: failed to dismiss execution`)
   return res.json()
 }
+
+/**
+ * Fetch the Terraform HCL stub for a manual_required execution record.
+ * @param {string} executionId - UUID of the ExecutionRecord
+ * @returns {{ execution_id: string, hcl: string }}
+ */
+export async function fetchTerraformStub(executionId) {
+  const res = await fetch(`${BASE}/execution/${encodeURIComponent(executionId)}/terraform`)
+  if (!res.ok) throw new Error(`API error ${res.status}: failed to fetch Terraform stub`)
+  return res.json()
+}
+
+/**
+ * ⚠ Dev/test only — wipe all local JSON data and reset in-memory state.
+ * Deletes data/decisions/, data/executions/, data/scans/ JSON files.
+ * Cosmos DB data is never touched.
+ * @returns {{ status: string, deleted: object, total: number }}
+ */
+export async function adminReset() {
+  const res = await fetch(`${BASE}/admin/reset`, { method: 'POST' })
+  if (!res.ok) throw new Error(`API error ${res.status}: reset failed`)
+  return res.json()
+}

@@ -22,6 +22,7 @@ GET  /api/execution/pending-reviews              List all ESCALATED verdicts awa
 GET  /api/execution/by-action/{action_id}        Execution status for a governance verdict.
 POST /api/execution/{execution_id}/approve       Human approves an escalated verdict.
 POST /api/execution/{execution_id}/dismiss       Human dismisses a verdict.
+POST /api/admin/reset                            ⚠ Dev/test only — wipe all local data and reset in-memory state.
 
 Run
 ---
@@ -267,6 +268,27 @@ async def _run_agent_scan(
             agent = DeployAgent()
             proposals = await agent.scan(target_resource_group=resource_group)
 
+        # Surface framework errors to the scan log so they are visible in the
+        # dashboard live log (previously silent — only appeared in server terminal).
+        scan_error = getattr(agent, "scan_error", None)
+        if scan_error:
+            await _emit_event(
+                scan_id, "reasoning",
+                agent=agent_type,
+                message=f"⚠ Agent framework error — scan returned 0 proposals: {scan_error}",
+            )
+
+        # Emit tool-call visibility notes (what the LLM queried and found).
+        for note in getattr(agent, "scan_notes", []):
+            await _emit_event(scan_id, "reasoning", agent=agent_type, message=note)
+
+        if not scan_error and not proposals and not settings.demo_mode:
+            await _emit_event(
+                scan_id, "reasoning",
+                agent=agent_type,
+                message="LLM scan complete — no actionable issues found in Azure environment.",
+            )
+
         if settings.demo_mode:
             logger.info("scan %s (%s): DEMO_MODE is enabled", scan_id[:8], agent_type)
             await _emit_event(
@@ -458,6 +480,7 @@ async def _run_agent_scan(
                     message=(
                         f"Execution: {exec_record.status.value}"
                         + (f" — PR #{exec_record.pr_number}" if exec_record.pr_number else "")
+                        + (f" — {exec_record.notes}" if exec_record.notes and exec_record.status.value in ("failed", "manual_required") else "")
                     ),
                 )
             except Exception as exc:  # noqa: BLE001
@@ -1452,7 +1475,11 @@ async def get_execution_status(action_id: str) -> dict:
     gateway = _get_execution_gateway()
     records = gateway.get_records_for_verdict(action_id)
     if not records:
-        return {"status": "no_execution", "action_id": action_id}
+        return {
+            "status": "no_execution",
+            "action_id": action_id,
+            "gateway_enabled": settings.execution_gateway_enabled,
+        }
     return {
         "action_id": action_id,
         "executions": [r.model_dump(mode="json") for r in records],
@@ -1505,6 +1532,108 @@ async def dismiss_execution(execution_id: str, body: dict = Body(default={})) ->
         return record.model_dump(mode="json")
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
+# Endpoint — Terraform stub (on-demand HCL generation for manual_required)
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/execution/{execution_id}/terraform")
+async def get_terraform_stub(execution_id: str) -> dict:
+    """Generate the Terraform HCL stub for a manual_required execution record.
+
+    Used by the dashboard "Show Terraform Fix" button to display what change
+    the human operator needs to apply.  Works for any execution record that
+    has a verdict snapshot (manual_required, failed, awaiting_review, etc.).
+
+    Returns:
+        ``{"hcl": "<terraform code>"}`` on success.
+        404 if execution_id is unknown.
+        400 if the record has no verdict snapshot.
+    """
+    gateway = _get_execution_gateway()
+    record = gateway._records.get(execution_id)  # noqa: SLF001
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"Execution {execution_id} not found")
+
+    verdict = gateway._reconstruct_verdict(record)  # noqa: SLF001
+    if verdict is None:
+        raise HTTPException(
+            status_code=400,
+            detail="No verdict snapshot stored — cannot generate Terraform stub.",
+        )
+
+    from src.core.terraform_pr_generator import TerraformPRGenerator  # noqa: PLC0415
+    generator = TerraformPRGenerator()
+    hcl = generator._generate_terraform_stub(verdict, record)  # noqa: SLF001
+    return {"execution_id": execution_id, "hcl": hcl}
+
+
+# ---------------------------------------------------------------------------
+# Endpoint — dev/test reset (local JSON mode only)
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/admin/reset")
+async def admin_reset() -> dict:
+    """⚠ Development/testing only — wipe all local data and reset in-memory state.
+
+    Deletes every JSON file in:
+    - ``data/decisions/``  (governance verdicts / audit trail)
+    - ``data/executions/`` (execution gateway records)
+    - ``data/scans/``      (scan run history)
+
+    Also resets the in-memory scan store (``_scans``) so the dashboard
+    shows a clean slate immediately without restarting the server.
+
+    Only operates on local JSON files — Cosmos DB data is never touched.
+    Safe to call when ``USE_LOCAL_MOCKS=false`` (falls back to JSON anyway
+    unless a real Cosmos endpoint + key are configured).
+
+    Returns a summary of how many files were deleted per store.
+    """
+    from src.infrastructure.cosmos_client import _DEFAULT_DECISIONS_DIR
+    from src.core.execution_gateway import _DEFAULT_EXECUTIONS_DIR
+    from src.core.scan_run_tracker import _DEFAULT_SCANS_DIR
+
+    deleted: dict[str, int] = {}
+
+    for label, directory in [
+        ("decisions", _DEFAULT_DECISIONS_DIR),
+        ("executions", _DEFAULT_EXECUTIONS_DIR),
+        ("scans", _DEFAULT_SCANS_DIR),
+    ]:
+        count = 0
+        if directory.exists():
+            for path in directory.glob("*.json"):
+                try:
+                    path.unlink()
+                    count += 1
+                except OSError as exc:
+                    logger.warning("admin_reset: could not delete %s — %s", path.name, exc)
+        deleted[label] = count
+        logger.info("admin_reset: deleted %d %s records", count, label)
+
+    # Reset in-memory scan store so the dashboard reflects the clean state
+    # without needing a server restart.
+    _scans.clear()
+    _scan_cancelled.clear()
+
+    # Reset the in-memory execution gateway so it doesn't serve stale records
+    # from before the wipe.
+    global _execution_gateway  # noqa: PLW0603
+    _execution_gateway = None
+
+    total = sum(deleted.values())
+    logger.info("admin_reset: complete — %d total records deleted", total)
+
+    return {
+        "status": "ok",
+        "deleted": deleted,
+        "total": total,
+        "note": "Cosmos DB data (if any) was NOT touched. Restart the server to reload seed data.",
+    }
 
 
 # ---------------------------------------------------------------------------

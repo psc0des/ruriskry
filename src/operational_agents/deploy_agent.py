@@ -70,24 +70,38 @@ Investigation workflow
    VM query: "Resources | where type == 'microsoft.compute/virtualmachines' \
 | project id, name, resourceGroup, tags, sku"
 2. For each NSG, call list_nsg_rules to inspect the actual security rules.
-   Check: is there a deny-all inbound rule (access=Deny, port=*)? Priority 4096
-   is Azure's lowest priority — typically used for deny-all.
+   For each inbound Allow rule, check BOTH the port AND the sourceAddressPrefix
+   (inside the nested "properties" object of each rule).
+   A rule is dangerous when sourceAddressPrefix is "*", "Any", or "Internet"
+   combined with a sensitive port.
 3. Call query_activity_log for the resource group to see recent changes.
    Look for: failed write operations on NSGs, recent security rule modifications.
 4. Use get_resource_details to check resource tags for lifecycle management
    indicators. Do NOT check for specific tag key names — tag schemas vary by
-   organisation. Instead, flag resources that have NO lifecycle or ownership
-   tags of any kind (e.g. no backup policy, no DR designation, no owner, no
-   cost centre, no environment label). A resource with ANY of these categories
-   populated — regardless of the exact key name — is adequately tagged.
-5. For each security gap or configuration issue found, call propose_action.
+   organisation. Flag resources with NO lifecycle or ownership tags.
+5. For each security gap found, call propose_action.
 
-Focus areas
-- NSGs missing an explicit deny-all inbound rule → propose modify_nsg (MEDIUM urgency)
-- Recent FAILED writes to NSGs → investigate and propose remediation (HIGH urgency)
-- Production resources with zero lifecycle or ownership tags → propose update_config (LOW urgency)
+Security rules to flag (call propose_action for EACH one found)
+---------------------------------------------------------------
+CRITICAL — sourceAddressPrefix is "*", "Any", or "Internet" AND port is any of:
+  - 22 (SSH), 3389 (RDP), 5985/5986 (WinRM), 23 (Telnet), 21 (FTP)
+  These allow management access from the entire internet. Propose modify_nsg
+  with urgency=HIGH and include the rule name and source/port in the reason.
 
-Do not propose changes that are already correctly configured. Only flag genuine gaps.
+HIGH — sourceAddressPrefix is "*", "Any", or "Internet" AND port is "*" (all ports).
+  This exposes ALL services to the internet. Propose modify_nsg urgency=HIGH.
+
+MEDIUM — NSG has inbound Allow rules but no explicit deny-all (access=Deny,
+  destinationPortRange="*", direction=Inbound) at any priority.
+  Propose modify_nsg urgency=MEDIUM.
+
+LOW — Production resources with zero lifecycle or ownership tags.
+  Propose update_config urgency=LOW.
+
+IMPORTANT: If you find an inbound Allow rule with sourceAddressPrefix="*" or
+"Any" and port 22 (SSH) or 3389 (RDP), you MUST call propose_action. This is
+a critical security exposure regardless of any other NSG configuration.
+Do not skip flagging these — they are always security gaps.
 """
 
 
@@ -128,8 +142,8 @@ class DeployAgent:
         self._all_resources: list[dict] = data.get("resources", [])
 
         self._cfg = cfg or _default_settings
-
         self._use_framework: bool = bool(self._cfg.azure_openai_endpoint)
+        self.scan_error: str | None = None  # populated if framework call fails
 
     # ------------------------------------------------------------------
     # Public API
@@ -162,9 +176,11 @@ class DeployAgent:
             )
             return []
 
+        self.scan_error = None
         try:
             return await self._scan_with_framework(target_resource_group)
         except Exception as exc:  # noqa: BLE001
+            self.scan_error = str(exc)
             logger.warning(
                 "DeployAgent: framework call failed (%s) — returning no proposals "
                 "(live-mode fallback to seed data would generate false positives).",
@@ -206,6 +222,7 @@ class DeployAgent:
         )
 
         proposals_holder: list[ProposedAction] = []
+        scan_notes: list[str] = []  # captured tool-call results for scan log visibility
 
         @af.tool(
             name="query_resource_graph",
@@ -217,6 +234,11 @@ class DeployAgent:
         async def tool_query_resource_graph(kusto_query: str) -> str:
             """Discover NSGs, VMs, and other resources."""
             results = await query_resource_graph_async(kusto_query)
+            names = [r.get("name", "?") for r in results[:8]]
+            scan_notes.append(
+                f"Resource Graph query → {len(results)} resource(s) found"
+                + (f": {', '.join(names)}" if names else " (none)")
+            )
             return json.dumps(results, default=str)
 
         @af.tool(
@@ -230,6 +252,56 @@ class DeployAgent:
         async def tool_list_nsg_rules(nsg_resource_id: str) -> str:
             """Inspect actual NSG security rules to check for deny-all rules."""
             rules = await list_nsg_rules_async(nsg_resource_id)
+            nsg_name = nsg_resource_id.split("/")[-1]
+
+            def _props(r: dict) -> dict:
+                """Flatten properties sub-dict if present (Azure live API format)."""
+                p = r.get("properties", {})
+                return {**r, **p} if p else r
+
+            flat_rules = [_props(r) for r in rules]
+            inbound_allow = [
+                r for r in flat_rules
+                if r.get("direction", "").lower() == "inbound"
+                and r.get("access", "").lower() == "allow"
+            ]
+            open_ports = [
+                str(r.get("destinationPortRange") or r.get("port") or "?")
+                for r in inbound_allow[:10]
+            ]
+            has_deny_all = any(
+                r.get("access", "").lower() == "deny"
+                and r.get("destinationPortRange") in ("*", "Any")
+                and r.get("direction", "").lower() == "inbound"
+                for r in flat_rules
+            )
+            # Flag inbound Allow rules with broad source (internet-exposed)
+            _broad_sources = {"*", "any", "internet", "0.0.0.0/0"}
+            internet_exposed = [
+                r for r in inbound_allow
+                if str(r.get("sourceAddressPrefix") or r.get("properties", {}).get("sourceAddressPrefix") or "").lower()
+                in _broad_sources
+            ]
+            _sensitive_ports = {"22", "3389", "5985", "5986", "23", "21", "*"}
+            critical_rules = [
+                r for r in internet_exposed
+                if str(r.get("destinationPortRange") or r.get("properties", {}).get("destinationPortRange") or "")
+                in _sensitive_ports
+            ]
+
+            # Show inbound-allow rules with source+port for clear LLM signal
+            rule_detail = ", ".join(
+                f"{r.get('name','?')}(src={r.get('sourceAddressPrefix') or r.get('properties',{}).get('sourceAddressPrefix','?')} port={r.get('destinationPortRange') or r.get('properties',{}).get('destinationPortRange','?')})"
+                for r in inbound_allow[:10]
+            )
+            note = (
+                f"NSG '{nsg_name}': {len(rules)} custom rules | inbound Allow: {len(inbound_allow)}"
+                + (f" [{rule_detail}]" if rule_detail else "")
+                + (f" | ⚠ INTERNET-EXPOSED rules: {len(internet_exposed)}" if internet_exposed else "")
+                + (f" | 🚨 CRITICAL open management ports: {len(critical_rules)}" if critical_rules else "")
+                + (" | explicit deny-all: YES" if has_deny_all else " | no explicit deny-all")
+            )
+            scan_notes.append(note)
             return json.dumps(rules, default=str)
 
         @af.tool(
@@ -338,6 +410,9 @@ class DeployAgent:
             "Discover NSGs and check their security rules, review recent activity "
             "logs for failed operations, and identify any configuration gaps.",
         )
+
+        # Expose tool-call notes for the dashboard live log.
+        self.scan_notes: list[str] = scan_notes
 
         # Empty proposals means GPT found no security gaps — a valid outcome.
         # Falling back to seed-data rules would produce false positives in any

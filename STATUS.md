@@ -4,7 +4,7 @@
 > picking up this project. It tells you exactly what is done, what is live,
 > and what comes next. Architecture and coding standards are in `CONTEXT.md`.
 
-**Last updated:** 2026-03-05 (Phase 21 complete + post-deploy fixes: Connected Agents sync, merged Run-All log, flag-until-fixed; 551 tests passing)
+**Last updated:** 2026-03-05 (Phase 21 complete + post-deploy fixes round 2: contextual "no execution record" message with `gateway_enabled`; "View Scan Log" reopen button; "Done · N verdict(s) →" clickable drilldown link; Recent Decisions shows agent source; 551 tests passing)
 **Active branch:** `main`
 **Demo verdict:** All 3 scenarios pass with real prod resource IDs (DENIED / APPROVED / ESCALATED)
 

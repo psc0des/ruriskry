@@ -92,11 +92,16 @@ export default function DecisionTable({ evaluations, selected, onSelect }) {
                       : 'hover:bg-slate-700/40'
                   }`}
                 >
-                  {/* Resource */}
+                  {/* Resource + agent source */}
                   <td className="px-5 py-3">
                     <span className="font-mono text-xs text-slate-200">
                       {shortResource(ev.resource_id)}
                     </span>
+                    {ev.agent_id && (
+                      <p className="text-xs text-slate-600 mt-0.5">
+                        via {ev.agent_id.replace(/-agent$/, '')}
+                      </p>
+                    )}
                   </td>
 
                   {/* Action type */}

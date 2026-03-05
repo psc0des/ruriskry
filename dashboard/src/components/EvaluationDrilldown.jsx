@@ -15,7 +15,7 @@
  */
 
 import React, { useEffect, useState } from 'react'
-import { approveExecution, dismissExecution, fetchExecutionStatus, fetchExplanation } from '../api'
+import { approveExecution, dismissExecution, fetchExecutionStatus, fetchExplanation, fetchTerraformStub } from '../api'
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -64,6 +64,9 @@ export default function EvaluationDrilldown({ evaluation, onBack }) {
     const [jsonExpanded, setJsonExpanded] = useState(false)
     const [executionStatus, setExecutionStatus] = useState(null)
     const [execLoading, setExecLoading] = useState(true)
+    const [tfStub, setTfStub] = useState(null)
+    const [tfLoading, setTfLoading] = useState(false)
+    const [tfExpanded, setTfExpanded] = useState(false)
 
     const ev = evaluation
     const decision = (ev.decision ?? 'approved').toLowerCase()
@@ -114,13 +117,27 @@ export default function EvaluationDrilldown({ evaluation, onBack }) {
         }
     }
 
-    async function handleDismiss(executionId) {
-        const reason = window.prompt('Reason for dismissal (optional):') ?? ''
+    async function handleDismiss(executionId, prefillReason = '') {
+        const reason = window.prompt('Reason for dismissal (optional):', prefillReason) ?? ''
         try {
             const updated = await dismissExecution(executionId, 'dashboard-user', reason)
             setExecutionStatus(updated)
         } catch (err) {
             alert(`Dismiss failed: ${err.message}`)
+        }
+    }
+
+    async function handleShowTerraform(executionId) {
+        if (tfStub) { setTfExpanded(e => !e); return }
+        setTfLoading(true)
+        setTfExpanded(true)
+        try {
+            const data = await fetchTerraformStub(executionId)
+            setTfStub(data.hcl)
+        } catch (err) {
+            setTfStub(`# Error fetching stub: ${err.message}`)
+        } finally {
+            setTfLoading(false)
         }
     }
 
@@ -460,12 +477,56 @@ export default function EvaluationDrilldown({ evaluation, onBack }) {
                             </a>
                         )}
 
+                        {/* Action buttons for pr_created — reviewer options */}
+                        {executionStatus.status === 'pr_created' && (
+                            <div className="space-y-3 pt-1">
+                                <p className="text-xs text-blue-300/80 bg-blue-500/5 border border-blue-500/20 rounded-lg px-3 py-2">
+                                    A Terraform PR has been created. Choose how to proceed:
+                                </p>
+                                <div className="flex flex-wrap gap-2">
+                                    <button
+                                        onClick={() => handleShowTerraform(executionStatus.execution_id)}
+                                        className="flex items-center gap-1.5 px-4 py-2 bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/40 text-blue-300 hover:text-blue-200 rounded-lg text-sm font-medium transition-colors"
+                                    >
+                                        📋 {tfExpanded ? 'Hide' : 'Show'} Terraform Fix
+                                    </button>
+                                    {ev.resource_id && (
+                                        <a
+                                            href={`https://portal.azure.com/#resource${ev.resource_id.startsWith('/') ? ev.resource_id : '/' + ev.resource_id}`}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="flex items-center gap-1.5 px-4 py-2 bg-slate-700/50 hover:bg-slate-700 border border-slate-500/40 text-slate-300 hover:text-slate-100 rounded-lg text-sm font-medium transition-colors no-underline"
+                                        >
+                                            🌐 Fix in Azure Portal instead
+                                        </a>
+                                    )}
+                                    <button
+                                        onClick={() => handleDismiss(executionStatus.execution_id, 'Closing PR — fixed via alternative method')}
+                                        className="flex items-center gap-1.5 px-4 py-2 bg-red-600/10 hover:bg-red-600/20 border border-red-500/30 text-red-400 hover:text-red-300 rounded-lg text-sm font-medium transition-colors"
+                                    >
+                                        ✕ Close PR / Ignore
+                                    </button>
+                                </div>
+                                {tfExpanded && (
+                                    <div className="mt-2">
+                                        {tfLoading ? (
+                                            <p className="text-xs text-slate-500 animate-pulse px-1">Generating Terraform fix…</p>
+                                        ) : (
+                                            <pre className="text-xs text-slate-300 bg-slate-900 rounded-lg p-4 overflow-x-auto max-h-72 border border-slate-700 whitespace-pre-wrap">
+                                                {tfStub}
+                                            </pre>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
                         {/* Notes / error message */}
                         {executionStatus.notes && (
                             <p className="text-xs text-slate-400 italic">{executionStatus.notes}</p>
                         )}
 
-                        {/* HITL action buttons — only for awaiting_review */}
+                        {/* HITL action buttons — awaiting_review (ESCALATED) */}
                         {executionStatus.status === 'awaiting_review' && (
                             <div className="flex gap-3 pt-1">
                                 <button
@@ -483,6 +544,57 @@ export default function EvaluationDrilldown({ evaluation, onBack }) {
                             </div>
                         )}
 
+                        {/* Action panel — manual_required (APPROVED, no GitHub/IaC) */}
+                        {executionStatus.status === 'manual_required' && (
+                            <div className="space-y-3 pt-1">
+                                <p className="text-xs text-orange-300/80 bg-orange-500/5 border border-orange-500/20 rounded-lg px-3 py-2">
+                                    This verdict was approved but could not be executed automatically (no Terraform PR was created).
+                                    Choose how to proceed:
+                                </p>
+
+                                {/* Three action buttons */}
+                                <div className="flex flex-wrap gap-2">
+                                    <button
+                                        onClick={() => handleShowTerraform(executionStatus.execution_id)}
+                                        className="flex items-center gap-1.5 px-4 py-2 bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/40 text-blue-300 hover:text-blue-200 rounded-lg text-sm font-medium transition-colors"
+                                    >
+                                        📋 {tfExpanded ? 'Hide' : 'Show'} Terraform Fix
+                                    </button>
+
+                                    {ev.resource_id && (
+                                        <a
+                                            href={`https://portal.azure.com/#resource${ev.resource_id.startsWith('/') ? ev.resource_id : '/' + ev.resource_id}`}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="flex items-center gap-1.5 px-4 py-2 bg-slate-700/50 hover:bg-slate-700 border border-slate-500/40 text-slate-300 hover:text-slate-100 rounded-lg text-sm font-medium transition-colors no-underline"
+                                        >
+                                            🌐 Open in Azure Portal
+                                        </a>
+                                    )}
+
+                                    <button
+                                        onClick={() => handleDismiss(executionStatus.execution_id, 'Fixed manually in Azure Portal')}
+                                        className="flex items-center gap-1.5 px-4 py-2 bg-green-600/20 hover:bg-green-600/30 border border-green-500/40 text-green-300 hover:text-green-200 rounded-lg text-sm font-medium transition-colors"
+                                    >
+                                        ✓ Mark as Fixed
+                                    </button>
+                                </div>
+
+                                {/* Terraform HCL code block */}
+                                {tfExpanded && (
+                                    <div className="mt-2">
+                                        {tfLoading ? (
+                                            <p className="text-xs text-slate-500 animate-pulse px-1">Generating Terraform stub…</p>
+                                        ) : (
+                                            <pre className="text-xs text-slate-300 bg-slate-900 rounded-lg p-4 overflow-x-auto max-h-72 border border-slate-700 whitespace-pre-wrap">
+                                                {tfStub}
+                                            </pre>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
                         {/* Execution ID for audit */}
                         <p className="text-xs text-slate-600 font-mono">
                             ID: {executionStatus.execution_id}
@@ -491,11 +603,13 @@ export default function EvaluationDrilldown({ evaluation, onBack }) {
                 ) : (
                     <div className="space-y-1">
                         <p className="text-sm text-slate-500">
-                            No execution record — verdict is informational only.
+                            No execution record.
                         </p>
                         <p className="text-xs text-slate-600">
-                            Set <code className="text-slate-400">EXECUTION_GATEWAY_ENABLED=true</code> to
-                            enable Terraform PR generation for APPROVED verdicts.
+                            {executionStatus?.gateway_enabled === false
+                                ? <>Set <code className="text-slate-400">EXECUTION_GATEWAY_ENABLED=true</code> to enable Terraform PR generation for APPROVED verdicts.</>
+                                : 'This verdict was processed before the gateway was enabled. Run a new scan to generate an execution record.'
+                            }
                         </p>
                     </div>
                 )}
