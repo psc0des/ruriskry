@@ -255,7 +255,11 @@ export async function executeAgentFix(executionId, reviewedBy = 'dashboard-user'
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ reviewed_by: reviewedBy }),
   })
-  if (!res.ok) throw new Error(`API error ${res.status}: failed to execute agent fix`)
+  if (!res.ok) {
+    let detail = 'failed to execute agent fix'
+    try { const b = await res.json(); if (b.detail) detail = b.detail } catch (_) {}
+    throw new Error(`API error ${res.status}: ${detail}`)
+  }
   return res.json()
 }
 

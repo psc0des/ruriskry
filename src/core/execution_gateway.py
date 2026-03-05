@@ -86,10 +86,12 @@ def _build_az_commands(action: ProposedAction) -> list[str]:
     commands: list[str] = []
 
     if action.action_type == ActionType.MODIFY_NSG:
-        # Try to extract the rule name from the reason text
+        # Try quoted first: rule 'name' or rule "name"
+        # Fallback: unquoted Azure-style identifier (must contain hyphen/underscore
+        # to avoid matching plain English words like "rule detected")
         rule_match = re.search(
             r"rule ['\"]([^'\"]+)['\"]", action.reason, re.IGNORECASE
-        )
+        ) or re.search(r"\brule\s+([\w][\w]*[-_][\w\-_]+)", action.reason, re.IGNORECASE)
         rule_name = rule_match.group(1) if rule_match else "<RULE_NAME>"
         commands.append(
             f"az network nsg rule delete"
@@ -151,25 +153,40 @@ async def _execute_fix_via_sdk(action: ProposedAction) -> str:
         ImportError: If the Azure management SDK is not installed.
     """
     arm = _parse_arm_id(action.target.resource_id)
-    rg = arm["resource_group"]
-    name = arm["name"]
+    # Fall back to the structured fields on the action target when the resource_id
+    # is a short name rather than a full ARM ID (agents sometimes use short names).
+    rg = arm["resource_group"] or (action.target.resource_group or "")
+    name = arm["name"] or action.target.resource_id.split("/")[-1]
 
-    if not rg or not name:
+    if not rg:
         raise ValueError(
-            f"Cannot execute fix: resource_id '{action.target.resource_id}' "
-            "must be a full ARM ID (need resource_group and name)"
+            f"Cannot execute fix: no resource group found for "
+            f"'{action.target.resource_id}'. "
+            "A full ARM ID or a resource_group field is required."
+        )
+    if not name:
+        raise ValueError(
+            f"Cannot determine resource name from resource_id "
+            f"'{action.target.resource_id}'."
         )
 
     from azure.identity.aio import DefaultAzureCredential  # noqa: PLC0415
 
     if action.action_type == ActionType.MODIFY_NSG:
+        # Try quoted first: rule 'name' or rule "name"
         rule_match = re.search(
             r"rule ['\"]([^'\"]+)['\"]", action.reason, re.IGNORECASE
         )
+        # Fallback: unquoted Azure-style identifier after "rule"
+        # (must contain hyphen/underscore to avoid plain English like "rule detected")
+        if not rule_match:
+            rule_match = re.search(
+                r"\brule\s+([\w][\w]*[-_][\w\-_]+)", action.reason, re.IGNORECASE
+            )
         if not rule_match:
             raise ValueError(
                 "Cannot determine NSG rule name from action reason. "
-                "Expected format: rule 'RuleName'"
+                f"Reason text: '{action.reason[:120]}'"
             )
         rule_name = rule_match.group(1)
 
