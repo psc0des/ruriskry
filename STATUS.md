@@ -4,7 +4,7 @@
 > picking up this project. It tells you exactly what is done, what is live,
 > and what comes next. Architecture and coding standards are in `CONTEXT.md`.
 
-**Last updated:** 2026-03-05 (Phase 21 Execution Gateway & HITL complete + audit fixes + live tag lookup fix; 544 tests passing)
+**Last updated:** 2026-03-05 (Phase 21 complete + post-deploy fixes: Connected Agents sync, merged Run-All log, flag-until-fixed; 551 tests passing)
 **Active branch:** `main`
 **Demo verdict:** All 3 scenarios pass with real prod resource IDs (DENIED / APPROVED / ESCALATED)
 
@@ -871,7 +871,14 @@ GovernanceVerdict → ExecutionGateway
 - `IAC_TERRAFORM_PATH` — e.g. `infrastructure/terraform-prod`
 - `EXECUTION_GATEWAY_ENABLED` — `false` by default (opt-in)
 
-**Test result: 544 passed, 0 failed** (+39 tests: 33 execution gateway + 6 tag lookup)
+**Post-deploy fixes (same phase, incremental commits):**
+- `dashboard_api._run_agent_scan()`: calls `registry.update_agent_stats()` per verdict + `register_agent()` on 0-proposal scans → Connected Agents panel now shows live `last_seen` and verdict counts after every dashboard-triggered scan
+- `LiveLogPanel.jsx`: supports `scanEntries=[{scanId,agentType},…]` prop — opens one SSE stream per agent, merges into one chronological log with coloured agent badges (Cost/SRE/Deploy)
+- `AgentControls.jsx`: "Run All Agents" passes all 3 scan IDs → merged live log visible instead of cost-only
+- `ExecutionGateway.get_unresolved_proposals()`: returns `(ProposedAction, record)` for all `manual_required` records; `_run_agent_scan()` re-adds them on every scan (deduped) until human clicks Dismiss or agent stops proposing naturally — "flag until fixed"
+- `requirements.txt`: `PyGithub>=2.1.0` uncommented (required when `EXECUTION_GATEWAY_ENABLED=true`)
+
+**Test result: 551 passed, 0 failed** (+7 TestUnresolvedProposals; total +46 since Phase 21 start)
 
 ---
 

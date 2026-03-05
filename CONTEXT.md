@@ -217,7 +217,12 @@ Key files: `src/core/execution_gateway.py`, `src/core/terraform_pr_generator.py`
 `tests/test_execution_gateway.py`. Endpoints: `GET /api/execution/pending-reviews`,
 `GET /api/execution/by-action/{action_id}`, `POST /api/execution/{id}/approve`,
 `POST /api/execution/{id}/dismiss`. Env vars: `GITHUB_TOKEN`, `IAC_GITHUB_REPO`,
-`IAC_TERRAFORM_PATH`, `EXECUTION_GATEWAY_ENABLED`. **Tests: 544 passed.**
+`IAC_TERRAFORM_PATH`, `EXECUTION_GATEWAY_ENABLED`. **Tests: 551 passed.**
+
+Post-deploy fixes: `_run_agent_scan()` updates `AgentRegistry` per verdict (Connected Agents
+panel stays current); "Run All Agents" opens merged SSE log for all 3 agents;
+`ExecutionGateway.get_unresolved_proposals()` re-flags `manual_required` issues on every scan
+until human dismisses them ("flag until fixed" governance pattern).
 
 **Phase 20 — Async End-to-End Migration (complete)**
 

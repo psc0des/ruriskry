@@ -401,6 +401,7 @@ Tag lookup in `dashboard_api._get_resource_tags()` is **environment-aware**:
 - **HITL always exists** — even APPROVED actions require a human to merge the PR
 - **Lifecycle tracking** — `ExecutionRecord` tracks: pending → pr_created → pr_merged → applied
 - **Durable state** — `ExecutionRecord` persisted as JSON in `data/executions/`; survives restarts
+- **Flag until fixed** — `manual_required` records are re-proposed on every subsequent scan via `get_unresolved_proposals()`; stops when human clicks **Dismiss** (issue resolved) or the agent naturally stops flagging it (Azure config changed). `pr_created`, `awaiting_review`, `blocked`, `dismissed`, and `applied` records are excluded.
 
 **Files:** `src/core/execution_gateway.py`, `src/core/terraform_pr_generator.py`
 **Endpoints:** `GET /api/execution/pending-reviews`, `GET /api/execution/by-action/{action_id}`,
