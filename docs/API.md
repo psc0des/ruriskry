@@ -150,6 +150,10 @@ All endpoints are `async def` (FastAPI manages the event loop).
 | GET | `/api/scan/{scan_id}/stream` | SSE stream of real-time scan progress events |
 | PATCH | `/api/scan/{scan_id}/cancel` | Request cancellation of a running scan |
 | GET | `/api/evaluations/{evaluation_id}/explanation` | Full decision explanation with counterfactual analysis |
+| GET | `/api/execution/{action_id}` | Execution status for a verdict (Phase 21 — planned) |
+| GET | `/api/execution/pending-reviews` | List ESCALATED verdicts awaiting human review (Phase 21 — planned) |
+| POST | `/api/execution/{execution_id}/approve` | Human approves an escalated verdict (Phase 21 — planned) |
+| POST | `/api/execution/{execution_id}/dismiss` | Human dismisses a verdict (Phase 21 — planned) |
 
 ### Query parameters for `GET /api/evaluations`
 
@@ -489,6 +493,99 @@ Return the most recent completed scan results for one agent. Prefers the durable
 
 `source` is `"scan_tracker"` if found in durable store, `"tracker"` if from audit trail only.
 Unknown agent names return an empty `no_data` response (not 404).
+
+---
+
+## Execution Gateway Endpoints (Phase 21 — Planned)
+
+These endpoints manage the IaC-safe execution lifecycle. They will be added to
+`src/api/dashboard_api.py` when Phase 21 is implemented.
+
+### `GET /api/execution/{action_id}`
+
+Get the execution status for a governance verdict.
+
+**Path parameter:** `action_id` — the UUID from the governance verdict.
+
+**Response:**
+```json
+{
+  "action_id": "c68c25ca-...",
+  "executions": [
+    {
+      "execution_id": "a1b2c3d4-...",
+      "action_id": "c68c25ca-...",
+      "verdict": "approved",
+      "status": "pr_created",
+      "iac_managed": true,
+      "iac_tool": "terraform",
+      "iac_repo": "psc0des/ruriskry",
+      "iac_path": "infrastructure/terraform-prod",
+      "pr_url": "https://github.com/psc0des/ruriskry/pull/42",
+      "pr_number": 42,
+      "reviewed_by": "",
+      "created_at": "2026-03-05T12:00:00+00:00",
+      "updated_at": "2026-03-05T12:00:05+00:00",
+      "notes": ""
+    }
+  ]
+}
+```
+
+Returns `{"status": "no_execution"}` if the verdict has no execution record.
+
+---
+
+### `GET /api/execution/pending-reviews`
+
+List all ESCALATED verdicts awaiting human review.
+
+**Response:**
+```json
+{
+  "count": 1,
+  "reviews": [
+    {
+      "execution_id": "e5f6g7h8-...",
+      "action_id": "d4e5f6g7-...",
+      "verdict": "escalated",
+      "status": "awaiting_review",
+      "iac_managed": true,
+      "iac_tool": "terraform",
+      "created_at": "2026-03-05T12:00:00+00:00"
+    }
+  ]
+}
+```
+
+---
+
+### `POST /api/execution/{execution_id}/approve`
+
+Human approves an ESCALATED verdict for execution. After approval, routes to the
+IaC PR path (if managed) or manual path.
+
+**Request body:**
+```json
+{ "reviewed_by": "admin@example.com" }
+```
+
+**Response:** Updated `ExecutionRecord` JSON.
+
+Returns **400** if the execution is not in `awaiting_review` status.
+
+---
+
+### `POST /api/execution/{execution_id}/dismiss`
+
+Human dismisses a verdict — no execution will happen.
+
+**Request body:**
+```json
+{ "reviewed_by": "admin@example.com", "reason": "Not needed — planned maintenance covers this." }
+```
+
+**Response:** Updated `ExecutionRecord` JSON with `status: "dismissed"`.
 
 ---
 

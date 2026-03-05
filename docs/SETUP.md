@@ -167,6 +167,48 @@ fully computed regardless of mode.
 
 ---
 
+## Optional: Execution Gateway & HITL (Phase 21 — Planned)
+
+The Execution Gateway routes APPROVED verdicts to IaC-safe paths — generating Terraform PRs
+instead of directly modifying Azure resources. This prevents IaC state drift.
+
+**Step 1 — Add IaC tags to your Terraform resources:**
+
+All resources in `infrastructure/terraform-prod/main.tf` need:
+```hcl
+tags = {
+  managed_by = "terraform"
+  iac_repo   = "psc0des/ruriskry"
+  iac_path   = "infrastructure/terraform-prod"
+}
+```
+
+Run `terraform apply` to push the tags to Azure.
+
+**Step 2 — Create a GitHub Personal Access Token:**
+1. GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens
+2. Repository access: select your `ruriskry` repo
+3. Permissions: Contents (Read & Write), Pull requests (Read & Write)
+4. Copy the token
+
+**Step 3 — Set the env vars:**
+```bash
+# .env
+GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+IAC_GITHUB_REPO=psc0des/ruriskry
+IAC_TERRAFORM_PATH=infrastructure/terraform-prod
+EXECUTION_GATEWAY_ENABLED=true
+```
+
+**Step 4 — Test it:**
+Run a scan from the dashboard. When an APPROVED verdict is issued for an IaC-managed
+resource, the gateway will create a PR in your repo with the proposed Terraform change.
+Check the drilldown panel for execution status and a link to the PR.
+
+See `Adding-Terraform-Feature.md` for full implementation guide.
+
+---
+
 ## Environment Variables
 
 | Variable | Required | Default | Description |
@@ -188,3 +230,7 @@ fully computed regardless of mode.
 | `AZURE_KEYVAULT_URL` | Live only | — | Key Vault URL for secret resolution |
 | `A2A_SERVER_URL` | No | `http://localhost:8000` | Base URL advertised in the A2A Agent Card |
 | `DEFAULT_RESOURCE_GROUP` | No | `""` | Default Azure resource group for dashboard scan endpoints. Empty = scan whole subscription. Body `resource_group` overrides this. |
+| `GITHUB_TOKEN` | Phase 21 | `""` | GitHub PAT with repo write access (Contents + Pull requests). Required for Terraform PR generation. |
+| `IAC_GITHUB_REPO` | Phase 21 | `""` | GitHub repo for IaC PRs (e.g. `psc0des/ruriskry`). |
+| `IAC_TERRAFORM_PATH` | Phase 21 | `infrastructure/terraform-prod` | Path within the repo to the Terraform config directory. |
+| `EXECUTION_GATEWAY_ENABLED` | No | `false` | Enable the Execution Gateway. When `false`, verdicts are informational only (no PRs created). |

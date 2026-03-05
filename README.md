@@ -103,6 +103,10 @@ flowchart LR
     OUT --> COSMOS["Azure Cosmos DB<br/>governance-decisions"]
     OUT --> AZURE["Azure Services<br/>Foundry + AI Search + Key Vault"]
     OUT --> DASH["Dashboard API + React UI"]
+
+    TRACKER --> EXEC["Execution Gateway<br/>IaC-safe routing"]
+    EXEC --> PR["Terraform PR<br/>GitHub API"]
+    EXEC --> HITL["HITL Dashboard<br/>Approve / Dismiss"]
 ```
 
 ---
@@ -173,6 +177,20 @@ Click any row in the Live Activity Feed to open a **6-section full-page drilldow
 6. **Audit Trail** — full raw JSON, collapsible
 
 No extra setup needed — the explanation engine works in both mock and live mode.
+
+### Execution Gateway & Human-in-the-Loop (Phase 21 — Planned)
+APPROVED verdicts don't execute directly on Azure — that would cause **IaC state drift**
+(Terraform reverts the change on next `terraform apply`). Instead, the Execution Gateway
+routes verdicts to IaC-safe paths:
+
+- **DENIED** → blocked, logged, Teams alert
+- **ESCALATED** → human review required (Approve/Dismiss buttons in dashboard drilldown)
+- **APPROVED + IaC-managed** → auto-generate a **Terraform PR** against the IaC repo;
+  human reviews and merges; CI/CD runs `terraform apply`
+- **APPROVED + not IaC-managed** → marked for manual execution
+
+IaC detection uses Azure resource tags (`managed_by=terraform`, `iac_repo`, `iac_path`).
+The governance engine evaluates; Terraform executes; humans approve. IaC state never drifts.
 
 ### LLM Rate Limiting
 All 7 agents call Azure OpenAI through `run_with_throttle()` — an `asyncio.Semaphore` +

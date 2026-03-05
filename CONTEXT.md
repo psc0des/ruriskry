@@ -156,7 +156,7 @@ Every proposed action gets scored across 4 dimensions:
 
 ### Data Flow
 
-**Target architecture — two-layer intelligence:**
+**Target architecture — three-layer intelligence:**
 ```
 Operational Agent (Layer 1 — pre-flight reasoning)
     ├── Queries real data: Azure Monitor metrics, Resource Graph tags
@@ -168,6 +168,13 @@ RuriSkry (Layer 2 — independent second opinion)
     → GovernanceDecisionEngine calculates SRI™ Composite
     → GovernanceVerdict returned (approved/escalated/denied)
     → Decision logged to audit trail
+            ↓
+Execution Gateway (Layer 3 — IaC-safe execution) [Phase 21 — PLANNED]
+    → DENIED  → blocked (no action)
+    → ESCALATED → awaiting human review (dashboard HITL)
+    → APPROVED + IaC-managed → auto-generate Terraform PR (GitHub API)
+    → APPROVED + not IaC-managed → manual execution required
+    → Human merges PR → CI/CD runs terraform apply → IaC state stays in sync
 ```
 
 **Current state (Phase 20 complete + two audit rounds):** All `@af.tool` callbacks in every agent
@@ -197,6 +204,20 @@ STATUS.md for full phase breakdown.
 
 ## Current Development Phase
 > For detailed progress tracking see **STATUS.md** at the project root.
+
+**Phase 21 — Execution Gateway & Human-in-the-Loop (PLANNED)**
+
+RuriSkry currently **evaluates only** — it never executes. Phase 21 adds an Execution
+Gateway that routes APPROVED verdicts to IaC-safe paths (Terraform PRs via GitHub API)
+instead of directly modifying Azure resources, which would cause IaC state drift. ESCALATED
+verdicts get dashboard HITL buttons (Approve / Dismiss). IaC detection via Azure tags
+(`managed_by=terraform`). See `Adding-Terraform-Feature.md` for full implementation guide.
+
+New files (planned): `src/core/execution_gateway.py`, `src/core/terraform_pr_generator.py`,
+`tests/test_execution_gateway.py`. New endpoints: `GET /api/execution/{action_id}`,
+`GET /api/execution/pending-reviews`, `POST /api/execution/{id}/approve`,
+`POST /api/execution/{id}/dismiss`. New env vars: `GITHUB_TOKEN`, `IAC_GITHUB_REPO`,
+`IAC_TERRAFORM_PATH`, `EXECUTION_GATEWAY_ENABLED`.
 
 **Phase 20 — Async End-to-End Migration (complete)**
 

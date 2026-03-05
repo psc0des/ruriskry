@@ -4,7 +4,7 @@
 > picking up this project. It tells you exactly what is done, what is live,
 > and what comes next. Architecture and coding standards are in `CONTEXT.md`.
 
-**Last updated:** 2026-03-04 (Phase 20 Async End-to-End Migration complete + two rounds of post-audit fixes; 505 tests passing)
+**Last updated:** 2026-03-05 (Phase 21 Execution Gateway & HITL planned; Phase 20 + audits complete; 505 tests passing)
 **Active branch:** `main`
 **Demo verdict:** All 3 scenarios pass with real prod resource IDs (DENIED / APPROVED / ESCALATED)
 
@@ -48,6 +48,7 @@
 | A2A Protocol server | ✅ Complete | `agent-framework-a2a` + `a2a-sdk` |
 | A2A operational clients | ✅ Complete | `A2ACardResolver` + `A2AClient` + `httpx` |
 | A2A agent registry | ✅ Complete | JSON (mock) / Cosmos DB (live) |
+| Execution Gateway & HITL (Phase 21) | 🔜 Planned | `src/core/execution_gateway.py` + `terraform_pr_generator.py` — IaC-safe execution via GitHub PRs; HITL approval in dashboard |
 
 ---
 
@@ -823,6 +824,48 @@ Request a quota increase or add exponential back-off + retry logic in each agent
 **Impact:** Governance scoring still works correctly (deterministic rules are the
 safety floor), but GPT-4.1's semantic reasoning — which should catch things like
 equivalent tag formats or novel risk patterns — is never reached.
+
+---
+
+## Phase 21 — Execution Gateway & Human-in-the-Loop (PLANNED)
+
+> **Implementation guide:** `Adding-Terraform-Feature.md` (step-by-step with code)
+
+**Problem:** APPROVED verdicts are currently informational only — nothing executes. If we
+add an execution layer that directly modifies Azure resources via SDK calls, it causes
+**IaC state drift**: Terraform state diverges from Azure reality, and the next
+`terraform apply` silently reverts the agent's fix.
+
+**Solution:** APPROVED verdicts generate **Terraform PRs** against the IaC repo. A human
+reviews and merges the PR, CI/CD runs `terraform apply`, and IaC state stays in sync.
+
+**Architecture:**
+```
+GovernanceVerdict → ExecutionGateway
+    ├── DENIED    → blocked (log + Teams alert)
+    ├── ESCALATED → awaiting_review (Teams alert + dashboard HITL buttons)
+    └── APPROVED  → IaC-managed? → YES → auto-generate Terraform PR
+                                 → NO  → manual_required (HITL)
+```
+
+**New components (planned):**
+- [ ] `src/core/models.py` — `ExecutionStatus` enum + `ExecutionRecord` model
+- [ ] `src/core/execution_gateway.py` — verdict routing + IaC detection via `managed_by` tag
+- [ ] `src/core/terraform_pr_generator.py` — GitHub PR creation via `PyGithub`
+- [ ] `src/core/pipeline.py` — wire gateway after `DecisionTracker.record()`
+- [ ] `src/config.py` — `iac_github_repo`, `iac_terraform_path`, `execution_gateway_enabled`
+- [ ] `src/api/dashboard_api.py` — 4 new endpoints: execution status, pending reviews, approve, dismiss
+- [ ] `dashboard/src/components/EvaluationDrilldown.jsx` — Section 7: Execution Status panel with Approve/Dismiss buttons
+- [ ] `dashboard/src/api.js` — `fetchExecutionStatus()`, `approveExecution()`, `dismissExecution()`
+- [ ] `infrastructure/terraform-prod/main.tf` — add `managed_by`, `iac_repo`, `iac_path` tags to all resources
+- [ ] `tests/test_execution_gateway.py` — IaC detection, verdict routing, approval flow, PR generation mocks
+- [ ] `requirements.txt` — add `PyGithub>=2.1.0`
+
+**Env vars (new):**
+- `GITHUB_TOKEN` — GitHub PAT with repo write access
+- `IAC_GITHUB_REPO` — e.g. `psc0des/ruriskry`
+- `IAC_TERRAFORM_PATH` — e.g. `infrastructure/terraform-prod`
+- `EXECUTION_GATEWAY_ENABLED` — `false` by default (opt-in)
 
 ---
 

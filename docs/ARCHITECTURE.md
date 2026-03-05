@@ -348,6 +348,62 @@ GET /api/scan/{id}/stream                            ← SSE consumer
 
 ---
 
+## Execution Gateway & IaC-Safe Execution (Phase 21 — Planned)
+
+RuriSkry evaluates. Terraform executes. Humans approve. The Execution Gateway sits
+between the governance verdict and any real-world change, ensuring IaC state never drifts.
+
+```
+GovernanceVerdict
+       │
+       ▼
+ExecutionGateway.process_verdict()
+  ├── DENIED    → status=blocked (log + Teams alert, no action)
+  ├── ESCALATED → status=awaiting_review (dashboard Approve/Dismiss buttons)
+  └── APPROVED  →
+        ├── IaC-managed? (reads managed_by tag from resource metadata)
+        │     ├── YES → TerraformPRGenerator.create_pr()
+        │     │           ├── Create branch: ruriskry/approved/{resource}-{id}
+        │     │           ├── Generate Terraform HCL change
+        │     │           ├── Open PR with SRI context + reviewer checklist
+        │     │           └── status=pr_created (with pr_url + pr_number)
+        │     └── NO  → status=manual_required
+        └── ExecutionRecord stored (in-memory; Cosmos DB in future)
+```
+
+**Three-tier execution model:**
+
+| Verdict | Execution Path | Dashboard Status |
+|---------|----------------|-----------------|
+| DENIED | Block. Log + Teams alert. | Blocked (red) |
+| ESCALATED | Create review request. HITL buttons in drilldown. | Awaiting Review (yellow) |
+| APPROVED + IaC | Auto-generate Terraform PR. Human merges. CI/CD applies. | PR Created → Merged → Applied (green) |
+| APPROVED + no IaC | Mark for manual execution. | Manual Required (grey) |
+
+**IaC detection** — Azure resource tags drive the routing:
+```hcl
+tags = {
+  managed_by = "terraform"    # Detected by ExecutionGateway
+  iac_repo   = "psc0des/ruriskry"
+  iac_path   = "infrastructure/terraform-prod"
+}
+```
+
+**Key design decisions:**
+- **Gateway never executes directly** — it only creates PRs or marks for manual review
+- **Gateway failure never breaks the verdict** — wrapped in `try/except`; verdict is primary
+- **Opt-in by default** — `EXECUTION_GATEWAY_ENABLED=false` until explicitly enabled
+- **HITL always exists** — even APPROVED actions require a human to merge the PR
+- **Lifecycle tracking** — `ExecutionRecord` tracks: pending → pr_created → pr_merged → applied
+
+**New files:** `src/core/execution_gateway.py`, `src/core/terraform_pr_generator.py`
+**New endpoints:** `GET /api/execution/{action_id}`, `GET /api/execution/pending-reviews`,
+`POST /api/execution/{id}/approve`, `POST /api/execution/{id}/dismiss`
+**New env vars:** `GITHUB_TOKEN`, `IAC_GITHUB_REPO`, `IAC_TERRAFORM_PATH`, `EXECUTION_GATEWAY_ENABLED`
+**Implementation guide:** `Adding-Terraform-Feature.md`
+
+---
+
 ## Azure OpenAI Rate Limiting (HTTP 429)
 
 In live mode all 7 agents (4 governance + 3 operational) call Azure OpenAI concurrently.
@@ -457,6 +513,8 @@ src/
 │   ├── decision_tracker.py    # Audit trail → Cosmos DB / JSON (verdicts)
 │   ├── scan_run_tracker.py    # Scan-run lifecycle → Cosmos DB / JSON (scan records)
 │   ├── explanation_engine.py  # DecisionExplainer — factors, counterfactuals, LLM summary
+│   ├── execution_gateway.py   # (Phase 21 — planned) Verdict→IaC routing; HITL approval
+│   ├── terraform_pr_generator.py # (Phase 21 — planned) GitHub PR creation via PyGithub
 │   └── interception.py        # ActionInterceptor façade (async)
 ├── governance_agents/         # 4 governors — all async def evaluate()
 ├── operational_agents/        # 3 governed agents — all async def scan()
