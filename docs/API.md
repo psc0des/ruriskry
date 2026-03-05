@@ -154,6 +154,8 @@ All endpoints are `async def` (FastAPI manages the event loop).
 | GET | `/api/execution/by-action/{action_id}` | Execution status for a verdict |
 | POST | `/api/execution/{execution_id}/approve` | Human approves an escalated verdict |
 | POST | `/api/execution/{execution_id}/dismiss` | Human dismisses a verdict |
+| GET | `/api/execution/{execution_id}/terraform` | Generate Terraform HCL fix for a `manual_required` or `pr_created` execution record |
+| POST | `/api/admin/reset` | ⚠ Dev/test only — wipe all local JSON data and reset in-memory state |
 
 ### Query parameters for `GET /api/evaluations`
 
@@ -598,6 +600,41 @@ Human dismisses a verdict — no execution will happen.
 ```
 
 **Response:** Updated `ExecutionRecord` JSON with `status: "dismissed"`.
+
+---
+
+### `GET /api/execution/{execution_id}/terraform`
+
+Generate a Terraform HCL fix for any execution record that has a verdict snapshot.
+Used by the dashboard **Show Terraform Fix** button for `manual_required` and `pr_created` records.
+
+For `modify_nsg` actions the response contains three concrete remediation options:
+- Option A: Remove the insecure rule entirely
+- Option B: Restrict `sourceAddressPrefix` to a specific IP
+- Option C: Add a higher-priority deny rule
+
+Rule name, port, and resource group are parsed automatically from the agent's reason string.
+
+**Response:**
+```json
+{
+  "execution_id": "50823c45-...",
+  "hcl": "# RuriSkry Governance...\nresource \"azurerm_network_security_rule\" ..."
+}
+```
+
+Returns `404` if `execution_id` is unknown, `400` if no verdict snapshot is stored.
+
+---
+
+### `POST /api/admin/reset`
+
+**Dev/test only.** Deletes all local JSON files in `data/decisions/`, `data/executions/`, and `data/scans/`. Clears in-memory scan state and resets the `ExecutionGateway` singleton. Never touches Cosmos DB.
+
+**Response:**
+```json
+{ "status": "ok", "deleted": { "decisions": 3, "executions": 1, "scans": 5 }, "total": 9 }
+```
 
 ---
 

@@ -224,6 +224,26 @@ panel stays current); "Run All Agents" opens merged SSE log for all 3 agents;
 `ExecutionGateway.get_unresolved_proposals()` re-flags `manual_required` issues on every scan
 until human dismisses them ("flag until fixed" governance pattern).
 
+**Scan visibility + HITL action panel (post-Phase 21 improvements):**
+
+- `deploy_agent.py` — `_scan_with_framework()` maintains a `scan_notes: list[str]` closure
+  that each `@af.tool` callback appends to. After the LLM run, `self.scan_notes` is set so
+  `_run_agent_scan()` can emit each note as a `reasoning` SSE event. Notes show: which KQL
+  queries ran, how many resources found, per-NSG rule counts, open ports, and source addresses.
+  `_AGENT_INSTRUCTIONS` rewritten with explicit mandate: if `sourceAddressPrefix` is `*`/`Any`/
+  `Internet` and port is 22/3389/etc., the LLM **must** call `propose_action` (no discretion).
+  `scan_error: str | None` attribute surfaces framework failures in the live log.
+- `terraform_pr_generator.py` — `_generate_nsg_fix()`: for `modify_nsg` actions, parses the
+  agent reason string (regex) to extract rule name and port, then generates three real
+  `azurerm_network_security_rule` resource blocks (remove rule / restrict source IP / add deny
+  at higher priority). Resource group extracted from ARM ID. No more comment-only stubs.
+- `dashboard_api.py` — `GET /api/execution/{id}/terraform`: on-demand HCL generation for any
+  execution record with a verdict snapshot. Used by dashboard "Show Terraform Fix" button.
+  `POST /api/admin/reset`: dev/test wipe of local JSON files + in-memory state.
+- `EvaluationDrilldown.jsx` — `pr_created` status: action panel with Show Terraform Fix,
+  Fix in Azure Portal, Close PR / Ignore buttons. `manual_required` status: same panel.
+  `fetchTerraformStub()` lazy-loads and toggles the HCL code block inline.
+
 **Phase 20 — Async End-to-End Migration (complete)**
 
 - `src/infrastructure/cost_lookup.py` — `_extract_monthly_cost(items, os_type)` shared helper
