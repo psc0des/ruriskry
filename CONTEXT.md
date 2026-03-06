@@ -191,7 +191,11 @@ STATUS.md for full phase breakdown.
 ## Important Files to Read First
 1. `src/core/models.py` — ALL Pydantic models. Every agent uses these.
 2. `src/config.py` — SRI thresholds and weights are configurable here.
-3. `data/policies.json` — 6 governance policies for PolicyComplianceAgent.
+3. `data/policies.json` — 11 production governance policies for PolicyComplianceAgent (CIS Azure
+   6.1/6.2/6.3, DR protection, tag enforcement, change windows, cost thresholds, prod deletion/downgrade
+   protection). Policy engine supports 8 condition types: `tags_match`, `tags_absent`,
+   `resource_type_match` (prefix-aware for sub-resources), `blocked_actions`, `environment_match`,
+   `blocked_windows`, `cost_impact_threshold`, `reason_pattern` (regex on action reason text).
 4. `data/seed_incidents.json` — 7 past incidents for HistoricalPatternAgent.
 5. `data/seed_resources.json` — Azure resource topology. Contains two sections:
    - **Mini prod resources** (`ruriskry-prod-rg`): `vm-dr-01`, `vm-web-01`, `payment-api-prod`,

@@ -4,7 +4,7 @@
 > picking up this project. It tells you exactly what is done, what is live,
 > and what comes next. Architecture and coding standards are in `CONTEXT.md`.
 
-**Last updated:** 2026-03-06 (HITL UX overhaul: all APPROVED verdicts now route to `manual_required` (no auto-PR); ESCALATED and APPROVED share identical 4-button panel; `pr_created` shows Fix-by-Agent button; azure.mgmt SDK import path fixed; NSG rule auto-dismiss matches parent NSG name; sub-resource tag lookup walks up to parent; dedup prevents duplicate `manual_required` records; historical boost uses `DecisionTracker` for deterministic ESCALATED reinforcement; 582 tests passing)
+**Last updated:** 2026-03-06 (Policy engine upgraded to production-grade: 6→11 policies covering CIS Azure 6.1/6.2/6.3, mandatory tag enforcement, production deletion/downgrade protection; two new condition types: `reason_pattern` (regex on action reason) and `tags_absent` (mandatory tag enforcement); resource_type prefix match for sub-resources; 606 tests passing)
 **Active branch:** `main`
 **Demo verdict:** All 3 scenarios pass with real prod resource IDs (DENIED / APPROVED / ESCALATED)
 

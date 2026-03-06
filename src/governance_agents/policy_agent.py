@@ -9,7 +9,7 @@ In live mode (USE_LOCAL_MOCKS=false), this agent is driven by a
 Microsoft Agent Framework ``Agent`` backed by Azure OpenAI GPT-4.1.
 
 The LLM agent calls our deterministic ``evaluate_policy_rules`` tool,
-which checks all 6 governance policies and returns structured violation
+which checks all governance policies and returns structured violation
 data.  The LLM synthesises a plain-English compliance summary.
 
 In mock mode the framework is skipped — only deterministic evaluation runs.
@@ -29,9 +29,21 @@ Severity → score contribution
 * medium   : 15 pts
 * low      :  5 pts
 Scores accumulate and are capped at 100.
+
+Condition types (all must be True for a violation)
+---------------------------------------------------
+* tags_match        — resource has all specified key=value pairs
+* tags_absent       — resource is MISSING one or more required tag keys
+* resource_type_match — ARM resource type matches (prefix-aware for sub-resources)
+* blocked_actions   — action_type is in the blocked list
+* environment_match — environment string matches (inferred from ARM ID if absent)
+* blocked_windows   — current time is inside a blocked change window
+* cost_impact_threshold — estimated cost change exceeds threshold
+* reason_pattern    — action.reason matches a regex pattern (case-insensitive)
 """
 
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -332,6 +344,14 @@ class PolicyComplianceAgent:
             impact = self._estimate_cost_impact(action)
             checks.append(impact is not None and impact > conditions["cost_impact_threshold"])
 
+        # -- Reason pattern (regex) ----------------------------------------
+        if "reason_pattern" in conditions:
+            checks.append(self._reason_matches(action.reason, conditions["reason_pattern"]))
+
+        # -- Required tags absent ------------------------------------------
+        if "tags_absent" in conditions:
+            checks.append(self._tags_absent(tags, conditions["tags_absent"]))
+
         # All present conditions must be True to constitute a violation
         if not checks or not all(checks):
             return None
@@ -391,6 +411,25 @@ class PolicyComplianceAgent:
                     return True
 
         return False
+
+    @staticmethod
+    def _reason_matches(reason: str, pattern: str) -> bool:
+        """Return ``True`` if *reason* matches the regex *pattern* (case-insensitive).
+
+        Used by policies that need to inspect the action's reason text for
+        specific content — e.g. detecting open ports, wildcard sources, or
+        dangerous protocol names.
+        """
+        return bool(re.search(pattern, reason, re.IGNORECASE))
+
+    @staticmethod
+    def _tags_absent(resource_tags: dict[str, str], required_keys: list[str]) -> bool:
+        """Return ``True`` if *any* key in *required_keys* is missing from *resource_tags*.
+
+        Used for tag enforcement policies — fires when mandatory governance
+        tags are not present on a resource.
+        """
+        return any(k not in resource_tags for k in required_keys)
 
     @staticmethod
     def _estimate_cost_impact(action: ProposedAction) -> float | None:

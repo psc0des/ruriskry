@@ -27,6 +27,7 @@ def _make_action(
     resource_group: str = "dev",
     current_monthly_cost: float | None = None,
     projected_savings_monthly: float | None = None,
+    reason: str = "test",
 ) -> ProposedAction:
     return ProposedAction(
         agent_id="test-agent",
@@ -37,7 +38,7 @@ def _make_action(
             resource_group=resource_group,
             current_monthly_cost=current_monthly_cost,
         ),
-        reason="test",
+        reason=reason,
         urgency=Urgency.LOW,
         projected_savings_monthly=projected_savings_monthly,
     )
@@ -526,3 +527,311 @@ class TestPolicyComplianceAgent:
         result = await agent.evaluate(action, now=_WEDNESDAY_NOON)
         assert result.sri_policy == 0.0
         assert result.total_policies_checked == 0
+
+    # ------------------------------------------------------------------
+    # POL-SEC-002 — Internet-Exposed Dangerous Ports (critical)
+    # ------------------------------------------------------------------
+
+    async def test_pol_sec002_ssh_open_to_star(self, agent):
+        """SSH port 22 exposed to source '*' triggers POL-SEC-002."""
+        action = _make_action(
+            action_type=ActionType.MODIFY_NSG,
+            resource_type="Microsoft.Network/networkSecurityGroups/securityRules",
+            reason="Inbound Allow rule 'allow-ssh-anywhere' exposes port 22 (SSH) to all sources ('*'), which is a critical security gap exposing SSH to the entire internet.",
+        )
+        result = await agent.evaluate(action, now=_WEDNESDAY_NOON)
+        assert any(v.policy_id == "POL-SEC-002" for v in result.violations)
+
+    async def test_pol_sec002_rdp_open_to_internet(self, agent):
+        """RDP port 3389 exposed to 0.0.0.0/0 triggers POL-SEC-002."""
+        action = _make_action(
+            action_type=ActionType.MODIFY_NSG,
+            resource_type="Microsoft.Network/networkSecurityGroups",
+            reason="Inbound Allow rule exposes port 3389 (RDP) from 0.0.0.0/0 to VMs.",
+        )
+        result = await agent.evaluate(action, now=_WEDNESDAY_NOON)
+        assert any(v.policy_id == "POL-SEC-002" for v in result.violations)
+
+    async def test_pol_sec002_database_port_open(self, agent):
+        """PostgreSQL port 5432 open to internet triggers POL-SEC-002."""
+        action = _make_action(
+            action_type=ActionType.MODIFY_NSG,
+            resource_type="Microsoft.Network/networkSecurityGroups",
+            reason="Rule allows inbound traffic on port 5432 from source * to database subnet.",
+        )
+        result = await agent.evaluate(action, now=_WEDNESDAY_NOON)
+        assert any(v.policy_id == "POL-SEC-002" for v in result.violations)
+
+    async def test_pol_sec002_severity_is_critical(self, agent):
+        action = _make_action(
+            action_type=ActionType.MODIFY_NSG,
+            resource_type="Microsoft.Network/networkSecurityGroups",
+            reason="SSH port 22 open from source * to all VMs.",
+        )
+        result = await agent.evaluate(action, now=_WEDNESDAY_NOON)
+        violation = next(v for v in result.violations if v.policy_id == "POL-SEC-002")
+        assert violation.severity == PolicySeverity.CRITICAL
+
+    async def test_pol_sec002_not_triggered_for_restricted_source(self, agent):
+        """SSH open to a specific IP range should NOT trigger POL-SEC-002."""
+        action = _make_action(
+            action_type=ActionType.MODIFY_NSG,
+            resource_type="Microsoft.Network/networkSecurityGroups",
+            reason="Allow SSH port 22 from source 10.0.0.0/24 to management subnet.",
+        )
+        result = await agent.evaluate(action, now=_WEDNESDAY_NOON)
+        assert not any(v.policy_id == "POL-SEC-002" for v in result.violations)
+
+    async def test_pol_sec002_not_triggered_for_non_nsg_action(self, agent):
+        """Non-modify_nsg actions should not trigger POL-SEC-002 even with matching reason."""
+        action = _make_action(
+            action_type=ActionType.UPDATE_CONFIG,
+            reason="Update config: SSH port 22 from source * exposed.",
+        )
+        result = await agent.evaluate(action, now=_WEDNESDAY_NOON)
+        assert not any(v.policy_id == "POL-SEC-002" for v in result.violations)
+
+    # ------------------------------------------------------------------
+    # POL-SEC-003 — Unrestricted Inbound Access (high)
+    # ------------------------------------------------------------------
+
+    async def test_pol_sec003_all_sources_wildcard(self, agent):
+        """NSG rule allowing from all sources ('*') triggers POL-SEC-003."""
+        action = _make_action(
+            action_type=ActionType.MODIFY_NSG,
+            resource_type="Microsoft.Network/networkSecurityGroups",
+            reason="Inbound Allow rule exposes port 8080 to all sources ('*').",
+        )
+        result = await agent.evaluate(action, now=_WEDNESDAY_NOON)
+        assert any(v.policy_id == "POL-SEC-003" for v in result.violations)
+
+    async def test_pol_sec003_cidr_any(self, agent):
+        """0.0.0.0/0 source triggers POL-SEC-003."""
+        action = _make_action(
+            action_type=ActionType.MODIFY_NSG,
+            resource_type="Microsoft.Network/networkSecurityGroups",
+            reason="Rule allows inbound from 0.0.0.0/0 on port 443.",
+        )
+        result = await agent.evaluate(action, now=_WEDNESDAY_NOON)
+        assert any(v.policy_id == "POL-SEC-003" for v in result.violations)
+
+    async def test_pol_sec003_exposes_to_internet(self, agent):
+        """Reason mentioning 'exposing to the entire internet' triggers POL-SEC-003."""
+        action = _make_action(
+            action_type=ActionType.MODIFY_NSG,
+            resource_type="Microsoft.Network/networkSecurityGroups",
+            reason="This rule exposes port 8443 to the entire internet.",
+        )
+        result = await agent.evaluate(action, now=_WEDNESDAY_NOON)
+        assert any(v.policy_id == "POL-SEC-003" for v in result.violations)
+
+    async def test_pol_sec003_not_triggered_for_internal(self, agent):
+        """Internal traffic rule should not trigger POL-SEC-003."""
+        action = _make_action(
+            action_type=ActionType.MODIFY_NSG,
+            resource_type="Microsoft.Network/networkSecurityGroups",
+            reason="Allow port 443 from VNet 10.0.0.0/16 to application subnet.",
+        )
+        result = await agent.evaluate(action, now=_WEDNESDAY_NOON)
+        assert not any(v.policy_id == "POL-SEC-003" for v in result.violations)
+
+    # ------------------------------------------------------------------
+    # POL-TAG-001 — Mandatory Governance Tags (medium)
+    # ------------------------------------------------------------------
+
+    async def test_pol_tag001_missing_all_tags(self, agent):
+        """Production resource missing all required tags triggers POL-TAG-001."""
+        action = _make_action(
+            action_type=ActionType.UPDATE_CONFIG,
+            resource_id="/subscriptions/x/resourceGroups/prod/providers/Microsoft.Compute/vm/api",
+        )
+        result = await agent.evaluate(
+            action,
+            resource_metadata={"tags": {}, "environment": "production"},
+            now=_WEDNESDAY_NOON,
+        )
+        assert any(v.policy_id == "POL-TAG-001" for v in result.violations)
+
+    async def test_pol_tag001_missing_one_tag(self, agent):
+        """Even one missing required tag triggers the policy."""
+        action = _make_action(
+            action_type=ActionType.UPDATE_CONFIG,
+            resource_id="/subscriptions/x/resourceGroups/prod/providers/Microsoft.Compute/vm/api",
+        )
+        result = await agent.evaluate(
+            action,
+            resource_metadata={
+                "tags": {"environment": "production", "owner": "team-a"},
+                "environment": "production",
+            },
+            now=_WEDNESDAY_NOON,
+        )
+        # Missing "cost-center"
+        assert any(v.policy_id == "POL-TAG-001" for v in result.violations)
+
+    async def test_pol_tag001_all_tags_present(self, agent):
+        """All required tags present — no violation."""
+        action = _make_action(
+            action_type=ActionType.UPDATE_CONFIG,
+            resource_id="/subscriptions/x/resourceGroups/prod/providers/Microsoft.Compute/vm/api",
+        )
+        result = await agent.evaluate(
+            action,
+            resource_metadata={
+                "tags": {"environment": "production", "owner": "team-a", "cost-center": "CC-123"},
+                "environment": "production",
+            },
+            now=_WEDNESDAY_NOON,
+        )
+        assert not any(v.policy_id == "POL-TAG-001" for v in result.violations)
+
+    async def test_pol_tag001_dev_environment_not_checked(self, agent):
+        """Tag enforcement only applies to production."""
+        action = _make_action(
+            action_type=ActionType.UPDATE_CONFIG,
+            resource_id="/subscriptions/x/resourceGroups/dev/providers/Microsoft.Compute/vm/test",
+            resource_group="dev",
+        )
+        result = await agent.evaluate(
+            action,
+            resource_metadata={"tags": {}},
+            now=_WEDNESDAY_NOON,
+        )
+        assert not any(v.policy_id == "POL-TAG-001" for v in result.violations)
+
+    # ------------------------------------------------------------------
+    # POL-PROD-001 — Production Deletion Protection (high)
+    # ------------------------------------------------------------------
+
+    async def test_pol_prod001_delete_in_production(self, agent):
+        """Deleting any production resource triggers POL-PROD-001."""
+        action = _make_action(
+            action_type=ActionType.DELETE_RESOURCE,
+            resource_id="/subscriptions/x/resourceGroups/prod/providers/Microsoft.Compute/vm/api",
+        )
+        result = await agent.evaluate(
+            action,
+            resource_metadata={"environment": "production", "tags": {}},
+            now=_WEDNESDAY_NOON,
+        )
+        assert any(v.policy_id == "POL-PROD-001" for v in result.violations)
+
+    async def test_pol_prod001_delete_in_dev_allowed(self, agent):
+        """Deleting a dev resource does not trigger POL-PROD-001."""
+        action = _make_action(
+            action_type=ActionType.DELETE_RESOURCE,
+            resource_id="/subscriptions/x/resourceGroups/dev/providers/Microsoft.Compute/vm/test",
+            resource_group="dev",
+        )
+        result = await agent.evaluate(action, now=_WEDNESDAY_NOON)
+        assert not any(v.policy_id == "POL-PROD-001" for v in result.violations)
+
+    async def test_pol_prod001_scale_down_not_triggered(self, agent):
+        """POL-PROD-001 only blocks deletions, not scale-downs."""
+        action = _make_action(
+            action_type=ActionType.SCALE_DOWN,
+            resource_id="/subscriptions/x/resourceGroups/prod/providers/Microsoft.Compute/vm/api",
+        )
+        result = await agent.evaluate(
+            action,
+            resource_metadata={"environment": "production", "tags": {}},
+            now=_WEDNESDAY_NOON,
+        )
+        assert not any(v.policy_id == "POL-PROD-001" for v in result.violations)
+
+    # ------------------------------------------------------------------
+    # POL-SCALE-001 — Production Downgrade Protection (medium)
+    # ------------------------------------------------------------------
+
+    async def test_pol_scale001_scale_down_production(self, agent):
+        """Scaling down a production resource triggers POL-SCALE-001."""
+        action = _make_action(
+            action_type=ActionType.SCALE_DOWN,
+            resource_id="/subscriptions/x/resourceGroups/prod/providers/Microsoft.Compute/vm/api",
+        )
+        result = await agent.evaluate(
+            action,
+            resource_metadata={"environment": "production", "tags": {}},
+            now=_WEDNESDAY_NOON,
+        )
+        assert any(v.policy_id == "POL-SCALE-001" for v in result.violations)
+
+    async def test_pol_scale001_scale_down_dev_allowed(self, agent):
+        """Scaling down a dev resource does not trigger POL-SCALE-001."""
+        action = _make_action(
+            action_type=ActionType.SCALE_DOWN,
+            resource_id="/subscriptions/x/resourceGroups/dev/providers/Microsoft.Compute/vm/test",
+            resource_group="dev",
+        )
+        result = await agent.evaluate(action, now=_WEDNESDAY_NOON)
+        assert not any(v.policy_id == "POL-SCALE-001" for v in result.violations)
+
+    async def test_pol_scale001_scale_up_not_triggered(self, agent):
+        """Scale-up in production does not trigger POL-SCALE-001."""
+        action = _make_action(
+            action_type=ActionType.SCALE_UP,
+            resource_id="/subscriptions/x/resourceGroups/prod/providers/Microsoft.Compute/vm/api",
+        )
+        result = await agent.evaluate(
+            action,
+            resource_metadata={"environment": "production", "tags": {}},
+            now=_WEDNESDAY_NOON,
+        )
+        assert not any(v.policy_id == "POL-SCALE-001" for v in result.violations)
+
+    # ------------------------------------------------------------------
+    # Sub-resource type prefix matching
+    # ------------------------------------------------------------------
+
+    async def test_sec001_fires_for_security_rule_subresource(self, agent):
+        """securityRules sub-resource type matches parent NSG policy."""
+        action = _make_action(
+            action_type=ActionType.MODIFY_NSG,
+            resource_type="Microsoft.Network/networkSecurityGroups/securityRules",
+        )
+        result = await agent.evaluate(action, now=_WEDNESDAY_NOON)
+        assert any(v.policy_id == "POL-SEC-001" for v in result.violations)
+
+    # ------------------------------------------------------------------
+    # Condition type: reason_pattern
+    # ------------------------------------------------------------------
+
+    async def test_reason_pattern_case_insensitive(self, agent):
+        """reason_pattern should match case-insensitively."""
+        action = _make_action(
+            action_type=ActionType.MODIFY_NSG,
+            resource_type="Microsoft.Network/networkSecurityGroups",
+            reason="Exposes PORT 22 (ssh) FROM SOURCE * to VMs.",
+        )
+        result = await agent.evaluate(action, now=_WEDNESDAY_NOON)
+        assert any(v.policy_id == "POL-SEC-002" for v in result.violations)
+
+    # ------------------------------------------------------------------
+    # Condition type: tags_absent
+    # ------------------------------------------------------------------
+
+    async def test_tags_absent_partial_match(self, agent):
+        """tags_absent fires if even one required tag is missing."""
+        action = _make_action(
+            action_type=ActionType.RESTART_SERVICE,
+            resource_id="/subscriptions/x/resourceGroups/prod/providers/Microsoft.Compute/vm/web",
+        )
+        result = await agent.evaluate(
+            action,
+            resource_metadata={
+                "tags": {"environment": "production", "owner": "sre"},
+                "environment": "production",
+            },
+            now=_WEDNESDAY_NOON,
+        )
+        assert any(v.policy_id == "POL-TAG-001" for v in result.violations)
+
+    # ------------------------------------------------------------------
+    # Updated score / metadata checks
+    # ------------------------------------------------------------------
+
+    async def test_total_policies_is_eleven(self, agent):
+        """Production policy set should have 11 policies."""
+        action = _make_action()
+        result = await agent.evaluate(action, now=_WEDNESDAY_NOON)
+        assert result.total_policies_checked == 11
