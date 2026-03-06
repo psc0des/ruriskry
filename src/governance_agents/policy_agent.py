@@ -308,8 +308,12 @@ class PolicyComplianceAgent:
             checks.append(self._tags_match(tags, conditions["tags_match"]))
 
         # -- Resource-type matching --------------------------------------
+        # Use prefix match so sub-resources (e.g. .../securityRules/foo) also
+        # match their parent type (e.g. Microsoft.Network/networkSecurityGroups).
         if "resource_type_match" in conditions:
-            checks.append(action.target.resource_type == conditions["resource_type_match"])
+            rt = (action.target.resource_type or "").lower()
+            match_type = conditions["resource_type_match"].lower()
+            checks.append(rt == match_type or rt.startswith(match_type + "/"))
 
         # -- Blocked action list -----------------------------------------
         if "blocked_actions" in conditions:
