@@ -69,6 +69,13 @@ from src.core.models import (
 )
 from src.infrastructure.search_client import AzureSearchClient
 
+# Points added per recent ESCALATED decision for the same action_type.
+# Capped so governance history can raise but not dominate the score.
+_GOV_BOOST_PER_ESCALATED = 25
+_GOV_BOOST_PER_APPROVED = 5
+_GOV_BOOST_CAP = 60
+_GOV_HISTORY_LOOKBACK = 50  # how many recent decisions to scan
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -345,14 +352,24 @@ class HistoricalPatternAgent:
         recommended_procedure = most_relevant.lesson if most_relevant else None
         sri = self._calculate_sri(similar_incidents)
 
+        # Supplement with the system's own governance decision history.
+        # This keeps the historical score stable across runs when Azure AI
+        # Search query variance would otherwise drop it to 0.
+        gov_boost, gov_reason = self._governance_history_boost(action)
+        sri = min(sri + gov_boost, 100.0)
+
         logger.info(
-            "HistoricalPatternAgent: resource_type=%s similar=%d score=%.1f",
+            "HistoricalPatternAgent: resource_type=%s similar=%d "
+            "score=%.1f (gov_boost=%d)",
             action.target.resource_type,
             len(similar_incidents),
             sri,
+            gov_boost,
         )
 
         reasoning = self._build_reasoning(action, similar_incidents, sri)
+        if gov_reason:
+            reasoning = reasoning.rstrip() + f"\n\n{gov_reason}"
 
         return HistoricalResult(
             sri_historical=sri,
@@ -468,6 +485,62 @@ class HistoricalPatternAgent:
             date=incident.get("date", ""),
             similarity_score=similarity,
         )
+
+    # ------------------------------------------------------------------
+    # Governance history supplement (deterministic)
+    # ------------------------------------------------------------------
+
+    def _governance_history_boost(self, action: ProposedAction) -> tuple[int, str]:
+        """Check the system's own governance decision history for this action_type.
+
+        Azure AI Search results are non-deterministic (query text varies slightly
+        per run, BM25 scores shift).  This supplement adds a *deterministic* boost
+        based on how often the same action_type has been ESCALATED in recent
+        governance decisions, so repeated violations keep a high historical score
+        regardless of search query variance.
+
+        Returns:
+            (boost_points, reason_string)  — boost is already capped at _GOV_BOOST_CAP.
+        """
+        try:
+            from src.core.decision_tracker import DecisionTracker  # noqa: PLC0415
+            tracker = DecisionTracker()
+            recent = tracker.get_recent(_GOV_HISTORY_LOOKBACK)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("HistoricalAgent: governance history unavailable — %s", exc)
+            return 0, ""
+
+        action_key = action.action_type.value
+        escalated = 0
+        approved = 0
+        for rec in recent:
+            if rec.get("action_type") != action_key:
+                continue
+            decision = rec.get("decision", "").upper()
+            if decision == "ESCALATED":
+                escalated += 1
+            elif decision == "APPROVED":
+                approved += 1
+
+        boost = min(
+            escalated * _GOV_BOOST_PER_ESCALATED + approved * _GOV_BOOST_PER_APPROVED,
+            _GOV_BOOST_CAP,
+        )
+
+        if boost == 0:
+            return 0, ""
+
+        parts = []
+        if escalated:
+            parts.append(f"{escalated} escalation(s)")
+        if approved:
+            parts.append(f"{approved} prior approval(s)")
+        reason = (
+            f"Governance history: {', '.join(parts)} for '{action_key}' "
+            f"in last {_GOV_HISTORY_LOOKBACK} decisions (+{boost} pts)"
+        )
+        logger.info("HistoricalAgent: governance boost +%d — %s", boost, reason)
+        return boost, reason
 
     # ------------------------------------------------------------------
     # Reasoning

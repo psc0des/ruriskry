@@ -99,7 +99,22 @@ async def _get_resource_tags(resource_id: str) -> dict[str, str]:
 
     Returns an empty dict if the resource is not found (safe default — APPROVED
     verdicts will route to manual_required).
+
+    Sub-resources (e.g. .../securityRules/allow-ssh) have no tags — we walk up
+    to the parent resource automatically so IaC detection works correctly.
     """
+    # Sub-resources like /securityRules/<name> or /subnets/<name> don't carry
+    # tags; resolve to the parent resource so IaC tags are found correctly.
+    _SUB_RESOURCE_SEGMENTS = {"securityrules", "subnets", "networkinterfaces",
+                               "virtualmachineextensions", "extensions"}
+    parts = resource_id.split("/")
+    lower_parts = [p.lower() for p in parts]
+    for seg in _SUB_RESOURCE_SEGMENTS:
+        if seg in lower_parts:
+            idx = lower_parts.index(seg)
+            resource_id = "/".join(parts[:idx])
+            break
+
     # ------------------------------------------------------------------
     # Live mode: query Azure Resource Graph
     # ------------------------------------------------------------------
@@ -336,7 +351,15 @@ async def _run_agent_scan(
             if key in already_proposed:
                 continue  # current scan re-proposed it — will be evaluated fresh
 
-            resource_name = unresolved_action.target.resource_id.split("/")[-1].lower()
+            # For NSG security rule ARM IDs (.../securityRules/rule-name) the agent
+            # scans the parent NSG, not the individual rule.  Extract the NSG name
+            # (segment before 'securityRules') so the examined_names lookup works.
+            rid_parts = unresolved_action.target.resource_id.lower().split("/")
+            if "securityrules" in rid_parts:
+                idx = rid_parts.index("securityrules")
+                resource_name = rid_parts[idx - 1]
+            else:
+                resource_name = rid_parts[-1]
             if resource_name in examined_names:
                 # Agent scanned this resource and found nothing wrong → fix was applied
                 try:
@@ -354,11 +377,16 @@ async def _run_agent_scan(
                     logger.warning("scan %s: auto-dismiss failed — %s", scan_id[:8], _e)
                 continue
 
-            # Resource was not scanned this run → keep re-flagging
+            # Resource was not scanned this run → keep re-flagging.
+            # Strip any existing [Unresolved since ...] prefixes first so re-flag
+            # passes don't stack them up into a double/triple prefix.
+            clean_reason = re.sub(
+                r'^(\[Unresolved since [^\]]+\]\s*)+', '', unresolved_action.reason
+            )
             unresolved_action = unresolved_action.model_copy(update={
                 "reason": (
                     f"[Unresolved since {exec_record.created_at.strftime('%d %b')}] "
-                    + unresolved_action.reason
+                    + clean_reason
                 )
             })
             proposals.append(unresolved_action)

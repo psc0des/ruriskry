@@ -164,27 +164,21 @@ class TestVerdictRouting:
         assert record.iac_managed is True
 
     @pytest.mark.asyncio
-    async def test_approved_iac_creates_pr_when_enabled(self, gateway):
-        """APPROVED + IaC-managed + gateway enabled → pr_created."""
-        mock_record_from_pr = None
+    async def test_approved_iac_routes_to_manual_required(self, gateway):
+        """APPROVED + IaC-managed → manual_required (user chooses execution path).
 
-        async def fake_create_pr(record, verdict):
-            record.status = ExecutionStatus.pr_created
-            record.pr_url = "https://github.com/psc0des/ruriskry/pull/42"
-            record.pr_number = 42
-            return record
-
-        gateway._create_terraform_pr = fake_create_pr
-
+        Auto-PR creation was removed.  IaC metadata is stored on the record so
+        the 'Create Terraform PR' button works on demand, but no PR is created
+        automatically.
+        """
         with patch("src.core.execution_gateway.settings") as mock_settings:
             mock_settings.execution_gateway_enabled = True
             verdict = _make_verdict(SRIVerdict.APPROVED)
             record = await gateway.process_verdict(verdict, _TERRAFORM_TAGS)
 
-        assert record.status == ExecutionStatus.pr_created
+        assert record.status == ExecutionStatus.manual_required
         assert record.iac_managed is True
         assert record.iac_tool == "terraform"
-        assert record.pr_number == 42
 
     @pytest.mark.asyncio
     async def test_approved_gateway_disabled_stays_pending(self, gateway):
@@ -368,8 +362,8 @@ class TestPersistence:
 
 class TestGatewayResiliency:
     @pytest.mark.asyncio
-    async def test_pr_creation_failure_sets_failed_status(self, gateway):
-        """When _create_terraform_pr raises, record.status = failed."""
+    async def test_pr_creation_failure_on_manual_path_sets_failed(self, gateway):
+        """create_pr_from_manual failure sets record to failed status."""
         async def exploding_pr(record, verdict):
             raise RuntimeError("Simulated GitHub API failure")
 
@@ -378,28 +372,28 @@ class TestGatewayResiliency:
         with patch("src.core.execution_gateway.settings") as mock_settings:
             mock_settings.execution_gateway_enabled = True
             verdict = _make_verdict(SRIVerdict.APPROVED)
+            # route_verdict always goes to manual_required now
             record = await gateway.process_verdict(verdict, _TERRAFORM_TAGS)
+            assert record.status == ExecutionStatus.manual_required
 
-        assert record.status == ExecutionStatus.failed
-        assert "Simulated GitHub API failure" in record.notes
+            # Manually calling _create_terraform_pr (via create_pr_from_manual) should surface the error
+            with pytest.raises(Exception):
+                await gateway._create_terraform_pr(record, verdict)
 
     @pytest.mark.asyncio
-    async def test_pr_exception_handled_gracefully(self, gateway):
-        """Any exception from _create_terraform_pr results in failed status,
-        not an unhandled exception propagating to the caller."""
-        async def exploding_pr(record, verdict):
-            raise RuntimeError("Network timeout")
-
-        gateway._create_terraform_pr = exploding_pr
-
+    async def test_iac_metadata_stored_on_manual_required_record(self, gateway):
+        """IaC metadata (iac_managed, iac_tool, iac_repo) is stored on the
+        manual_required record so the 'Create Terraform PR' button can use it."""
         with patch("src.core.execution_gateway.settings") as mock_settings:
             mock_settings.execution_gateway_enabled = True
             verdict = _make_verdict(SRIVerdict.APPROVED)
-            # Should NOT raise — exception is caught and mapped to failed status
             record = await gateway.process_verdict(verdict, _TERRAFORM_TAGS)
 
-        assert record.status == ExecutionStatus.failed
-        assert "Network timeout" in record.notes
+        assert record.status == ExecutionStatus.manual_required
+        assert record.iac_managed is True
+        assert record.iac_tool == "terraform"
+        # iac_repo comes from _TERRAFORM_TAGS["iac_repo"] if set, else empty string
+        assert isinstance(record.iac_repo, str)
 
 
 # ---------------------------------------------------------------------------
@@ -580,19 +574,18 @@ class TestUnresolvedProposals:
 
     @pytest.mark.asyncio
     async def test_pr_created_not_returned(self, gateway):
-        """pr_created record (IaC-managed) must NOT be re-proposed."""
+        """pr_created record must NOT be re-proposed (PR is already open)."""
         verdict = _make_verdict(SRIVerdict.APPROVED)
+        # Route to manual_required, then simulate user clicking "Create Terraform PR"
+        record = await gateway.process_verdict(verdict, resource_tags={})
+        assert record.status == ExecutionStatus.manual_required
 
-        async def _fake_pr(record, v):
-            record.status = ExecutionStatus.pr_created
-            record.pr_url = "https://github.com/org/repo/pull/1"
-            record.pr_number = 1
-            return record
+        # Manually set to pr_created (as create_pr_from_manual would do)
+        record.status = ExecutionStatus.pr_created
+        record.pr_url = "https://github.com/org/repo/pull/1"
+        record.pr_number = 1
+        gateway._save(record)
 
-        with patch.object(gateway, "_create_terraform_pr", side_effect=_fake_pr):
-            record = await gateway.process_verdict(verdict, resource_tags=_TERRAFORM_TAGS)
-
-        assert record.status == ExecutionStatus.pr_created
         assert gateway.get_unresolved_proposals() == []
 
     @pytest.mark.asyncio
@@ -1098,3 +1091,73 @@ class TestAutoDissmissOnRescan:
         pairs = gateway.get_unresolved_proposals()
         ids = [r.execution_id for _, r in pairs]
         assert record.execution_id not in ids
+
+
+class TestDedupManualRequired:
+    """Tests for duplicate-record prevention in route_verdict + get_unresolved_proposals."""
+
+    @pytest.mark.asyncio
+    async def test_second_route_returns_existing_record(self, gateway):
+        """Routing the same resource+action twice returns the existing record, not a new one."""
+        verdict = _make_verdict(SRIVerdict.APPROVED, resource_id="nsg-east-prod")
+        r1 = await gateway.process_verdict(verdict, {})
+        assert r1.status == ExecutionStatus.manual_required
+
+        # Route same resource+action again (simulates re-flag scan re-submitting proposal)
+        r2 = await gateway.process_verdict(verdict, {})
+        assert r2.execution_id == r1.execution_id  # same record returned
+
+    @pytest.mark.asyncio
+    async def test_get_unresolved_deduplicates_by_resource_and_action(self, gateway):
+        """get_unresolved_proposals returns at most one entry per (resource_id, action_type)."""
+        verdict = _make_verdict(SRIVerdict.APPROVED, resource_id="nsg-east-prod")
+        # Manually inject a second duplicate record to simulate pre-fix data
+        r1 = await gateway.process_verdict(verdict, {})
+        # Force-create second record by temporarily bypassing dedup (direct _save)
+        from src.core.models import ExecutionRecord, ExecutionStatus
+        import uuid
+        from datetime import datetime, timezone
+        r2 = ExecutionRecord(
+            execution_id=str(uuid.uuid4()),
+            action_id="dup-action",
+            verdict=SRIVerdict.APPROVED,
+            status=ExecutionStatus.manual_required,
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+            verdict_snapshot=r1.verdict_snapshot,
+        )
+        gateway._records[r2.execution_id] = r2
+
+        pairs = gateway.get_unresolved_proposals()
+        # Should only appear once despite two manual_required records
+        count = sum(
+            1 for _, rec in pairs
+            if rec.status == ExecutionStatus.manual_required
+        )
+        assert count <= 1
+
+    @pytest.mark.asyncio
+    async def test_get_unresolved_keeps_oldest_record(self, gateway):
+        """get_unresolved_proposals keeps the oldest record when duplicates exist."""
+        from src.core.models import ExecutionRecord, ExecutionStatus
+        import uuid
+        from datetime import datetime, timezone, timedelta
+        verdict = _make_verdict(SRIVerdict.APPROVED, resource_id="nsg-dup-test")
+        r1 = await gateway.process_verdict(verdict, {})
+        # Inject a newer duplicate
+        older_time = r1.created_at - timedelta(days=2)
+        r_older = ExecutionRecord(
+            execution_id=str(uuid.uuid4()),
+            action_id="older-action",
+            verdict=SRIVerdict.APPROVED,
+            status=ExecutionStatus.manual_required,
+            created_at=older_time,
+            updated_at=older_time,
+            verdict_snapshot=r1.verdict_snapshot,
+        )
+        gateway._records[r_older.execution_id] = r_older
+
+        pairs = gateway.get_unresolved_proposals()
+        matching = [rec for _, rec in pairs if "nsg-dup-test" in rec.verdict_snapshot.get("proposed_action", {}).get("target", {}).get("resource_id", "")]
+        assert len(matching) == 1
+        assert matching[0].execution_id == r_older.execution_id  # oldest wins

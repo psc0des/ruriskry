@@ -221,7 +221,7 @@ async def _execute_fix_via_sdk(action: ProposedAction) -> str:
         return f"Resized VM '{name}' to '{proposed_sku}' in '{rg}'"
 
     elif action.action_type == ActionType.DELETE_RESOURCE:
-        from azure.mgmt.resource.aio import ResourceManagementClient  # noqa: PLC0415
+        from azure.mgmt.resource.resources.aio import ResourceManagementClient  # noqa: PLC0415
 
         async with DefaultAzureCredential() as credential:
             async with ResourceManagementClient(
@@ -334,21 +334,37 @@ class ExecutionGateway:
                     "informational only for '%s'",
                     resource_id,
                 )
-            elif iac_managed and iac_repo:
-                try:
-                    record = await self._create_terraform_pr(record, verdict)
-                except Exception as exc:  # noqa: BLE001
-                    logger.error(
-                        "ExecutionGateway: PR creation raised unexpectedly — %s", exc
-                    )
-                    record.status = ExecutionStatus.failed
-                    record.notes = f"PR creation error: {exc}"
             else:
+                # Always route to manual_required so the human chooses how to
+                # execute: Create Terraform PR, Fix using Agent, or Fix in Portal.
+                # Never auto-create a PR — that decision belongs to the user.
+                # (iac_managed / iac_repo are still stored on the record so the
+                #  "Create Terraform PR" button knows a PR is possible.)
+                action_key = verdict.proposed_action.action_type.value
+                existing = next(
+                    (
+                        r for r in self._records.values()
+                        if r.status == ExecutionStatus.manual_required
+                        and r.verdict_snapshot
+                        and r.verdict_snapshot.get("proposed_action", {})
+                            .get("target", {}).get("resource_id") == resource_id
+                        and r.verdict_snapshot.get("proposed_action", {})
+                            .get("action_type") == action_key
+                    ),
+                    None,
+                )
+                if existing:
+                    logger.info(
+                        "ExecutionGateway: APPROVED — reusing existing "
+                        "manual_required record %s for '%s'",
+                        existing.execution_id[:8], resource_id,
+                    )
+                    return existing
                 record.status = ExecutionStatus.manual_required
                 logger.info(
-                    "ExecutionGateway: APPROVED but not IaC-managed — "
-                    "manual execution required for '%s'",
-                    resource_id,
+                    "ExecutionGateway: APPROVED — manual_required for '%s' "
+                    "(iac_managed=%s, user will choose execution path)",
+                    resource_id, iac_managed,
                 )
 
         record.updated_at = datetime.now(timezone.utc)
@@ -498,7 +514,12 @@ class ExecutionGateway:
         from src.core.models import ProposedAction  # noqa: PLC0415 (avoid circular at module level)
 
         self._ensure_loaded()
-        results = []
+        # Deduplicate: for the same (resource_id, action_type) keep only the
+        # oldest manual_required record.  Re-flag scans used to create a new
+        # record each time, so we may have many duplicates in data/executions/.
+        # Using the oldest ensures the "Unresolved since <date>" shows the real
+        # first-seen date, not the date of a re-flag pass.
+        seen: dict[tuple[str, str], tuple["ProposedAction", ExecutionRecord]] = {}
         for record in self._records.values():
             if record.status != ExecutionStatus.manual_required:
                 continue
@@ -510,14 +531,16 @@ class ExecutionGateway:
                 continue
             try:
                 action = ProposedAction.model_validate(action_data)
-                results.append((action, record))
+                key = (action.target.resource_id, action.action_type.value)
+                if key not in seen or record.created_at < seen[key][1].created_at:
+                    seen[key] = (action, record)
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "ExecutionGateway: could not reconstruct ProposedAction "
                     "from verdict_snapshot for record %s — %s",
                     record.execution_id[:8], exc,
                 )
-        return results
+        return list(seen.values())
 
     # ------------------------------------------------------------------
     # HITL Agent Fix + PR creation from manual_required
@@ -541,11 +564,18 @@ class ExecutionGateway:
         record = self._records.get(execution_id)
         if not record:
             raise KeyError(f"Execution record not found: {execution_id!r}")
-        if record.status != ExecutionStatus.manual_required:
+        _pr_allowed = {ExecutionStatus.manual_required, ExecutionStatus.awaiting_review}
+        if record.status not in _pr_allowed:
             raise ValueError(
                 f"Cannot create PR for {execution_id!r}: "
-                f"status is '{record.status.value}' (must be 'manual_required')"
+                f"status is '{record.status.value}' "
+                f"(must be 'manual_required' or 'awaiting_review')"
             )
+        # Auto-approve escalated records when user picks a remediation action
+        if record.status == ExecutionStatus.awaiting_review:
+            record.status = ExecutionStatus.manual_required
+            record.updated_at = datetime.now(timezone.utc)
+            self._save(record)
 
         verdict = self._reconstruct_verdict(record)
         if verdict is None:
@@ -634,11 +664,22 @@ class ExecutionGateway:
         record = self._records.get(execution_id)
         if not record:
             raise KeyError(f"Execution record not found: {execution_id!r}")
-        if record.status != ExecutionStatus.manual_required:
+        _agent_fix_allowed = {
+            ExecutionStatus.manual_required,
+            ExecutionStatus.pr_created,
+            ExecutionStatus.awaiting_review,
+        }
+        if record.status not in _agent_fix_allowed:
             raise ValueError(
                 f"Cannot execute fix for {execution_id!r}: "
-                f"status is '{record.status.value}' (must be 'manual_required')"
+                f"status is '{record.status.value}' "
+                f"(must be 'manual_required', 'pr_created', or 'awaiting_review')"
             )
+        # Auto-approve escalated records when user picks a remediation action
+        if record.status == ExecutionStatus.awaiting_review:
+            record.status = ExecutionStatus.manual_required
+            record.updated_at = datetime.now(timezone.utc)
+            self._save(record)
 
         preview = self.generate_agent_fix_commands(execution_id)
         commands = preview["commands"]

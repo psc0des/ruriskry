@@ -184,7 +184,7 @@ resource "azurerm_network_security_group" "prod" {
     name                       = "allow-ssh-anywhere"
     priority                   = 140
     direction                  = "Inbound"
-    access                     = "Deny"
+    access                     = "Allow"
     protocol                   = "Tcp"
     source_port_range          = "*"
     destination_port_range     = "22"

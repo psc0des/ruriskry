@@ -524,18 +524,18 @@ export default function EvaluationDrilldown({ evaluation, onBack }) {
                             </a>
                         )}
 
-                        {/* Action buttons for pr_created — reviewer options */}
+                        {/* Action buttons for pr_created — PR was created via "Create Terraform PR" button */}
                         {executionStatus.status === 'pr_created' && (
                             <div className="space-y-3 pt-1">
                                 <p className="text-xs text-blue-300/80 bg-blue-500/5 border border-blue-500/20 rounded-lg px-3 py-2">
-                                    A Terraform PR has been created. Choose how to proceed:
+                                    A Terraform PR has been created. Review and merge it, or use an alternative fix below.
                                 </p>
                                 <div className="flex flex-wrap gap-2">
                                     <button
-                                        onClick={() => handleShowTerraform(executionStatus.execution_id)}
-                                        className="flex items-center gap-1.5 px-4 py-2 bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/40 text-blue-300 hover:text-blue-200 rounded-lg text-sm font-medium transition-colors"
+                                        onClick={() => handleAgentFixPreview(executionStatus.execution_id)}
+                                        className="flex items-center gap-1.5 px-4 py-2 bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/40 text-purple-300 hover:text-purple-200 rounded-lg text-sm font-medium transition-colors"
                                     >
-                                        📋 {tfExpanded ? 'Hide' : 'Show'} Terraform Fix
+                                        🤖 {agentFixExpanded ? 'Hide' : 'Fix using'} Agent
                                     </button>
                                     {ev.resource_id && (
                                         <a
@@ -554,14 +554,43 @@ export default function EvaluationDrilldown({ evaluation, onBack }) {
                                         ✕ Close PR / Ignore
                                     </button>
                                 </div>
-                                {tfExpanded && (
-                                    <div className="mt-2">
-                                        {tfLoading ? (
-                                            <p className="text-xs text-slate-500 animate-pulse px-1">Generating Terraform fix…</p>
+                                {agentFixExpanded && (
+                                    <div className="mt-2 bg-slate-900/60 border border-purple-500/20 rounded-lg p-4 space-y-3">
+                                        <p className="text-xs text-orange-300/80">
+                                            ⚠ This will fix Azure directly. Close or ignore the open PR afterwards to avoid drift.
+                                        </p>
+                                        {agentFixLoading ? (
+                                            <p className="text-xs text-slate-500 animate-pulse">Loading commands…</p>
                                         ) : (
-                                            <pre className="text-xs text-slate-300 bg-slate-900 rounded-lg p-4 overflow-x-auto max-h-72 border border-slate-700 whitespace-pre-wrap">
-                                                {tfStub}
-                                            </pre>
+                                            <>
+                                                <pre className="text-xs text-slate-300 bg-slate-900 rounded-lg p-3 overflow-x-auto border border-slate-700 whitespace-pre-wrap">
+                                                    {agentFixPreview?.commands?.map((cmd) => `$ ${cmd}`).join('\n')}
+                                                </pre>
+                                                <div className="flex gap-2">
+                                                    <button
+                                                        onClick={() => handleAgentFixExecute(executionStatus.execution_id)}
+                                                        disabled={agentFixExecuting}
+                                                        className="flex items-center gap-1.5 px-4 py-2 bg-green-600 hover:bg-green-500 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+                                                    >
+                                                        {agentFixExecuting ? (
+                                                            <><span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" /> Running…</>
+                                                        ) : (
+                                                            <>▶ Run</>
+                                                        )}
+                                                    </button>
+                                                    <button
+                                                        onClick={() => setAgentFixExpanded(false)}
+                                                        className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-sm font-medium transition-colors"
+                                                    >
+                                                        Cancel
+                                                    </button>
+                                                </div>
+                                                {agentFixResult && (
+                                                    <div className={`text-xs rounded-lg px-3 py-2 border ${agentFixResult.success ? 'bg-green-500/10 border-green-500/30 text-green-300' : 'bg-red-500/10 border-red-500/30 text-red-300'}`}>
+                                                        {agentFixResult.success ? 'Fix applied successfully.' : 'Fix failed.'} {agentFixResult.notes}
+                                                    </div>
+                                                )}
+                                            </>
                                         )}
                                     </div>
                                 )}
@@ -573,30 +602,13 @@ export default function EvaluationDrilldown({ evaluation, onBack }) {
                             <p className="text-xs text-slate-400 italic">{executionStatus.notes}</p>
                         )}
 
-                        {/* HITL action buttons — awaiting_review (ESCALATED) */}
-                        {executionStatus.status === 'awaiting_review' && (
-                            <div className="flex gap-3 pt-1">
-                                <button
-                                    onClick={() => handleApprove(executionStatus.execution_id)}
-                                    className="px-4 py-2 bg-green-600 hover:bg-green-500 text-white rounded-lg text-sm font-medium transition-colors"
-                                >
-                                    Approve &amp; Execute
-                                </button>
-                                <button
-                                    onClick={() => handleDismiss(executionStatus.execution_id)}
-                                    className="px-4 py-2 bg-slate-600 hover:bg-slate-500 text-white rounded-lg text-sm font-medium transition-colors"
-                                >
-                                    Dismiss
-                                </button>
-                            </div>
-                        )}
-
-                        {/* Action panel — manual_required (APPROVED, no GitHub/IaC) */}
-                        {executionStatus.status === 'manual_required' && (
+                        {/* Action panel — manual_required (APPROVED) + awaiting_review (ESCALATED) */}
+                        {(executionStatus.status === 'manual_required' || executionStatus.status === 'awaiting_review') && (
                             <div className="space-y-3 pt-1">
                                 <p className="text-xs text-orange-300/80 bg-orange-500/5 border border-orange-500/20 rounded-lg px-3 py-2">
-                                    This verdict was approved but could not be executed automatically.
-                                    Choose how to proceed:
+                                    {executionStatus.status === 'awaiting_review'
+                                        ? 'This action was escalated for review. Choose how to remediate (your choice acts as approval):'
+                                        : 'This verdict was approved. Choose how to remediate:'}
                                 </p>
 
                                 {/* Four action buttons */}

@@ -357,37 +357,37 @@ between the governance verdict and any real-world change, ensuring IaC state nev
 GovernanceVerdict
        │
        ▼
-ExecutionGateway.process_verdict()
+ExecutionGateway.route_verdict()
   ├── DENIED    → status=blocked (log + Teams alert, no action)
-  ├── ESCALATED → status=awaiting_review (dashboard Approve/Dismiss buttons)
-  └── APPROVED  →
-        ├── IaC-managed? (reads managed_by tag from resource metadata)
-        │     ├── YES → TerraformPRGenerator.create_pr()
-        │     │           ├── Create branch: ruriskry/approved/{resource}-{id}
-        │     │           ├── Generate Terraform HCL change
-        │     │           ├── Open PR with SRI context + reviewer checklist
-        │     │           └── status=pr_created (with pr_url + pr_number)
-        │     └── NO  → status=manual_required
+  ├── ESCALATED → status=awaiting_review
+  └── APPROVED  → status=manual_required
+        │         (IaC metadata stored on record for on-demand PR creation)
         └── ExecutionRecord stored (JSON-durable: data/executions/)
 ```
 
-**Three-tier execution model:**
+All `manual_required` and `awaiting_review` records surface a **4-button HITL panel** in
+the dashboard drilldown. The human chooses how to act — nothing executes automatically.
 
-| Verdict | Execution Path | Dashboard Status |
-|---------|----------------|-----------------|
-| DENIED | Block. Log + Teams alert. | Blocked (red) |
-| ESCALATED | Create review request. HITL buttons in drilldown. | Awaiting Review (yellow) |
-| APPROVED + IaC | Auto-generate Terraform PR. Human merges. CI/CD applies. | PR Created → Merged → Applied (green) |
-| APPROVED + no IaC | Mark for manual execution. | Manual Required (grey) |
+**Execution model:**
 
-**IaC detection** — Azure resource tags drive the routing:
-```hcl
-tags = {
-  managed_by = "terraform"    # Detected by ExecutionGateway
-  iac_repo   = "psc0des/ruriskry"
-  iac_path   = "infrastructure/terraform-prod"
-}
-```
+| Verdict | Automatic Step | Dashboard Status | HITL Panel |
+|---------|----------------|-----------------|------------|
+| DENIED | Block. Log + Teams alert. | Blocked (red) | None |
+| ESCALATED | Create review request. | Awaiting Review (yellow) | 4-button panel (action auto-approves) |
+| APPROVED | Store record. | Manual Required (grey) | 4-button panel |
+
+**4-button HITL panel options** (same panel for both APPROVED and ESCALATED):
+1. **Create Terraform PR** — generates branch + HCL patch + GitHub PR on demand
+2. **Open in Azure Portal** — direct link to the affected resource
+3. **Fix using Agent** — two-step: preview `az`-equivalent commands → user confirms → Azure SDK executes
+4. **Decline / Ignore** — marks record as `dismissed`; stops re-proposing
+
+**IaC tag metadata** is stored on the `ExecutionRecord` at routing time (from `managed_by`,
+`iac_repo`, `iac_path` tags) so "Create Terraform PR" works even if the resource's tags change later.
+
+**Sub-resource tag lookup** — `_get_resource_tags()` strips sub-resource path segments
+(`/securityRules/`, `/subnets/`, etc.) from ARM IDs before querying Azure, because individual
+security rules and subnets carry no tags of their own — tags live on the parent resource.
 
 Tag lookup in `dashboard_api._get_resource_tags()` is **environment-aware**:
 - **Live mode** (`USE_LOCAL_MOCKS=false` + `AZURE_SUBSCRIPTION_ID` set): queries
@@ -396,16 +396,23 @@ Tag lookup in `dashboard_api._get_resource_tags()` is **environment-aware**:
 
 **Key design decisions:**
 - **Gateway never executes directly** — it only creates PRs or marks for manual review
+- **No auto-PR** — PR creation is user-initiated (clicking "Create Terraform PR"); prevents surprise drift
 - **Gateway failure never breaks the verdict** — wrapped in `try/except`; verdict is primary
 - **Opt-in by default** — `EXECUTION_GATEWAY_ENABLED=false` until explicitly enabled
-- **HITL always exists** — even APPROVED actions require a human to merge the PR
-- **Lifecycle tracking** — `ExecutionRecord` tracks: pending → pr_created → pr_merged → applied
+- **HITL always exists** — every action requires a human choice in the dashboard
+- **ESCALATED auto-approved by action** — choosing any panel button on an `awaiting_review` record transitions it to `manual_required` then executes; no separate approval step
+- **Dedup on route** — `route_verdict()` checks for an existing `manual_required` record for the same `(resource_id, action_type)` before creating a new one; prevents duplicate entries on re-scan
+- **Lifecycle tracking** — `ExecutionRecord` tracks: pending → manual_required / pr_created / awaiting_review → applied / dismissed
 - **Durable state** — `ExecutionRecord` persisted as JSON in `data/executions/`; survives restarts
-- **Flag until fixed** — `manual_required` records are re-proposed on every subsequent scan via `get_unresolved_proposals()`; stops when human clicks **Dismiss** (issue resolved) or the agent naturally stops flagging it (Azure config changed). `pr_created`, `awaiting_review`, `blocked`, `dismissed`, and `applied` records are excluded.
+- **Flag until fixed** — `manual_required` records are re-proposed on every subsequent scan via `get_unresolved_proposals()`; stops when human clicks **Decline / Ignore** or the agent stops flagging it. `pr_created`, `awaiting_review`, `blocked`, `dismissed`, and `applied` records are excluded.
+- **NSG rule auto-dismiss** — when a scan finds resource `nsg-east-prod` clean, the system dismisses all `manual_required` records whose ARM ID contains `/securityRules/` with that NSG as parent. The parent name is extracted from the ARM ID segment before `/securityRules/`.
+- **Deterministic historical boost** — `HistoricalPatternAgent._governance_history_boost()` reads `DecisionTracker.get_recent(50)` and adds +25 per prior ESCALATED / +5 per prior APPROVED for the same `action_type` (cap +60). Ensures consistent ESCALATED routing when Azure AI Search BM25 returns sparse results.
 
 **Files:** `src/core/execution_gateway.py`, `src/core/terraform_pr_generator.py`
 **Endpoints:** `GET /api/execution/pending-reviews`, `GET /api/execution/by-action/{action_id}`,
-`POST /api/execution/{id}/approve`, `POST /api/execution/{id}/dismiss`
+`POST /api/execution/{id}/approve`, `POST /api/execution/{id}/dismiss`,
+`POST /api/execution/{id}/create-pr`, `GET /api/execution/{id}/agent-fix-preview`,
+`POST /api/execution/{id}/agent-fix-execute`
 **Env vars:** `GITHUB_TOKEN`, `IAC_GITHUB_REPO`, `IAC_TERRAFORM_PATH`, `EXECUTION_GATEWAY_ENABLED`
 **Implementation guide:** `Adding-Terraform-Feature.md`
 

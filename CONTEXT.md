@@ -171,10 +171,10 @@ RuriSkry (Layer 2 — independent second opinion)
     → Decision logged to audit trail
             ↓
 Execution Gateway (Layer 3 — IaC-safe execution) [Phase 21 — COMPLETE]
-    → DENIED  → blocked (no action)
-    → ESCALATED → awaiting human review (dashboard HITL)
-    → APPROVED + IaC-managed → auto-generate Terraform PR (GitHub API)
-    → APPROVED + not IaC-managed → manual execution required
+    → DENIED    → blocked (no action)
+    → ESCALATED → awaiting_review → same 4-button panel as APPROVED (choice = approval)
+    → APPROVED  → manual_required → human picks: Create Terraform PR / Fix using Agent /
+                                    Fix in Azure Portal / Decline
     → Human merges PR → CI/CD runs terraform apply → IaC state stays in sync
 ```
 
@@ -220,7 +220,7 @@ Key files: `src/core/execution_gateway.py`, `src/core/terraform_pr_generator.py`
 `POST /api/execution/{id}/dismiss`, `POST /api/execution/{id}/create-pr`,
 `GET /api/execution/{id}/agent-fix-preview`, `POST /api/execution/{id}/agent-fix-execute`.
 Env vars: `GITHUB_TOKEN`, `IAC_GITHUB_REPO`, `IAC_TERRAFORM_PATH`,
-`EXECUTION_GATEWAY_ENABLED`. **Tests: 579 passed.**
+`EXECUTION_GATEWAY_ENABLED`. **Tests: 582 passed.**
 
 Post-deploy fixes: `_run_agent_scan()` updates `AgentRegistry` per verdict (Connected Agents
 panel stays current); "Run All Agents" opens merged SSE log for all 3 agents;
@@ -231,41 +231,29 @@ until human dismisses them ("flag until fixed" governance pattern).
 
 - `deploy_agent.py` — `_scan_with_framework()` maintains a `scan_notes: list[str]` closure
   that each `@af.tool` callback appends to. After the LLM run, `self.scan_notes` is set so
-  `_run_agent_scan()` can emit each note as a `reasoning` SSE event. Notes show: which KQL
-  queries ran, how many resources found, per-NSG rule counts, open ports, and source addresses.
-  `_AGENT_INSTRUCTIONS` rewritten with explicit mandate: if `sourceAddressPrefix` is `*`/`Any`/
-  `Internet` and port is 22/3389/etc., the LLM **must** call `propose_action` (no discretion).
-  `scan_error: str | None` attribute surfaces framework failures in the live log.
-- `terraform_pr_generator.py` — `_generate_nsg_fix()`: for `modify_nsg` actions, parses the
-  agent reason string (regex) to extract rule name and port, then generates three real
-  `azurerm_network_security_rule` resource blocks (remove rule / restrict source IP / add deny
-  at higher priority). Resource group extracted from ARM ID. No more comment-only stubs.
-- `dashboard_api.py` — `GET /api/execution/{id}/terraform`: on-demand HCL generation for any
-  execution record with a verdict snapshot. Used by dashboard "Show Terraform Fix" button.
-  `POST /api/admin/reset`: dev/test wipe of local JSON files + in-memory state.
-- `EvaluationDrilldown.jsx` — `pr_created` status: action panel with Show Terraform Fix,
-  Fix in Azure Portal, Close PR / Ignore buttons. `manual_required` status: 4-button panel —
-  Create Terraform PR, Open in Azure Portal, Fix using Agent (two-step: preview commands
-  → confirm → execute via Azure SDK), Decline / Ignore.
-  `fetchTerraformStub()` lazy-loads and toggles the HCL code block inline.
-- `execution_gateway.py` — `_parse_arm_id()`: extracts resource_group/name/provider from ARM
-  IDs (falls back to `action.target.resource_group` for short-name resource IDs).
-  `_build_az_commands()`: generates human-readable `az` CLI commands for preview panel only.
-  `_execute_fix_via_sdk()`: live execution via Azure Python SDK (`azure.mgmt.network`,
-  `azure.mgmt.compute`, `azure.mgmt.resource`) with `DefaultAzureCredential` — works on
-  App Service (Managed Identity), local dev, and CI/CD; no `az` CLI dependency.
-  `create_pr_from_manual()`: reuses `_create_terraform_pr()` for manual_required records.
-  `generate_agent_fix_commands()`: pure-read preview. `execute_agent_fix()`: mock mode
-  simulates success; live mode calls `_execute_fix_via_sdk()` (Azure SDK, not subprocess).
-- `dashboard_api.py` re-flag logic: builds `examined_names` from `agent.scan_notes` after
-  each scan; if a `manual_required` resource was scanned and the agent found it clean,
-  the record is auto-dismissed ("flag-until-fixed" stops when the issue is actually resolved).
-- `terraform_pr_generator.py` — `_apply_nsg_fix_to_content()` runs two passes: (1) standalone
-  `resource "azurerm_network_security_rule"` blocks, (2) inline `security_rule {}` blocks
-  inside `resource "azurerm_network_security_group"`. Shared `_patch_block()` applies
-  `access = "Allow"` → `"Deny"`. `_find_and_patch_tf_file()` searches the IaC repo and
-  calls `repo.update_file()` on the existing file — not `create_file()` — so PRs contain
-  a real one-line diff instead of a stub.
+  `_run_agent_scan()` can emit each note as a `reasoning` SSE event.
+- `terraform_pr_generator.py` — `_apply_nsg_fix_to_content()` two-pass brace-counting walk:
+  (1) standalone `azurerm_network_security_rule` blocks, (2) inline `security_rule {}` blocks
+  inside `azurerm_network_security_group`. `_find_and_patch_tf_file()` calls `repo.update_file()`
+  on the existing file — real one-line diff, not a stub.
+- `execution_gateway.py` — `route_verdict()`: APPROVED verdicts always go to `manual_required`
+  (no auto-PR); IaC metadata stored so "Create Terraform PR" button works on demand.
+  `get_unresolved_proposals()` deduplicates by (resource_id, action_type), keeping oldest record.
+  `execute_agent_fix()` and `create_pr_from_manual()` accept `awaiting_review` and `pr_created`
+  in addition to `manual_required` — auto-approving ESCALATED records when user picks an action.
+  `_execute_fix_via_sdk()` uses `azure.mgmt.resource.resources.aio` (not `.aio` directly).
+- `dashboard_api.py` — `_get_resource_tags()` walks up to parent resource for sub-resource ARM
+  IDs (e.g. `.../securityRules/rule-name` → looks up parent NSG tags). Re-flag logic: strips
+  duplicate `[Unresolved since ...]` prefix; extracts NSG parent name for `/securityRules/`
+  ARM IDs so auto-dismiss matches correctly.
+- `EvaluationDrilldown.jsx` — `awaiting_review` (ESCALATED) and `manual_required` (APPROVED)
+  share the same 4-button panel: Create Terraform PR / Fix using Agent / Fix in Azure Portal /
+  Decline. Choosing any action on an ESCALATED record auto-approves it. `pr_created` panel:
+  Fix using Agent / Fix in Azure Portal / Close PR — "Show Terraform Fix" stub removed.
+- `historical_agent.py` — `_governance_history_boost()`: deterministic supplement that reads
+  `DecisionTracker.get_recent()` and adds +25 per ESCALATED / +5 per APPROVED decision for the
+  same `action_type` (capped at +60). Prevents Azure AI Search query variance from resetting
+  the historical score to 0 between runs on the same recurring issue.
 
 **Phase 20 — Async End-to-End Migration (complete)**
 
