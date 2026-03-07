@@ -4,7 +4,7 @@
 > picking up this project. It tells you exactly what is done, what is live,
 > and what comes next. Architecture and coding standards are in `CONTEXT.md`.
 
-**Last updated:** 2026-03-07 (Policy engine: removed POL-SEC-002/003 — reason_pattern on remediation actions was blocking the fix for the very issue the agent detected; 9 policies now; `reason_pattern` and `tags_absent` condition types retained in engine for future use; 596 tests passing)
+**Last updated:** 2026-03-07 (Phase 22H: Governance engine Rule 3.5 — HIGH violations now floor verdict at ESCALATED even when composite ≤ 25; fixes "score dilution" where high sri_policy was overwhelmed by low blast radius / cost / historical dims; `_detect_nsg_without_deny_all` in deploy_agent fixed to set `nsg_change_direction="restrict"`; producer contract tests in `test_deploy_agent.py`; end-to-end verdict floor test; 666 tests passing)
 **Active branch:** `main`
 **Demo verdict:** All 3 scenarios pass with real prod resource IDs (DENIED / APPROVED / ESCALATED)
 
@@ -14,12 +14,14 @@
 
 | Layer | Status | Backend |
 |-------|--------|---------|
-| Core models (`models.py`) | ✅ Complete | — |
-| Governance engine (SRI scoring) | ✅ Complete | — |
-| Policy agent | ✅ Complete + tested | `data/policies.json` |
-| Blast radius agent | ✅ Complete + LLM reasoning + live topology | Live: `ResourceGraphClient` (KQL + tags) + GPT-4.1 · Mock: `seed_resources.json` |
-| Historical agent | ✅ Complete + live search | Azure AI Search (BM25) + GPT-4.1 |
-| Financial agent | ✅ Complete + LLM reasoning + live cost | Live: `ResourceGraphClient` + Azure Retail Prices API · Mock: `seed_resources.json` |
+| Core models (`models.py`) | ✅ Complete | `GovernanceAdjustment` + `LLMGovernanceOutput` added (Phase 22) |
+| Governance engine (SRI scoring) | ✅ Complete | Critical-violation auto-DENY respects `llm_override` field on `PolicyViolation` |
+| Dangerous-port detection | ✅ Complete (Phase 22E) | POL-SEC-002 (CRITICAL) restored — fires on `nsg_change_direction="open"` only; remediation (restrict) never blocked |
+| Policy agent | ✅ Complete + tested | LLM now adjusts scores via `submit_governance_decision`; remediation intent detection |
+| Blast radius agent | ✅ Complete + LLM decision maker + live topology | Live: `ResourceGraphClient` (KQL + tags) + GPT-4.1 decision maker · Mock: `seed_resources.json` |
+| Historical agent | ✅ Complete + LLM decision maker + live search | Azure AI Search (BM25) + GPT-4.1 decision maker |
+| Financial agent | ✅ Complete + LLM decision maker + live cost | Live: `ResourceGraphClient` + Azure Retail Prices API · Mock: `seed_resources.json` |
+| LLM governance utilities | ✅ Complete (Phase 22C) | `src/governance_agents/_llm_governance.py` — guardrail clamping, parse (Pydantic-validated), format (guardrail note), `annotate_violations` (CRITICAL guardrail) |
 | Operational agent: deploy-agent | ✅ Complete | `data/seed_resources.json` + Resource Graph + NSG rules |
 | Generic Azure tools (`azure_tools.py`) | ✅ Complete | `src/infrastructure/azure_tools.py` |
 | Two-layer intelligence (Phase 12) | ✅ Complete | ops agents + GPT-4.1 investigation |
@@ -49,6 +51,7 @@
 | A2A operational clients | ✅ Complete | `A2ACardResolver` + `A2AClient` + `httpx` |
 | A2A agent registry | ✅ Complete | JSON (mock) / Cosmos DB (live) |
 | Execution Gateway & HITL (Phase 21) | ✅ Complete | `src/core/execution_gateway.py` + `terraform_pr_generator.py` — IaC-safe execution via GitHub PRs; JSON-durable `ExecutionRecord`; HITL Approve/Dismiss in dashboard; live Azure tag lookup for IaC detection; agent fix via `az` CLI (preview + execute); Create PR from `manual_required`; Decline/Ignore |
+| LLM-as-Decision-Maker (Phase 22) | ✅ Complete | All 4 governance agents rearchitected — LLM adjusts scores via `submit_governance_decision`; `_llm_governance.py` guardrails; remediation intent detection; 621 tests |
 
 ---
 
@@ -879,6 +882,37 @@ GovernanceVerdict → ExecutionGateway
 - `requirements.txt`: `PyGithub>=2.1.0` uncommented (required when `EXECUTION_GATEWAY_ENABLED=true`)
 
 **Test result: 551 passed, 0 failed** (+7 TestUnresolvedProposals; total +46 since Phase 21 start)
+
+---
+
+## Phase 22 — LLM-as-Decision-Maker (COMPLETE)
+
+### Problem
+All 4 governance agents used the LLM as a **narrator** — it called a deterministic tool,
+the tool computed the score, and the LLM wrote a summary paragraph. The score was 100%
+deterministic regardless of the LLM's understanding. This caused the SSH remediation bug:
+an ops agent describing "SSH open to 0.0.0.0/0 — fixing" triggered a CRITICAL policy violation
+via `reason_pattern` match, auto-DENIED the remediation.
+
+### Solution
+Rearchitected all 4 agents to make the LLM a **decision maker**:
+1. Deterministic rules run first → produce baseline score
+2. LLM receives: action + ops agent reasoning + full policies/context
+3. LLM calls new `submit_governance_decision` tool with adjusted score + justification
+4. Guardrail clamps LLM adjustment to +/-30 points from baseline
+5. Governance engine uses LLM-adjusted score
+
+### Files changed
+- `src/core/models.py` — `GovernanceAdjustment` + `LLMGovernanceOutput` models added
+- `src/governance_agents/_llm_governance.py` — new: `clamp_score()`, `parse_llm_decision()`, `format_adjustment_text()`
+- `src/governance_agents/policy_agent.py` — new `_AGENT_INSTRUCTIONS`, added `submit_governance_decision` tool, enriched prompt with full policy JSON + ops agent reason
+- `src/governance_agents/blast_radius_agent.py` — same pattern
+- `src/governance_agents/historical_agent.py` — same pattern
+- `src/governance_agents/financial_agent.py` — same pattern
+- `src/core/governance_engine.py` — critical-violation auto-DENY: `sri_policy >= 40` condition added (respects LLM override)
+- `tests/test_llm_governance.py` — 25 new tests: clamp_score, parse_llm_decision, format_adjustment_text, critical-violation softening
+
+**Test result: 621 passed, 0 failed** (+25 new tests for Phase 22)
 
 ---
 

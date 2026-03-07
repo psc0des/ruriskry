@@ -380,6 +380,11 @@ class DeployAgent:
                 ),
                 reason=reason,
                 urgency=urgency_enum,
+                # ADR (Phase 22F): DeployAgent is remediation-only — it detects dangerous
+                # NSG rules (e.g. SSH open to 0.0.0.0/0) and proposes to restrict them.
+                # "restrict" is always correct here. If future scope adds port-opening proposals,
+                # this logic must be updated to derive direction from the actual proposed delta.
+                nsg_change_direction="restrict" if action_type_enum == ActionType.MODIFY_NSG else None,
             )
             proposals_holder.append(proposal)
             name = resource_id.split("/")[-1]
@@ -440,6 +445,7 @@ class DeployAgent:
                     "Recommend adding deny-all rule to reduce attack surface."
                 ),
                 urgency=Urgency.HIGH,
+                nsg_change_direction="restrict",
             ),
             ProposedAction(
                 agent_id=_AGENT_ID,
@@ -503,6 +509,7 @@ class DeployAgent:
                     ),
                     reason=reason,
                     urgency=Urgency.MEDIUM,
+                    nsg_change_direction="restrict",
                 )
             )
             logger.info("DeployAgent: NSG without deny-all — '%s'", resource["name"])

@@ -95,17 +95,29 @@ _EXTRA_SPOF_SCORE: float = 10.0
 
 # System instructions for the framework agent (live mode only).
 _AGENT_INSTRUCTIONS = """\
-You are RuriSkry's Blast Radius Evaluator — a specialist in cloud
-infrastructure dependency analysis and risk assessment.
+You are RuriSkry's Blast Radius Governance Agent — an expert in cloud
+infrastructure dependency analysis with the authority to ADJUST risk scores.
 
-Your job:
-1. Call the `evaluate_blast_radius_rules` tool with the action JSON provided.
-2. Receive the deterministic risk score and affected-resource analysis.
-3. Write a concise, expert 2-3 sentence narrative that explains the blast radius
-   risk in plain English, highlighting the most important SPOFs or downstream
-   impacts.  Do NOT restate raw numbers; interpret them.
+## Your role
+You receive a proposed action and a BASELINE blast radius score from deterministic
+analysis. You reason about whether the score reflects true risk given full context.
 
-Always call the tool first before providing any analysis.
+## Process
+1. Call `evaluate_blast_radius_rules` to get the baseline score and affected resources.
+2. Reason about the true risk:
+   - Are the affected resources already degraded, making the blast radius smaller?
+   - Do SPOFs have undocumented redundancy not captured in the graph?
+   - Is this routine maintenance on a well-understood system (lower risk than score suggests)?
+   - Is the ops agent performing emergency remediation that justifies faster approval?
+   - Are there more downstream impacts than the dependency graph captured?
+3. Call `submit_governance_decision` with your adjusted score and justification.
+
+## Adjustment rules
+- You may adjust the baseline score by at most +/-30 points
+- Emergency remediations on critical infrastructure may warrant score reduction
+- Routine restarts of non-critical services may warrant score reduction
+- Actions affecting undocumented downstream services should warrant score increase
+- Provide a specific reason for each adjustment point change
 """
 
 
@@ -252,6 +264,7 @@ class BlastRadiusAgent:
 
         # ── Tool: deterministic rule-based evaluation ───────────────────
         result_holder: list[BlastRadiusResult] = []
+        llm_decision_holder: list[dict] = []
 
         @af.tool(
             name="evaluate_blast_radius_rules",
@@ -272,30 +285,66 @@ class BlastRadiusAgent:
             result_holder.append(r)
             return r.model_dump_json()
 
-        # ── Agent: LLM orchestrates tool call + synthesises reasoning ───
+        @af.tool(
+            name="submit_governance_decision",
+            description=(
+                "Submit your final governance decision after reviewing the baseline score. "
+                "adjusted_score must be within +/-30 of the baseline score. "
+                "Provide an adjustment entry for each score change with a clear reason."
+            ),
+        )
+        async def submit_governance_decision(
+            adjusted_score: float,
+            adjustments_json: str = "[]",
+            reasoning: str = "",
+            confidence: float = 0.8,
+        ) -> str:
+            """Record the LLM's governance decision with justification."""
+            import json as _json
+            try:
+                adjustments = _json.loads(adjustments_json)
+            except Exception:
+                adjustments = []
+            llm_decision_holder.append({
+                "adjusted_score": adjusted_score,
+                "adjustments": adjustments,
+                "reasoning": reasoning,
+                "confidence": confidence,
+            })
+            return "Decision recorded."
+
+        # ── Agent: LLM orchestrates tool call + decides score ───────────
         agent = client.as_agent(
             name="blast-radius-evaluator",
             instructions=_AGENT_INSTRUCTIONS,
-            tools=[evaluate_blast_radius_rules],
+            tools=[evaluate_blast_radius_rules, submit_governance_decision],
         )
 
         from src.infrastructure.llm_throttle import run_with_throttle
-        response = await run_with_throttle(
-            agent.run,
-            f"Evaluate the blast radius risk for this proposed action.\n"
-            f"Action JSON: {action.model_dump_json()}",
+        from src.governance_agents._llm_governance import parse_llm_decision
+
+        prompt = (
+            f"## Proposed Action\n{action.model_dump_json()}\n\n"
+            f"## Ops Agent's Reasoning\n{action.reason}\n\n"
+            "INSTRUCTIONS: First call evaluate_blast_radius_rules to get the baseline score. "
+            "Reason about whether the blast radius truly reflects real-world risk given the "
+            "ops agent's intent and context. Then call submit_governance_decision with your "
+            "adjusted score and justification."
         )
+        await run_with_throttle(agent.run, prompt)
 
         if result_holder:
             base = result_holder[-1]
-            # Enrich the rule-based reasoning with the LLM's synthesis
-            enriched_reasoning = (
-                base.reasoning
-                + "\n\nAgent Framework Analysis (GPT-4.1): "
-                + response.text
+            adjusted_score, adjustment_text, _ = parse_llm_decision(
+                llm_decision_holder, base.sri_infrastructure
             )
             return BlastRadiusResult(
-                **{**base.model_dump(), "reasoning": enriched_reasoning}
+                sri_infrastructure=adjusted_score,
+                affected_resources=base.affected_resources,
+                affected_services=base.affected_services,
+                single_points_of_failure=base.single_points_of_failure,
+                availability_zones_impacted=base.availability_zones_impacted,
+                reasoning=base.reasoning + adjustment_text,
             )
 
         # Tool was never called — return plain rule-based result (async to avoid blocking)

@@ -118,17 +118,29 @@ _OVER_OPT_THRESHOLD: int = 1
 
 # System instructions for the framework agent (live mode only).
 _AGENT_INSTRUCTIONS = """\
-You are RuriSkry's Financial Impact Assessor — a specialist in cloud
-cost analysis, FinOps, and financial risk assessment for infrastructure changes.
+You are RuriSkry's Financial Governance Agent — an expert in cloud FinOps with
+the authority to ADJUST financial risk scores.
 
-Your job:
-1. Call the `evaluate_financial_rules` tool with the action JSON.
-2. Receive the deterministic financial impact analysis.
-3. Write a concise 2-3 sentence narrative explaining the financial risk.
-   Highlight any over-optimisation risk, cost uncertainty, or annualised impact.
-   Do NOT restate raw numbers; interpret what they mean for the business.
+## Your role
+You receive a baseline financial risk score and cost analysis. You reason about
+whether the financial risk is accurately captured given the full context.
 
-Always call the tool first before providing any analysis.
+## Process
+1. Call `evaluate_financial_rules` to get the baseline score and cost analysis.
+2. Reason about the true financial risk:
+   - Is the cost estimate based on real data or uncertain heuristics?
+   - Is the over-optimisation risk real, or are the "dependent services" actually inactive?
+   - For cost-saving actions: does the saving justify the operational risk?
+   - For cost-increasing actions: is the spend justified by security or reliability needs?
+   - Is the ops agent performing a remediation that incidentally increases cost? (lower risk)
+3. Call `submit_governance_decision` with your adjusted score and justification.
+
+## Adjustment rules
+- You may adjust the baseline score by at most +/-30 points
+- Security remediations that increase cost should receive reduced financial risk scores
+- Cost savings with uncertain estimates should receive slightly increased scores
+- Over-optimisation risk on truly critical services should be increased
+- Provide a specific reason for each adjustment
 """
 
 
@@ -264,6 +276,7 @@ class FinancialImpactAgent:
         )
 
         result_holder: list[FinancialResult] = []
+        llm_decision_holder: list[dict] = []
 
         @af.tool(
             name="evaluate_financial_rules",
@@ -284,28 +297,64 @@ class FinancialImpactAgent:
             result_holder.append(r)
             return r.model_dump_json()
 
+        @af.tool(
+            name="submit_governance_decision",
+            description=(
+                "Submit your final governance decision after reviewing the baseline score. "
+                "adjusted_score must be within +/-30 of the baseline score. "
+                "Provide an adjustment entry for each score change with a clear reason."
+            ),
+        )
+        async def submit_governance_decision(
+            adjusted_score: float,
+            adjustments_json: str = "[]",
+            reasoning: str = "",
+            confidence: float = 0.8,
+        ) -> str:
+            """Record the LLM's governance decision with justification."""
+            import json as _json
+            try:
+                adjustments = _json.loads(adjustments_json)
+            except Exception:
+                adjustments = []
+            llm_decision_holder.append({
+                "adjusted_score": adjusted_score,
+                "adjustments": adjustments,
+                "reasoning": reasoning,
+                "confidence": confidence,
+            })
+            return "Decision recorded."
+
         agent = client.as_agent(
             name="financial-impact-assessor",
             instructions=_AGENT_INSTRUCTIONS,
-            tools=[evaluate_financial_rules],
+            tools=[evaluate_financial_rules, submit_governance_decision],
         )
 
         from src.infrastructure.llm_throttle import run_with_throttle
-        response = await run_with_throttle(
-            agent.run,
-            f"Evaluate the financial risk for this proposed action.\n"
-            f"Action JSON: {action.model_dump_json()}",
+        from src.governance_agents._llm_governance import parse_llm_decision
+
+        prompt = (
+            f"## Proposed Action\n{action.model_dump_json()}\n\n"
+            f"## Ops Agent's Reasoning\n{action.reason}\n\n"
+            "INSTRUCTIONS: First call evaluate_financial_rules to get the baseline score "
+            "and cost analysis. Reason about whether the financial risk accurately reflects "
+            "the business impact given the ops agent's intent. "
+            "Then call submit_governance_decision with your adjusted score and justification."
         )
+        await run_with_throttle(agent.run, prompt)
 
         if result_holder:
             base = result_holder[-1]
-            enriched_reasoning = (
-                base.reasoning
-                + "\n\nAgent Framework Analysis (GPT-4.1): "
-                + response.text
+            adjusted_score, adjustment_text, _ = parse_llm_decision(
+                llm_decision_holder, base.sri_cost
             )
             return FinancialResult(
-                **{**base.model_dump(), "reasoning": enriched_reasoning}
+                sri_cost=adjusted_score,
+                immediate_monthly_change=base.immediate_monthly_change,
+                projection_90_day=base.projection_90_day,
+                over_optimization_risk=base.over_optimization_risk,
+                reasoning=base.reasoning + adjustment_text,
             )
 
         # Tool was never called — return plain rule-based result (async to avoid blocking)

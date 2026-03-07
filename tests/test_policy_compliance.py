@@ -727,8 +727,186 @@ class TestPolicyComplianceAgent:
     # Updated score / metadata checks
     # ------------------------------------------------------------------
 
-    async def test_total_policies_is_nine(self, agent):
-        """Production policy set should have 9 policies."""
+    async def test_total_policies_is_eleven(self, agent):
+        """Production policy set should have 11 policies (POL-SEC-003 added in Phase 22G)."""
         action = _make_action()
         result = await agent.evaluate(action, now=_WEDNESDAY_NOON)
-        assert result.total_policies_checked == 9
+        assert result.total_policies_checked == 11
+
+
+# ---------------------------------------------------------------------------
+# POL-SEC-002 — structured nsg_change_direction condition (Phase 22E)
+# ---------------------------------------------------------------------------
+
+class TestNsgChangeDirectionPolicy:
+    """POL-SEC-002 fires only when nsg_change_direction='open'.
+
+    Validates the structured-intent approach: the policy detects dangerous
+    conditions; the agent declares its intent via nsg_change_direction.
+    Remediation proposals (restrict) are never blocked by this rule.
+    """
+
+    @pytest.fixture(scope="class")
+    def agent(self):
+        return PolicyComplianceAgent()
+
+    def _nsg_action(self, direction, reason: str = "NSG change") -> ProposedAction:
+        return ProposedAction(
+            agent_id="test",
+            action_type=ActionType.MODIFY_NSG,
+            target=ActionTarget(
+                resource_id="/subscriptions/x/resourceGroups/rg/providers/"
+                            "Microsoft.Network/networkSecurityGroups/nsg-1",
+                resource_type="Microsoft.Network/networkSecurityGroups",
+            ),
+            reason=reason,
+            urgency=Urgency.HIGH,
+            nsg_change_direction=direction,
+        )
+
+    async def test_open_direction_triggers_critical_pol_sec_002(self, agent):
+        """OPENING dangerous ports → POL-SEC-002 CRITICAL fires."""
+        action = self._nsg_action("open", "Opening SSH port 22 to 0.0.0.0/0 for emergency access")
+        result = await agent.evaluate(action, resource_metadata={"tags": {}, "environment": "production"})
+        ids = [v.policy_id for v in result.violations]
+        assert "POL-SEC-002" in ids
+        crit = [v for v in result.violations if v.policy_id == "POL-SEC-002"]
+        assert crit[0].severity == PolicySeverity.CRITICAL
+
+    async def test_restrict_direction_does_not_trigger_pol_sec_002(self, agent):
+        """RESTRICTING dangerous ports (remediation) → POL-SEC-002 does NOT fire."""
+        action = self._nsg_action("restrict", "Found SSH open to 0.0.0.0/0, restricting to corporate range")
+        result = await agent.evaluate(action, resource_metadata={"tags": {}, "environment": "production"})
+        ids = [v.policy_id for v in result.violations]
+        assert "POL-SEC-002" not in ids
+
+    async def test_no_direction_does_not_trigger_pol_sec_002(self, agent):
+        """direction=None (unspecified) → POL-SEC-002 does NOT fire (safe default)."""
+        action = self._nsg_action(None, "Modifying NSG rule")
+        result = await agent.evaluate(action, resource_metadata={"tags": {}, "environment": "production"})
+        ids = [v.policy_id for v in result.violations]
+        assert "POL-SEC-002" not in ids
+
+    async def test_paired_sri_scores_differ(self, agent):
+        """Opening SSH scores higher (more risk) than restricting SSH."""
+        open_action = self._nsg_action("open", "Opening SSH port 22 to 0.0.0.0/0")
+        restrict_action = self._nsg_action("restrict", "Restricting SSH port 22 from 0.0.0.0/0")
+        open_result = await agent.evaluate(open_action, resource_metadata={"tags": {}, "environment": "production"})
+        restrict_result = await agent.evaluate(restrict_action, resource_metadata={"tags": {}, "environment": "production"})
+        assert open_result.sri_policy > restrict_result.sri_policy
+
+
+# ---------------------------------------------------------------------------
+# POL-SEC-003 — nsg_direction_unset condition (Phase 22G)
+# ---------------------------------------------------------------------------
+
+class TestNsgDirectionUnsetPolicy:
+    """POL-SEC-003 fires when modify_nsg is proposed without nsg_change_direction.
+
+    Validates that omitting the field is surfaced explicitly in the audit trail
+    rather than silently passing as a "safe" unknown. Severity is HIGH (not
+    CRITICAL) because intent is unknown, not confirmed dangerous.
+    """
+
+    @pytest.fixture(scope="class")
+    def agent(self):
+        return PolicyComplianceAgent()
+
+    def _nsg_action(self, direction, reason: str = "NSG change") -> ProposedAction:
+        return ProposedAction(
+            agent_id="test",
+            action_type=ActionType.MODIFY_NSG,
+            target=ActionTarget(
+                resource_id="/subscriptions/x/resourceGroups/rg/providers/"
+                            "Microsoft.Network/networkSecurityGroups/nsg-1",
+                resource_type="Microsoft.Network/networkSecurityGroups",
+            ),
+            reason=reason,
+            urgency=Urgency.MEDIUM,
+            nsg_change_direction=direction,
+        )
+
+    async def test_unset_direction_triggers_pol_sec_003(self, agent):
+        """direction=None → POL-SEC-003 HIGH fires (producer omitted intent)."""
+        action = self._nsg_action(None, "Modifying NSG rule")
+        result = await agent.evaluate(action, resource_metadata={"tags": {}, "environment": "production"})
+        ids = [v.policy_id for v in result.violations]
+        assert "POL-SEC-003" in ids
+        violation = next(v for v in result.violations if v.policy_id == "POL-SEC-003")
+        assert violation.severity == PolicySeverity.HIGH
+
+    async def test_open_direction_does_not_trigger_pol_sec_003(self, agent):
+        """direction='open' → POL-SEC-003 does NOT fire (intent was declared)."""
+        action = self._nsg_action("open", "Opening SSH port 22 to 0.0.0.0/0")
+        result = await agent.evaluate(action, resource_metadata={"tags": {}, "environment": "production"})
+        ids = [v.policy_id for v in result.violations]
+        assert "POL-SEC-003" not in ids
+
+    async def test_restrict_direction_does_not_trigger_pol_sec_003(self, agent):
+        """direction='restrict' → POL-SEC-003 does NOT fire (intent was declared)."""
+        action = self._nsg_action("restrict", "Restricting SSH source to corporate IP")
+        result = await agent.evaluate(action, resource_metadata={"tags": {}, "environment": "production"})
+        ids = [v.policy_id for v in result.violations]
+        assert "POL-SEC-003" not in ids
+
+
+# ---------------------------------------------------------------------------
+# End-to-end: modify_nsg + None direction verdict floor (Phase 22H)
+# ---------------------------------------------------------------------------
+
+class TestNsgNoneDirectionVerdictFloor:
+    """End-to-end: modify_nsg with no direction declared must not be APPROVED.
+
+    Verifies that Rule 3.5 in GovernanceDecisionEngine (HIGH violation →
+    ESCALATED floor) ensures a human reviews any NSG change where intent
+    was not declared, even when the composite score is low.
+    """
+
+    @pytest.fixture(scope="class")
+    def agent(self):
+        return PolicyComplianceAgent()
+
+    async def test_modify_nsg_none_direction_verdict_is_at_least_escalated(self, agent):
+        """modify_nsg + direction=None → policy result has HIGH violations →
+        GovernanceDecisionEngine Rule 3.5 must produce ESCALATED, not APPROVED."""
+        from src.core.governance_engine import GovernanceDecisionEngine
+        from src.core.models import (
+            BlastRadiusResult,
+            FinancialResult,
+            HistoricalResult,
+            SRIVerdict,
+        )
+
+        # Minimal action: NSG change, no direction, low risk on all other dims
+        action = ProposedAction(
+            agent_id="test",
+            action_type=ActionType.MODIFY_NSG,
+            target=ActionTarget(
+                resource_id="/subscriptions/x/resourceGroups/rg/providers/"
+                            "Microsoft.Network/networkSecurityGroups/nsg-test",
+                resource_type="Microsoft.Network/networkSecurityGroups",
+            ),
+            reason="Updating NSG rule",
+            urgency=Urgency.LOW,
+            nsg_change_direction=None,
+        )
+
+        policy_result = await agent.evaluate(
+            action, resource_metadata={"tags": {}, "environment": "dev"}
+        )
+
+        # Simulate minimal scores on other dimensions
+        engine = GovernanceDecisionEngine()
+        verdict = engine.evaluate(
+            action,
+            blast_radius=BlastRadiusResult(sri_infrastructure=0),
+            policy=policy_result,
+            historical=HistoricalResult(sri_historical=0),
+            financial=FinancialResult(sri_cost=0),
+        )
+
+        # Must be at least ESCALATED — APPROVED is wrong because HIGH violations exist
+        assert verdict.decision != SRIVerdict.APPROVED, (
+            f"Expected ESCALATED or DENIED for modify_nsg with no direction, "
+            f"but got APPROVED (composite={verdict.skry_risk_index.sri_composite})"
+        )

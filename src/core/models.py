@@ -65,6 +65,7 @@ class ProposedAction(BaseModel):
     reason: str
     urgency: Urgency = Urgency.LOW
     projected_savings_monthly: Optional[float] = None
+    nsg_change_direction: Optional[str] = None  # "open" | "restrict" — set by NSG agents
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -102,6 +103,7 @@ class PolicyViolation(BaseModel):
     name: str
     rule: str
     severity: PolicySeverity
+    llm_override: Optional[str] = None  # Set when LLM determined violation doesn't truly apply
 
 
 class SimilarIncident(BaseModel):
@@ -179,6 +181,25 @@ class GovernanceVerdict(BaseModel):
         "auto_approve": 25,
         "human_review": 60,
     }
+
+
+# ============================================
+# LLM Governance Output Models (Phase 22)
+# ============================================
+
+class GovernanceAdjustment(BaseModel):
+    """A single score adjustment made by the LLM governance agent."""
+    reason: str
+    delta: float
+    policy_id: Optional[str] = None
+
+
+class LLMGovernanceOutput(BaseModel):
+    """Structured output from an LLM governance agent."""
+    adjusted_score: float
+    adjustments: list[GovernanceAdjustment] = []
+    reasoning: str
+    confidence: float = 0.8
 
 
 # ============================================

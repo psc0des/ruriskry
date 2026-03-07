@@ -102,6 +102,7 @@ async def skry_evaluate_action(
     current_monthly_cost: float | None = None,
     current_sku: str | None = None,
     proposed_sku: str | None = None,
+    nsg_change_direction: str | None = None,
 ) -> dict:
     """Evaluate a proposed infrastructure action through RuriSkry governance.
 
@@ -125,6 +126,10 @@ async def skry_evaluate_action(
             if known.
         current_sku: Current VM/resource SKU, if applicable.
         proposed_sku: Proposed new SKU after the action, if applicable.
+        nsg_change_direction: For ``modify_nsg`` actions only. ``"open"`` if
+            the change adds or broadens inbound access (triggers CRITICAL
+            dangerous-port check). ``"restrict"`` or ``None`` if the change
+            restricts or remediates access (no CRITICAL trigger).
 
     Returns:
         Dict with keys:
@@ -149,6 +154,7 @@ async def skry_evaluate_action(
             ),
             reason=reason,
             urgency=Urgency(urgency),
+            nsg_change_direction=nsg_change_direction,
         )
     except ValueError as exc:
         return {"error": f"Invalid parameter: {exc}"}

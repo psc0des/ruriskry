@@ -10,7 +10,10 @@ Microsoft Agent Framework ``Agent`` backed by Azure OpenAI GPT-4.1.
 
 The LLM agent calls our deterministic ``evaluate_policy_rules`` tool,
 which checks all governance policies and returns structured violation
-data.  The LLM synthesises a plain-English compliance summary.
+data.  The LLM then acts as a decision-maker: it evaluates the context
+(ops agent intent, remediation vs. creation) and calls
+``submit_governance_decision`` with an adjusted score and justification.
+The adjusted score is guardrail-clamped to +/-30 pts of the baseline.
 
 In mock mode the framework is skipped — only deterministic evaluation runs.
 This means the agent works fully offline in tests and development.
@@ -40,6 +43,7 @@ Condition types (all must be True for a violation)
 * blocked_windows   — current time is inside a blocked change window
 * cost_impact_threshold — estimated cost change exceeds threshold
 * reason_pattern    — action.reason matches a regex pattern (case-insensitive)
+* nsg_change_direction — action.nsg_change_direction equals the required value ("open" | "restrict")
 """
 
 import json
@@ -86,18 +90,45 @@ _DAY_MAP: dict[str, int] = {
 
 # System instructions for the framework agent (live mode only).
 _AGENT_INSTRUCTIONS = """\
-You are RuriSkry's Policy Compliance Evaluator — a specialist in cloud
-governance, regulatory compliance, and change management policy enforcement.
+You are RuriSkry's Policy Compliance Governance Agent — an expert in cloud
+governance with the authority to ADJUST compliance scores based on contextual reasoning.
 
-Your job:
-1. Call the `evaluate_policy_rules` tool with the action JSON and any resource
-   metadata provided.
-2. Receive the deterministic policy violation report.
-3. Write a concise 2-3 sentence compliance summary in plain English.
-   Highlight which policies were violated and the compliance risk they represent.
-   Do NOT restate raw scores; interpret the compliance implications.
+## Your role
+You receive a proposed infrastructure action along with a BASELINE compliance
+score computed by deterministic policy rules. Your job is to reason about whether
+that baseline score is appropriate given the FULL CONTEXT, including:
 
-Always call the tool first before providing any analysis.
+- The ops agent's INTENT (why it proposed this action)
+- Whether the action REMEDIATES a problem vs. CREATES one
+- The specific policies violated and whether they truly apply
+- Edge cases the deterministic rules cannot handle
+
+## Process
+1. Call the `evaluate_policy_rules` tool to get the deterministic baseline score.
+2. Review the baseline violations carefully.
+3. For each violation, reason about whether it truly applies given the context:
+   - Is the ops agent trying to FIX the issue the policy is designed to prevent?
+   - Is the policy matching on a DESCRIPTION of a problem rather than the CREATION of one?
+   - Are there mitigating factors (tags, environment, time) that the rules missed?
+4. Call `submit_governance_decision` with your adjusted score and justification.
+
+## Adjustment rules
+- You may adjust the baseline score by at most +/-30 points
+- Adjustments MUST have clear justification
+- When an ops agent is REMEDIATING a known issue, consider reducing the score
+- When context suggests HIGHER risk than rules detected, increase the score
+- If the baseline is correct, set adjusted_score equal to the baseline
+- When overriding a specific policy violation, include its policy_id in your adjustment
+  so the audit trail can annotate which violation was overridden
+  (e.g. {"reason": "Remediation intent", "delta": -40, "policy_id": "POL-DR-001"})
+
+## Critical: Remediation Intent Detection
+If the ops agent's reason text DESCRIBES a security problem it found and wants to fix,
+that is REMEDIATION INTENT — not a policy violation. Examples:
+- "Found SSH port 22 open to 0.0.0.0/0, restricting source" = REMEDIATION (reduce score)
+- "Opening SSH port 22 to 0.0.0.0/0" = CREATING a violation (keep or raise score)
+
+Always distinguish between describing a problem to fix it vs. describing a problem to create it.
 """
 
 
@@ -110,7 +141,8 @@ class PolicyComplianceAgent:
     """Evaluates proposed actions against organisational governance policies.
 
     In live mode the Microsoft Agent Framework drives GPT-4.1 to call the
-    deterministic tool and synthesise a compliance narrative.
+    deterministic tool, evaluate context (remediation intent, policy applicability),
+    and submit an adjusted score via ``submit_governance_decision``.
 
     Usage::
 
@@ -211,6 +243,7 @@ class PolicyComplianceAgent:
         )
 
         result_holder: list[PolicyResult] = []
+        llm_decision_holder: list[dict] = []
 
         @af.tool(
             name="evaluate_policy_rules",
@@ -220,44 +253,89 @@ class PolicyComplianceAgent:
                 "violations list, total_policies_checked, policies_passed, and reasoning."
             ),
         )
-        async def evaluate_policy_rules(action_json: str, metadata_json: str = "{}") -> str:
-            """Check all governance policies against the proposed action."""
+        async def evaluate_policy_rules(action_json: str) -> str:
+            """Check all governance policies against the proposed action.
+
+            Resource metadata is provided by the system via closure — the LLM
+            does not need to supply it. This ensures the evaluation always uses
+            the real resource state, not whatever the LLM might guess.
+            """
             try:
                 a = ProposedAction.model_validate_json(action_json)
             except Exception:
                 a = action
-            try:
-                meta = json.loads(metadata_json) if metadata_json else resource_metadata
-            except Exception:
-                meta = resource_metadata
-            r = self._evaluate_rules(a, meta, now)
+            r = self._evaluate_rules(a, resource_metadata, now)
             result_holder.append(r)
             return r.model_dump_json()
+
+        @af.tool(
+            name="submit_governance_decision",
+            description=(
+                "Submit your final governance decision after reviewing the baseline score. "
+                "adjusted_score must be within +/-30 of the baseline score. "
+                "Provide an adjustment entry for each score change with a clear reason."
+            ),
+        )
+        async def submit_governance_decision(
+            adjusted_score: float,
+            adjustments_json: str = "[]",
+            reasoning: str = "",
+            confidence: float = 0.8,
+        ) -> str:
+            """Record the LLM's governance decision with justification."""
+            try:
+                adjustments = json.loads(adjustments_json)
+            except Exception:
+                adjustments = []
+            llm_decision_holder.append({
+                "adjusted_score": adjusted_score,
+                "adjustments": adjustments,
+                "reasoning": reasoning,
+                "confidence": confidence,
+            })
+            return "Decision recorded."
 
         agent = client.as_agent(
             name="policy-compliance-evaluator",
             instructions=_AGENT_INSTRUCTIONS,
-            tools=[evaluate_policy_rules],
+            tools=[evaluate_policy_rules, submit_governance_decision],
         )
 
         from src.infrastructure.llm_throttle import run_with_throttle
+        from src.governance_agents._llm_governance import parse_llm_decision, annotate_violations
+
         meta_str = json.dumps(resource_metadata or {})
-        response = await run_with_throttle(
-            agent.run,
-            f"Evaluate policy compliance for this proposed action.\n"
-            f"Action JSON: {action.model_dump_json()}\n"
-            f"Resource metadata: {meta_str}",
+        policies_summary = json.dumps(self._policies, indent=2)
+        prompt = (
+            f"## Proposed Action\n{action.model_dump_json()}\n\n"
+            f"## Ops Agent's Reasoning\n{action.reason}\n\n"
+            f"## Resource Metadata\n{meta_str}\n\n"
+            f"## Organization Policies\n{policies_summary}\n\n"
+            "INSTRUCTIONS: First call evaluate_policy_rules to get the baseline score. "
+            "Reason about each violation and whether it truly applies given the ops agent's intent. "
+            "Then call submit_governance_decision with your adjusted score and justification."
         )
+        await run_with_throttle(agent.run, prompt)
 
         if result_holder:
             base = result_holder[-1]
-            enriched_reasoning = (
-                base.reasoning
-                + "\n\nAgent Framework Analysis (GPT-4.1): "
-                + response.text
+            adjusted_score, adjustment_text, adj_list = parse_llm_decision(
+                llm_decision_holder, base.sri_policy
             )
+
+            # Annotate violations with LLM override reasons.
+            # CRITICAL violations require explicit policy_id targeting — generic
+            # reasons only apply to non-CRITICAL violations (safety guardrail).
+            violations = annotate_violations(
+                base.violations, adj_list, base.sri_policy, adjusted_score
+            )
+
             return PolicyResult(
-                **{**base.model_dump(), "reasoning": enriched_reasoning}
+                sri_policy=adjusted_score,
+                violations=violations,
+                total_policies_checked=base.total_policies_checked,
+                policies_passed=base.policies_passed,
+                reasoning=base.reasoning + adjustment_text,
             )
 
         return self._evaluate_rules(action, resource_metadata, now)
@@ -347,6 +425,23 @@ class PolicyComplianceAgent:
         # -- Reason pattern (regex) ----------------------------------------
         if "reason_pattern" in conditions:
             checks.append(self._reason_matches(action.reason, conditions["reason_pattern"]))
+
+        # -- NSG change direction ----------------------------------------
+        # Fires only when the agent explicitly declared the change opens access.
+        # If nsg_change_direction is None or "restrict", this condition is False
+        # and the policy does NOT fire — remediation proposals are not blocked.
+        if "nsg_change_direction" in conditions:
+            checks.append(
+                getattr(action, "nsg_change_direction", None) == conditions["nsg_change_direction"]
+            )
+
+        # -- NSG direction unset -----------------------------------------
+        # Fires when nsg_change_direction is missing (None) on a modify_nsg action.
+        # Used by POL-SEC-003 to surface "producer did not declare intent" explicitly
+        # in the audit trail. Severity is HIGH (not CRITICAL) because we do not know
+        # whether the change opens or restricts access.
+        if conditions.get("nsg_direction_unset"):
+            checks.append(getattr(action, "nsg_change_direction", None) is None)
 
         # -- Required tags absent ------------------------------------------
         if "tags_absent" in conditions:

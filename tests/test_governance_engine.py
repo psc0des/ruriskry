@@ -186,11 +186,16 @@ class TestSRIScoring:
         assert "critical" in verdict.reason.lower()
 
     def test_critical_violation_id_appears_in_reason(self, engine):
-        """The denying policy ID must be named in the reason string."""
+        """The denying policy ID must be named in the reason string.
+
+        Uses sri_policy=40 (realistic deterministic score for one CRITICAL violation).
+        sri_policy=0 + CRITICAL can only happen if the LLM overrode the score,
+        which intentionally suppresses the auto-DENY rule.
+        """
         action = _make_action()
         blast = BlastRadiusResult(sri_infrastructure=0)
         policy_r = PolicyResult(
-            sri_policy=0,
+            sri_policy=40,
             violations=[_critical_violation("POL-DR-001")],
         )
         hist = HistoricalResult(sri_historical=0)
@@ -198,12 +203,54 @@ class TestSRIScoring:
         verdict = engine.evaluate(action, blast, policy_r, hist, fin)
         assert "POL-DR-001" in verdict.reason
 
-    def test_high_violation_does_not_override_score(self, engine):
-        """HIGH severity violation does not trigger the critical override rule."""
+    def test_high_violation_floors_verdict_at_escalated(self, engine):
+        """HIGH severity violation floors the verdict at ESCALATED (Rule 3.5).
+
+        Even when composite=0 (all other dimensions minimal), a non-overridden
+        HIGH violation must produce ESCALATED so a human reviews the action.
+        This prevents "score dilution" where high sri_policy is overwhelmed by
+        low values in infrastructure, historical, and cost dimensions.
+        """
         action = _make_action()
         blast = BlastRadiusResult(sri_infrastructure=0)
-        # sri_policy=0 → composite=0 → would be APPROVED without override
         policy_r = PolicyResult(sri_policy=0, violations=[_high_violation()])
+        hist = HistoricalResult(sri_historical=0)
+        fin = FinancialResult(sri_cost=0)
+        verdict = engine.evaluate(action, blast, policy_r, hist, fin)
+        assert verdict.decision == SRIVerdict.ESCALATED
+        assert _high_violation().policy_id in verdict.reason
+
+    def test_high_violation_llm_overridden_does_not_force_escalated(self, engine):
+        """HIGH violation annotated with llm_override is excluded from Rule 3.5."""
+        from src.core.models import PolicyViolation
+        action = _make_action()
+        blast = BlastRadiusResult(sri_infrastructure=0)
+        overridden = PolicyViolation(
+            policy_id="POL-SEC-001",
+            name="NSG Change",
+            rule="NSG change requires review",
+            severity=PolicySeverity.HIGH,
+            llm_override="LLM determined this is a safe remediation action",
+        )
+        policy_r = PolicyResult(sri_policy=0, violations=[overridden])
+        hist = HistoricalResult(sri_historical=0)
+        fin = FinancialResult(sri_cost=0)
+        verdict = engine.evaluate(action, blast, policy_r, hist, fin)
+        # LLM explicitly overrode the HIGH violation; composite=0 → APPROVED
+        assert verdict.decision == SRIVerdict.APPROVED
+
+    def test_medium_violation_does_not_force_escalated(self, engine):
+        """MEDIUM violations do NOT trigger Rule 3.5 — only HIGH and above do."""
+        from src.core.models import PolicyViolation
+        action = _make_action()
+        blast = BlastRadiusResult(sri_infrastructure=0)
+        medium = PolicyViolation(
+            policy_id="POL-CHG-001",
+            name="Change Window",
+            rule="No changes on weekends",
+            severity=PolicySeverity.MEDIUM,
+        )
+        policy_r = PolicyResult(sri_policy=0, violations=[medium])
         hist = HistoricalResult(sri_historical=0)
         fin = FinancialResult(sri_cost=0)
         verdict = engine.evaluate(action, blast, policy_r, hist, fin)

@@ -27,9 +27,12 @@ RuriSkryPipeline.evaluate(action)
     ▼
 GovernanceDecisionEngine.evaluate()
     │  SRI Composite = weighted sum of 4 dimensions
-    │  APPROVED  if composite ≤ 25
-    │  ESCALATED if 25 < composite ≤ 60
-    │  DENIED    if composite > 60 OR any critical policy violation
+    │  Decision rules (priority order):
+    │  1. DENIED    if CRITICAL policy violation (not llm_override)
+    │  2. DENIED    if composite > 60
+    │  3. ESCALATED if composite > 25
+    │  4. ESCALATED if any HIGH violation (not llm_override) — Rule 3.5 verdict floor
+    │  5. APPROVED  otherwise
     │
     ▼
 DecisionTracker.record(verdict)     ← writes to Cosmos DB (live) / JSON (mock)
@@ -99,9 +102,15 @@ boundary — minimal overhead. Used by `demo.py` and all unit tests.
    MCP-capable agent (Claude Desktop, Copilot, custom agents) can call RuriSkry without
    SDK changes.
 
-4. **Microsoft Agent Framework** — in live mode, each agent is backed by GPT-4.1 (via
-   `agent-framework-core==1.0.0rc2`). The LLM calls a deterministic `@af.tool`, then synthesises
-   a human-readable reasoning narrative. Mock mode bypasses the framework entirely (no Azure needed).
+4. **LLM-as-Decision-Maker (Phase 22)** — in live mode, each governance agent uses GPT-4.1 as
+   an **active decision maker**, not a narrator. The flow: (1) deterministic rules run and produce
+   a baseline score; (2) the LLM receives the baseline + full policy definitions + ops agent's
+   reasoning; (3) the LLM calls `submit_governance_decision` with an adjusted score and per-adjustment
+   justification; (4) a guardrail (`_llm_governance.py`) clamps the adjustment to +/-30 points from
+   baseline so hallucination cannot dominate. This enables **remediation intent detection**: when an
+   ops agent describes a security issue it is fixing, the LLM can reduce the policy score rather than
+   blocking the remediation. Mock mode bypasses the framework entirely — deterministic baseline only
+   (all tests pass unchanged).
 
 5. **DefaultAzureCredential (sync vs async, lifecycle)** — sync clients use
    `azure.identity.DefaultAzureCredential`; async clients (`.aio.*` packages) use
@@ -130,10 +139,15 @@ boundary — minimal overhead. Used by `demo.py` and all unit tests.
 
 | Agent | SRI Dimension | Data Source |
 |---|---|---|
-| `BlastRadiusAgent` | Infrastructure (0.30) | **Live:** `ResourceGraphClient` — KQL topology (tag + NSG join) · **Mock:** `seed_resources.json` |
-| `PolicyComplianceAgent` | Policy (0.25) | `policies.json` — 9 production policies (DR, NSG change control, tag enforcement, change windows, cost, critical/shared resource protection, prod deletion/downgrade protection) |
-| `HistoricalPatternAgent` | Historical (0.25) | Azure AI Search / `seed_incidents.json` |
-| `FinancialImpactAgent` | Cost (0.20) | **Live:** `ResourceGraphClient` + Azure Retail Prices API · **Mock:** `seed_resources.json` |
+| `BlastRadiusAgent` | Infrastructure (0.30) | **Live:** `ResourceGraphClient` (KQL topology) + GPT-4.1 decision maker · **Mock:** `seed_resources.json` |
+| `PolicyComplianceAgent` | Policy (0.25) | `policies.json` — 11 production policies · GPT-4.1 decision maker with remediation intent detection · structured `nsg_change_direction` field distinguishes opening from restricting ports |
+| `HistoricalPatternAgent` | Historical (0.25) | Azure AI Search / `seed_incidents.json` · GPT-4.1 decision maker |
+| `FinancialImpactAgent` | Cost (0.20) | **Live:** `ResourceGraphClient` + Azure Retail Prices API · GPT-4.1 decision maker · **Mock:** `seed_resources.json` |
+
+All 4 agents follow the same Phase 22 pattern: deterministic baseline → LLM contextual adjustment
+(+/-30 pts guardrail) → adjusted score used in SRI™ composite.
+`src/governance_agents/_llm_governance.py` provides shared `clamp_score()`, `parse_llm_decision()`,
+and `format_adjustment_text()` utilities used by all 4 agents.
 
 ### Operational Agents (the governed — propose actions)
 

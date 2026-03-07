@@ -9,7 +9,7 @@
 
 RuriSkry intercepts, simulates, and scores every AI agent action **before** it touches your infrastructure. It sits between operational AI agents (SRE bots, cost optimizers, deployment agents) and Azure cloud resources, acting as a production-grade supervisory intelligence layer.
 
-Born at the Microsoft AI Dev Days Hackathon 2026, RuriSkry has evolved into a fully async, enterprise-ready governance engine with live Azure topology analysis, durable audit trails (Cosmos DB), Microsoft Teams alerting, explainable AI verdicts with counterfactual analysis, and 505+ automated tests.
+Born at the Microsoft AI Dev Days Hackathon 2026, RuriSkry has evolved into a fully async, enterprise-ready governance engine with live Azure topology analysis, durable audit trails (Cosmos DB), Microsoft Teams alerting, explainable AI verdicts with counterfactual analysis, and 666+ automated tests.
 
 ---
 
@@ -58,7 +58,8 @@ RuriSkry is the missing governance layer. Before any agent action executes, it r
 - **SRI ≤ 25** → ✅ Auto-Approve — low risk, execute immediately
 - **SRI 26–60** → ⚠️ Escalate — moderate risk, human review required
 - **SRI > 60** → ❌ Deny — high risk, action blocked with explanation
-- **Critical policy violation** → ❌ Deny — regardless of composite score
+- **Any non-overridden HIGH policy violation** → ⚠️ Escalate floor — prevents score dilution where low blast radius / cost dims push composite below 25 despite a HIGH policy flag
+- **Critical policy violation** → ❌ Deny — unless the LLM governance agent determined it doesn't truly apply (e.g. remediation intent)
 
 ---
 
@@ -92,7 +93,7 @@ flowchart LR
         end
 
         PIPE --> GOV
-        GOV --> ENGINE["Governance Decision Engine<br/>approved <= 25 | escalated 26-60 | denied > 60"]
+        GOV --> ENGINE["Governance Decision Engine<br/>denied: critical viol OR >60 | escalated: 26-60 OR HIGH viol | approved: ≤25"]
         ENGINE --> TRACKER["Decision Tracker<br/>immutable audit trail"]
     end
 
@@ -130,6 +131,15 @@ flowchart LR
 ---
 
 ## Key Features
+
+### Intelligent Governance — LLM as Decision Maker
+All 4 governance agents use GPT-4.1 as an **active decision maker**, not a narrator. The
+deterministic rule engine produces a **baseline score**; the LLM then receives the full policy
+definitions, the ops agent's reasoning, and the baseline — and adjusts the score up or down
+with explicit justification. A guardrail bounds adjustments to ±30 points so hallucination
+cannot dominate. This enables **remediation intent detection**: when an ops agent is fixing a
+security issue (not creating one), the LLM recognises that intent and reduces the risk score
+rather than blocking the fix.
 
 ### Two-Layer Intelligence
 Operational agents aren't blind action-proposers — they query **real Azure data** (Resource
@@ -268,7 +278,7 @@ npm run dev
 ### Run Tests
 
 ```bash
-# Expected: 505 passed, 0 failed
+# Expected: 666 passed, 0 failed
 pytest tests/ -v
 ```
 
@@ -348,8 +358,8 @@ No critical violations, low blast radius, no historical incidents matching the p
 **SRI™: 14.1 → ✅ AUTO-APPROVED**
 
 ### Scenario 3: Moderate Risk → ESCALATED
-**Deploy Agent** proposes modifying `nsg-east` (add deny-all inbound rule).
-POL-SEC-001 fires (high severity — NSG changes require security review), pushing the composite into the review band.
+**Deploy Agent** proposes modifying `nsg-east` (add deny-all inbound rule) with `nsg_change_direction="restrict"`.
+POL-SEC-001 fires (HIGH — NSG changes require security review). Rule 3.5 floors the verdict at ESCALATED even if composite is low.
 **SRI™: 55.2 → ⚠️ ESCALATED for human review**
 
 ---
@@ -362,7 +372,7 @@ challenge track: *Automate and Optimize Software Delivery — Leverage Agentic D
 Since its hackathon origins, the project has matured into a production-grade governance engine
 with fully async internals, live Azure topology analysis (Resource Graph + Retail Prices API),
 durable Cosmos DB audit trails, Microsoft Teams alerting, explainable AI with counterfactual
-drilldowns, and a comprehensive 505-test suite.
+drilldowns, and a comprehensive 666-test suite.
 
 ---
 

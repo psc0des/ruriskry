@@ -24,6 +24,30 @@
     "category": "security"
   },
   {
+    "id": "POL-SEC-002",
+    "name": "Internet-Exposed Dangerous Ports",
+    "description": "NSG modifications that OPEN SSH (22), RDP (3389), WinRM (5985/5986), Telnet (23), or FTP (21) to unrestricted sources are prohibited (CIS Azure 6.1/6.2). This policy only fires when the proposing agent explicitly declares nsg_change_direction='open'. Remediation proposals (direction='restrict') are never blocked by this rule.",
+    "severity": "critical",
+    "conditions": {
+      "blocked_actions": ["modify_nsg"],
+      "nsg_change_direction": "open"
+    },
+    "override_requires": "security_team_review",
+    "category": "security"
+  },
+  {
+    "id": "POL-SEC-003",
+    "name": "Unclassified NSG Change Direction",
+    "description": "NSG modifications must declare their intent via nsg_change_direction ('open' or 'restrict'). When the field is absent the governance system cannot distinguish a dangerous access-broadening change from a remediation. This policy fires to surface the omission explicitly in the audit trail so a human reviewer is alerted. Severity is HIGH (not CRITICAL) because intent is unknown, not confirmed dangerous.",
+    "severity": "high",
+    "conditions": {
+      "blocked_actions": ["modify_nsg"],
+      "nsg_direction_unset": true
+    },
+    "override_requires": "security_team_review",
+    "category": "security"
+  },
+  {
     "id": "POL-CHG-001",
     "name": "Change Window Enforcement",
     "description": "Production changes prohibited Friday 5PM through Monday 8AM UTC",

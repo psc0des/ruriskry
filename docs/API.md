@@ -25,6 +25,7 @@ Runs all 4 SRI™ agents concurrently (`asyncio.gather`), records the verdict, a
 | `current_monthly_cost` | float | — | Current monthly cost in USD |
 | `current_sku` | string | — | Current VM/resource SKU |
 | `proposed_sku` | string | — | New SKU after the action |
+| `nsg_change_direction` | string | — | `"open"` if the change broadens inbound access (triggers CRITICAL POL-SEC-002 check). `"restrict"` or omit if remediating/restricting access. Only relevant for `modify_nsg` actions. |
 
 **Example input:**
 ```json

@@ -4,7 +4,7 @@
 ## What Is This Project?
 RuriSkry is a production-grade AI Action Governance & Simulation Engine. It intercepts AI agent infrastructure actions, simulates their impact, and scores them using the Skry Risk Index (SRI™) before allowing execution.
 
-Originally built for the Microsoft AI Dev Days Hackathon 2026, RuriSkry has evolved into a fully async, enterprise-ready governance engine with live Azure topology analysis, durable Cosmos DB audit trails, Microsoft Teams alerting, explainable AI verdicts with counterfactual analysis, and 505+ automated tests.
+Originally built for the Microsoft AI Dev Days Hackathon 2026, RuriSkry has evolved into a fully async, enterprise-ready governance engine with live Azure topology analysis, durable Cosmos DB audit trails, Microsoft Teams alerting, explainable AI verdicts with counterfactual analysis, and 666+ automated tests.
 
 ## Project Structure
 ```
@@ -14,10 +14,11 @@ src/
 │   ├── cost_agent.py       # Cost optimization proposals
 │   └── deploy_agent.py     # Infrastructure deployment + config proposals (Phase 8)
 ├── governance_agents/      # Agents that EVALUATE actions (the governors)
-│   ├── blast_radius_agent.py    # SRI:Infrastructure (0-100)
-│   ├── policy_agent.py          # SRI:Policy (0-100)
-│   ├── historical_agent.py      # SRI:Historical (0-100)
-│   └── financial_agent.py       # SRI:Cost (0-100)
+│   ├── blast_radius_agent.py    # SRI:Infrastructure (0-100) — LLM decision maker (Phase 22)
+│   ├── policy_agent.py          # SRI:Policy (0-100) — LLM decision maker + remediation intent detection (Phase 22)
+│   ├── historical_agent.py      # SRI:Historical (0-100) — LLM decision maker (Phase 22)
+│   ├── financial_agent.py       # SRI:Cost (0-100) — LLM decision maker (Phase 22)
+│   └── _llm_governance.py       # Shared guardrail utilities: clamp_score, parse_llm_decision, format_adjustment_text
 ├── core/
 │   ├── models.py                # ALL Pydantic data models (READ THIS FIRST)
 │   ├── pipeline.py              # asyncio.gather() orchestration — 4 governance agents concurrent
@@ -150,10 +151,12 @@ Every proposed action gets scored across 4 dimensions:
 - **SRI:Cost** (weight 0.20) — financial impact and volatility
 
 ### SRI™ Decision Thresholds
-- SRI ≤ 25 → APPROVED (auto-execute)
-- SRI 26-60 → ESCALATED (human review)
-- SRI > 60 → DENIED (blocked)
-- Any critical policy violation → DENIED regardless of score
+Decision rules applied in priority order:
+1. Any non-overridden **CRITICAL** policy violation → DENIED regardless of composite score
+2. Composite > 60 → DENIED
+3. Composite > 25 → ESCALATED
+4. Any non-overridden **HIGH** policy violation → ESCALATED floor (Rule 3.5 — prevents score dilution where low blast radius / cost / historical dims push composite below 25 despite a HIGH policy flag)
+5. Otherwise → APPROVED (auto-execute)
 
 ### Data Flow
 
@@ -191,10 +194,13 @@ STATUS.md for full phase breakdown.
 ## Important Files to Read First
 1. `src/core/models.py` — ALL Pydantic models. Every agent uses these.
 2. `src/config.py` — SRI thresholds and weights are configurable here.
-3. `data/policies.json` — 9 production governance policies for PolicyComplianceAgent (DR protection,
-   NSG change control, tag enforcement, change windows, cost thresholds, critical/shared resource
-   protection, prod deletion/downgrade). Engine supports 8 condition types including `reason_pattern`
-   and `tags_absent` (see `policy_agent.py` docstring for full list).
+3. `data/policies.json` — 11 production governance policies for PolicyComplianceAgent (DR protection,
+   NSG change control, internet-exposed dangerous ports, unclassified NSG direction, tag enforcement,
+   change windows, cost thresholds, critical/shared resource protection, prod deletion/downgrade).
+   Engine supports 10 condition types including `nsg_change_direction` (structured intent field —
+   "open" triggers POL-SEC-002 CRITICAL, "restrict"/None does not), `nsg_direction_unset` (fires when
+   modify_nsg omits the direction field — POL-SEC-003 HIGH), `reason_pattern`, and `tags_absent`
+   (see `policy_agent.py` docstring for full list).
 4. `data/seed_incidents.json` — 7 past incidents for HistoricalPatternAgent.
 5. `data/seed_resources.json` — Azure resource topology. Contains two sections:
    - **Mini prod resources** (`ruriskry-prod-rg`): `vm-dr-01`, `vm-web-01`, `payment-api-prod`,

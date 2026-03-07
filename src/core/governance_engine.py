@@ -9,6 +9,7 @@ Decision rules (applied in priority order)
 1. **Critical policy violation** — DENIED regardless of composite score.
 2. **Composite > ``sri_human_review_threshold`` (default 60)** — DENIED.
 3. **Composite > ``sri_auto_approve_threshold`` (default 25)** — ESCALATED.
+3.5. **Any non-overridden HIGH violation** — ESCALATED floor even when composite ≤ 25.
 4. **Otherwise** — APPROVED (auto-execute).
 
 SRI™ dimension weights (configurable via :class:`~src.config.Settings`)
@@ -178,12 +179,20 @@ class GovernanceDecisionEngine:
         1. Critical policy violation  → always DENIED
         2. composite > review_threshold → DENIED
         3. composite > approve_threshold → ESCALATED
+        3.5. Any non-overridden HIGH violation → ESCALATED floor (composite may be low
+             if blast radius / cost / historical dimensions are all low, but a HIGH
+             policy violation always requires a human reviewer)
         4. Otherwise → APPROVED
         """
-        # Rule 1 — critical policy violation overrides the numeric score
+        # Rule 1 — critical policy violation overrides the numeric score.
+        # Only violations NOT overridden by the LLM trigger auto-DENY.
+        # When the LLM reduces the policy score and annotates a violation with
+        # llm_override, it has determined the violation doesn't truly apply
+        # (e.g., ops agent is remediating, not creating the issue). In that
+        # case the composite score determines the verdict instead.
         critical = [
             v for v in policy.violations
-            if v.severity == PolicySeverity.CRITICAL
+            if v.severity == PolicySeverity.CRITICAL and not v.llm_override
         ]
         if critical:
             ids = ", ".join(v.policy_id for v in critical)
@@ -208,6 +217,25 @@ class GovernanceDecisionEngine:
                 f"ESCALATED — SRI Composite {composite:.1f} requires human review "
                 f"(band: {self._approve_threshold}–{self._review_threshold}). "
                 "Action paused pending approval.",
+            )
+
+        # Rule 3.5 — HIGH violations floor the verdict at ESCALATED.
+        # The composite score may be low (e.g. small blast radius, negligible cost)
+        # while a HIGH policy violation still requires a human reviewer. Without
+        # this floor, a high sri_policy value can be "diluted" by low values in
+        # the other three dimensions and produce a composite below the auto-approve
+        # threshold — incorrectly auto-approving a flagged action.
+        high_violations = [
+            v for v in policy.violations
+            if v.severity == PolicySeverity.HIGH and not v.llm_override
+        ]
+        if high_violations:
+            ids = ", ".join(v.policy_id for v in high_violations)
+            return (
+                SRIVerdict.ESCALATED,
+                f"ESCALATED — SRI Composite {composite:.1f} is within the auto-approval "
+                f"threshold, but HIGH-severity policy violation(s) require human review: "
+                f"{ids}. Action paused pending approval.",
             )
 
         # Rule 4 — safe to auto-execute
