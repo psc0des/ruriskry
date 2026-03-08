@@ -1,6 +1,7 @@
 # RuriSkry — Deployment Runbook
 
 Everything needed to go from zero to a fully live system.
+Based on the actual deployment steps used in production.
 
 ---
 
@@ -13,7 +14,7 @@ No separate agent services exist.
 ```
 React dashboard  →  Azure Static Web Apps   (dashboard/)
 FastAPI backend  →  Azure Container Apps    (src/)
-LLM / Search / Cosmos / Key Vault  →  already provisioned by Terraform
+LLM / Search / Cosmos / Key Vault  →  provisioned by Terraform
 ```
 
 ---
@@ -44,7 +45,9 @@ LLM / Search / Cosmos / Key Vault  →  already provisioned by Terraform
 - Docker Desktop running
 - Node.js 18+ (for dashboard build)
 - Python 3.11+ (for seeding + local dev)
-- Register the Container Apps provider (one-time per subscription):
+
+**One-time: register the Container Apps provider** (required before first apply —
+Azure subscriptions don't have this enabled by default):
 
 ```bash
 az provider register --namespace Microsoft.App --wait
@@ -68,12 +71,13 @@ subscription_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 suffix          = "yourname"   # globally unique — used in all resource names
 ```
 
-Optional but recommended before first apply:
+Other fields to fill in:
 
 ```hcl
-iac_github_repo    = "owner/repo"                  # for Execution Gateway PR creation
+iac_github_repo    = "owner/repo"                   # for Execution Gateway PR creation
 iac_terraform_path = "infrastructure/terraform-prod"
-dashboard_url      = ""                            # fill in after SWA deploy (see step 5)
+dashboard_url      = ""                             # leave empty — fill in after step 7
+use_github_pat     = false                          # set true after step 3
 ```
 
 ### 2. Apply infrastructure
@@ -84,7 +88,16 @@ terraform validate
 terraform apply
 ```
 
-Terraform prints a `next_steps` output with real URLs and names after apply completes.
+Terraform prints a `next_steps` output with the real ACR name, backend URL, and
+dashboard URL after apply completes.
+
+> **If apply fails partway through** (e.g. Container App fails because image doesn't
+> exist yet), some resources may have been created in Azure but not recorded in
+> Terraform state. Fix with import before re-applying:
+> ```powershell
+> # Run in PowerShell (not Git Bash — Git Bash mangles the leading / into a Windows path)
+> terraform import azurerm_container_app.backend "/subscriptions/<sub-id>/resourceGroups/ruriskry-rg/providers/Microsoft.App/containerApps/ruriskry-backend-<suffix>"
+> ```
 
 ### 3. Store GitHub PAT in Key Vault
 
@@ -106,10 +119,10 @@ terraform apply
 ### 4. Seed the AI Search index
 
 Required for `HistoricalPatternAgent` to find incidents in live mode.
-Run from the repo root:
+Run from the **repo root**:
 
 ```bash
-cd ../..
+cd /path/to/sentinellayer
 python scripts/seed_data.py
 ```
 
@@ -117,7 +130,7 @@ Expected output: `Uploaded 7/7 incidents`
 
 ### 5. Build and push the backend Docker image
 
-Run from the repo root (where `Dockerfile` lives):
+Run from the **repo root** (where `Dockerfile` lives — not from `terraform-core/`):
 
 ```bash
 az acr login --name ruriskry<suffix>
@@ -125,8 +138,11 @@ docker build -t ruriskry<suffix>.azurecr.io/ruriskry-backend:latest .
 docker push ruriskry<suffix>.azurecr.io/ruriskry-backend:latest
 ```
 
-The Container App will pull the new image automatically on its next revision.
-Force an immediate update:
+> **Must push the image before `terraform apply` if the Container App doesn't exist yet.**
+> Terraform tries to start a revision immediately — if the image tag doesn't exist in ACR,
+> the apply will fail with `MANIFEST_UNKNOWN`.
+
+Force the Container App to pull the new image:
 
 ```bash
 az containerapp update \
@@ -138,46 +154,65 @@ az containerapp update \
 Verify the backend is live:
 
 ```bash
-curl https://ruriskry-backend-<suffix>.<region>.azurecontainerapps.io/health
+curl https://<backend_url>/health
 # → {"status": "ok"}
+```
+
+Get the exact backend URL from Terraform:
+
+```bash
+cd infrastructure/terraform-core
+terraform output backend_url
 ```
 
 ### 6. Build and deploy the React dashboard
 
 ```bash
-# Get the backend URL
+# Step 1 — get the backend URL
 cd infrastructure/terraform-core
 terraform output backend_url
+# example: "https://ruriskry-backend-psc0des.wonderfulpond-71ad231f.eastus2.azurecontainerapps.io"
 
-# Create dashboard/.env.production with the real backend URL
-echo "VITE_API_URL=https://ruriskry-backend-<suffix>.<region>.azurecontainerapps.io" \
-  > ../../dashboard/.env.production
+# Step 2 — create dashboard/.env.production with the real backend URL
+# (run from repo root)
+echo "VITE_API_URL=https://ruriskry-backend-<suffix>.<hash>.<region>.azurecontainerapps.io" \
+  > dashboard/.env.production
 
-# Build
-cd ../../dashboard
+# Step 3 — build
+cd dashboard
 npm install
 npm run build
 
-# Get deployment token
+# Step 4 — get deployment token
 cd ../infrastructure/terraform-core
 terraform output -raw dashboard_deployment_token
 
-# Deploy
+# Step 5 — deploy to production slot
+# IMPORTANT: --env production is required. Without it, the SWA CLI deploys to
+# a preview slot and Production stays stuck on "Waiting for deployment".
 cd ../../dashboard
-npx @azure/static-web-apps-cli deploy ./dist --deployment-token <token>
+npx @azure/static-web-apps-cli deploy ./dist \
+  --deployment-token <token> \
+  --env production
 ```
 
-Dashboard is live at the URL printed by `terraform output dashboard_url`.
+Dashboard is live at:
 
-### 7. Wire the dashboard URL back
+```bash
+cd infrastructure/terraform-core
+terraform output dashboard_url
+```
 
-Once you have the Static Web App URL, add it to `terraform.tfvars`:
+### 7. Wire the dashboard URL back into Terraform
+
+After getting the Static Web App URL, add it to `terraform.tfvars`:
 
 ```hcl
-dashboard_url = "https://ruriskry-dashboard-<suffix>.azurestaticapps.net"
+dashboard_url = "https://calm-cliff-xxxxxxx.eastus2.azurestaticapps.net"
 ```
 
-Then re-apply so the Container App picks it up for Teams notification cards:
+Re-apply so the Container App picks it up as the `DASHBOARD_URL` env var
+(used in Teams notification card "View in Dashboard" button):
 
 ```bash
 cd infrastructure/terraform-core
@@ -191,7 +226,7 @@ cd ../..
 bash scripts/setup_env.sh
 ```
 
-This writes endpoints and Key Vault secret names to `.env` from Terraform outputs.
+Writes endpoints and Key Vault secret names to `.env` from Terraform outputs.
 
 ---
 
@@ -199,8 +234,9 @@ This writes endpoints and Key Vault secret names to `.env` from Terraform output
 
 ### Backend code changed
 
+Run from repo root:
+
 ```bash
-# From repo root
 docker build -t ruriskry<suffix>.azurecr.io/ruriskry-backend:latest .
 docker push ruriskry<suffix>.azurecr.io/ruriskry-backend:latest
 
@@ -215,8 +251,14 @@ az containerapp update \
 ```bash
 cd dashboard
 npm run build
+
+cd ../infrastructure/terraform-core
+TOKEN=$(terraform output -raw dashboard_deployment_token)
+
+cd ../../dashboard
 npx @azure/static-web-apps-cli deploy ./dist \
-  --deployment-token $(cd ../infrastructure/terraform-core && terraform output -raw dashboard_deployment_token)
+  --deployment-token $TOKEN \
+  --env production
 ```
 
 ### Infrastructure changed (tfvars / main.tf)
@@ -246,8 +288,8 @@ az keyvault secret show --vault-name $KV --name foundry-primary-key --query id -
 az keyvault secret show --vault-name $KV --name search-primary-key  --query id -o tsv
 az keyvault secret show --vault-name $KV --name cosmos-primary-key  --query id -o tsv
 
-# 3. Backend health
-curl https://ruriskry-backend-<suffix>.<region>.azurecontainerapps.io/health
+# 3. Backend health check
+curl https://<backend_url>/health
 
 # 4. Container App logs (if something looks wrong)
 az containerapp logs show \
@@ -258,9 +300,21 @@ az containerapp logs show \
 # 5. Search index seeded
 python scripts/seed_data.py
 
-# 6. Run test suite locally
+# 6. Run test suite
 pytest tests/ -v
 ```
+
+---
+
+## Known Gotchas
+
+| Problem | Cause | Fix |
+|---------|-------|-----|
+| `MissingSubscriptionRegistration: Microsoft.App` | Container Apps provider not registered | `az provider register --namespace Microsoft.App --wait` |
+| `MANIFEST_UNKNOWN: manifest tagged by "latest" is not found` | Docker image not pushed to ACR before `terraform apply` | Push image first, then apply |
+| `resource already exists — needs to be imported` | Apply failed mid-way; resource created in Azure but not in state | `terraform import` the resource (use PowerShell, not Git Bash) |
+| Git Bash mangles resource ID (`C:/Program Files/Git/subscriptions/...`) | Git Bash converts leading `/` to Windows path | Run `terraform import` in PowerShell |
+| SWA Production slot stuck on "Waiting for deployment" | SWA CLI deployed to preview slot (missing `--env production`) | Redeploy with `--env production` flag |
 
 ---
 
@@ -273,7 +327,7 @@ cd infrastructure/terraform-core
 terraform destroy
 ```
 
-The mini prod environment (`infrastructure/terraform-prod/`) has its own teardown:
+The mini prod environment has its own teardown:
 
 ```bash
 cd infrastructure/terraform-prod
@@ -284,8 +338,6 @@ terraform destroy
 
 ## Cost Notes
 
-Resources that incur cost while running:
-
 | Resource | Approximate cost |
 |----------|-----------------|
 | Container App (1 replica, 1 vCPU / 2 GiB) | ~$35/month |
@@ -295,5 +347,11 @@ Resources that incur cost while running:
 | Static Web App (free tier) | $0 |
 | Container Registry (Basic) | ~$5/month |
 
-Set `backend_min_replicas = 0` in `terraform.tfvars` + re-apply to scale to zero
-between demos (cold start ~10–15 s on first request).
+To avoid charges between demos, scale to zero:
+
+```hcl
+# terraform.tfvars
+backend_min_replicas = 0
+```
+
+Then `terraform apply`. Cold start on first request is ~10–15 seconds.
