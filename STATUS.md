@@ -4,7 +4,9 @@
 > picking up this project. It tells you exactly what is done, what is live,
 > and what comes next. Architecture and coding standards are in `CONTEXT.md`.
 
-**Last updated:** 2026-03-08 (Demo cleanup: Triage Intelligence card hidden in `Overview.jsx` (`{false && metrics && ...}`) — card will be re-enabled post-hackathon. Triage backend (Phases 26/27A) remains fully functional. README.md cleaned of triage mentions for public presentation. Internal dev docs (CONTEXT.md, ARCHITECTURE.md, SETUP.md, API.md) kept accurate since code still exists.)
+**Last updated:** 2026-03-08 (Deployment infra: `infrastructure/terraform` renamed to `infrastructure/terraform-core`; ACR + Container Apps Environment + Container App + Static Web App resources added to `terraform-core/main.tf`; new variables (backend_image, backend_cpu/memory, backend_min/max_replicas, execution_gateway_enabled, llm_timeout, llm_concurrency_limit, teams_webhook_url, dashboard_url, org_name/compliance/risk_tolerance, static_web_app_location); new outputs (acr_login_server, acr_name, backend_url, dashboard_url, dashboard_deployment_token); `Dockerfile` + `.dockerignore` created at repo root; `docs/ARCHITECTURE.md` + `docs/SETUP.md` updated with deployment architecture and deploy commands; all references to old `infrastructure/terraform/` path updated)
+
+**Last updated (prev):** 2026-03-08 (Demo cleanup: Triage Intelligence card hidden in `Overview.jsx` (`{false && metrics && ...}`) — card will be re-enabled post-hackathon. Triage backend (Phases 26/27A) remains fully functional. README.md cleaned of triage mentions for public presentation. Internal dev docs (CONTEXT.md, ARCHITECTURE.md, SETUP.md, API.md) kept accurate since code still exists.)
 
 **Last updated (prev):** 2026-03-08 (Dashboard: Triage Intelligence card added to `Overview.jsx` — teal GlowCard showing LLM calls saved (NumberTicker), Tier 1/2/3 counts with percentages, stacked progress bar (emerald/amber/rose); `Cpu` icon from lucide-react; `pipeline.py` block comment updated to accurately reflect Phases 26 + 27A active and Phase 27B as next. No new tests — 719 still passing.)
 
@@ -642,7 +644,7 @@ Comprehensive correctness audit of Phase 12 and Phase 13.  All findings fixed.
 ### Phase 10 Bug Fixes (commit 1fee7d1)
 - [x] `src/a2a/ruriskry_a2a_server.py` — `DecisionTracker().record(verdict)` added after
   `pipeline.evaluate()`; A2A verdicts now written to Cosmos DB audit trail (were silently dropped).
-- [x] `infrastructure/terraform/main.tf` — `azurerm_cosmosdb_sql_container "governance_agents"`
+- [x] `infrastructure/terraform-core/main.tf` — `azurerm_cosmosdb_sql_container "governance_agents"`
   added with `partition_key_paths = ["/name"]`; container now exists in Terraform.
 - [x] `src/a2a/operational_a2a_clients.py` — `agent_card_url=self._server_url` in all 3 clients
   (was `""` — empty string stored in registry).
@@ -652,7 +654,7 @@ Comprehensive correctness audit of Phase 12 and Phase 13.  All findings fixed.
 - [x] Learning: `learning/20-a2a-bugfixes.md`
 
 ### Partition Key Mismatch Fix (commit a09dc96→ earlier)
-- [x] `infrastructure/terraform/main.tf` — `governance-agents` container partition key
+- [x] `infrastructure/terraform-core/main.tf` — `governance-agents` container partition key
   corrected from `/agent_name` (field that never existed in documents) to `/name`
   (matches the `"name"` field in every registry document and the `partition_key=name`
   value passed by `_load_entry`). Option (b) chosen — zero Python changes required.
@@ -1055,7 +1057,7 @@ through RuriSkry automatically — fully autonomous cloud governance loop.
 | `dashboard/src/App.jsx` | Root component — 🔔 Teams pill, drilldown navigation via drilldownEval state | Phase 18 |
 | `dashboard/src/components/LiveActivityFeed.jsx` | Real-time feed — rows clickable, onDrilldown prop | Phase 18 |
 | `data/scans/` | Local JSON scan-run store (mock mode for ScanRunTracker) | Phase 16 |
-| `infrastructure/terraform/main.tf` | Azure infra — Foundry, Search, Cosmos (2 containers), KV | Phase 10 bugfixes |
+| `infrastructure/terraform-core/main.tf` | Azure infra — Foundry, Search, Cosmos (2 containers), KV | Phase 10 bugfixes |
 | `infrastructure/terraform-prod/main.tf` | Mini prod env — 2 VMs, NSG, storage, App Service, monitor alerts | Phase 11 |
 | `infrastructure/terraform-prod/outputs.tf` | Exports all resource IDs, names, tags, URLs | Phase 11 |
 | `infrastructure/terraform-prod/variables.tf` | Input variables incl. sensitive vm_admin_password | Phase 11 |

@@ -33,7 +33,7 @@ done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-TERRAFORM_DIR="$PROJECT_ROOT/infrastructure/terraform"
+TERRAFORM_DIR="$PROJECT_ROOT/infrastructure/terraform-core"
 TERRAFORM_PROD_DIR="$PROJECT_ROOT/infrastructure/terraform-prod"
 ENV_FILE="$PROJECT_ROOT/.env"
 ENV_EXAMPLE_FILE="$PROJECT_ROOT/.env.example"
@@ -49,7 +49,7 @@ fi
 
 if [ ! -f "terraform.tfstate" ]; then
   echo "ERROR: terraform.tfstate not found."
-  echo "Run 'terraform apply' in infrastructure/terraform/ first."
+  echo "Run 'terraform apply' in infrastructure/terraform-core/ first."
   exit 1
 fi
 

@@ -176,3 +176,150 @@ variable "managed_identity_principal_ids" {
   type        = list(string)
   default     = []
 }
+
+# ---------------------------------------------------------------------------
+# Container App — backend
+# ---------------------------------------------------------------------------
+
+variable "backend_image" {
+  description = <<-EOT
+    Docker image name (and tag) to run in the Container App.
+    Must exist in the ACR created by this Terraform config.
+    Example: "ruriskry-backend:latest"
+    Build and push first:
+      docker build -t <acr_login_server>/ruriskry-backend:latest .
+      az acr login --name ruriskry<suffix>
+      docker push <acr_login_server>/ruriskry-backend:latest
+  EOT
+  type    = string
+  default = "ruriskry-backend:latest"
+}
+
+variable "backend_cpu" {
+  description = "vCPU allocated to the backend container (e.g. 0.5, 1.0, 2.0)."
+  type        = number
+  default     = 1.0
+}
+
+variable "backend_memory" {
+  description = "Memory allocated to the backend container (e.g. '2Gi'). Must match a valid cpu/memory pair."
+  type        = string
+  default     = "2Gi"
+}
+
+variable "backend_min_replicas" {
+  description = "Minimum number of Container App replicas. 0 = scale to zero when idle (cold start ~10 s)."
+  type        = number
+  default     = 1
+}
+
+variable "backend_max_replicas" {
+  description = "Maximum number of Container App replicas."
+  type        = number
+  default     = 3
+}
+
+# ---------------------------------------------------------------------------
+# Runtime feature flags (passed as env vars into the Container App)
+# ---------------------------------------------------------------------------
+
+variable "execution_gateway_enabled" {
+  description = "Enable Execution Gateway — routes APPROVED verdicts to IaC PRs. Requires GITHUB_TOKEN set separately."
+  type        = bool
+  default     = false
+}
+
+variable "llm_timeout" {
+  description = "Hard timeout in seconds for each LLM call (asyncio.wait_for + HTTP client timeout)."
+  type        = number
+  default     = 120
+}
+
+variable "llm_concurrency_limit" {
+  description = "Max simultaneous LLM calls across all agents (shared semaphore). Lower = less 429 risk."
+  type        = number
+  default     = 3
+}
+
+variable "teams_webhook_url" {
+  description = "Microsoft Teams Incoming Webhook URL for DENIED/ESCALATED alerts. Leave empty to disable."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "dashboard_url" {
+  description = "Public URL of the dashboard — embedded in Teams card 'View in Dashboard' button."
+  type        = string
+  default     = ""
+}
+
+# ---------------------------------------------------------------------------
+# Org context (risk triage env vars)
+# ---------------------------------------------------------------------------
+
+variable "org_name" {
+  description = "Display name for your organisation (used in triage context)."
+  type        = string
+  default     = "Contoso"
+}
+
+variable "org_compliance_frameworks" {
+  description = "Comma-separated compliance frameworks in scope, e.g. 'HIPAA,PCI-DSS'. Empty = no compliance scope."
+  type        = string
+  default     = ""
+}
+
+variable "org_risk_tolerance" {
+  description = "Organisation risk posture: conservative, moderate, or aggressive."
+  type        = string
+  default     = "moderate"
+
+  validation {
+    condition     = contains(["conservative", "moderate", "aggressive"], var.org_risk_tolerance)
+    error_message = "org_risk_tolerance must be conservative, moderate, or aggressive."
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Execution Gateway — GitHub
+# ---------------------------------------------------------------------------
+
+variable "use_github_pat" {
+  description = <<-EOT
+    Set to true after manually storing your GitHub PAT in Key Vault:
+      az keyvault secret set \
+        --vault-name <keyvault_name> \
+        --name github-pat \
+        --value "github_pat_xxx..."
+    When true, the Container App wires GITHUB_TOKEN from that Key Vault secret
+    via its Managed Identity. The PAT value never enters Terraform or tfstate.
+  EOT
+  type    = bool
+  default = false
+}
+
+variable "iac_github_repo" {
+  description = "GitHub repo that owns the IaC, e.g. 'psc0des/ruriskry-iac-test'."
+  type        = string
+  default     = ""
+}
+
+variable "iac_terraform_path" {
+  description = "Path within iac_github_repo to the Terraform config directory."
+  type        = string
+  default     = "infrastructure/terraform-prod"
+}
+
+# ---------------------------------------------------------------------------
+# Static Web App
+# ---------------------------------------------------------------------------
+
+variable "static_web_app_location" {
+  description = <<-EOT
+    Azure region for Static Web Apps. Limited availability — use one of:
+    eastus2, centralus, westus2, westeurope, eastasia, southeastasia.
+  EOT
+  type    = string
+  default = "eastus2"
+}

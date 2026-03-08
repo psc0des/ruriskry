@@ -191,7 +191,7 @@ org-specific assumptions. See the Two-Layer Intelligence Model section below.
 
 ## Azure Services (live mode)
 
-### Governance Infrastructure (`infrastructure/terraform/`)
+### Governance Infrastructure (`infrastructure/terraform-core/`)
 
 | Service | Used by | Config var |
 |---|---|---|
@@ -221,6 +221,85 @@ agent actions — not the governance system itself.
 | `payment-api-prod` | App Service F1 (free) | Critical dependency (raises blast radius) |
 | `nsg-east-prod` | Network Security Group | ESCALATED — port 8080 open affects all governed VMs |
 | `ruriskryprod{suffix}` | Storage Account LRS | Shared dependency; deletion = high blast radius |
+
+---
+
+## Deployment Architecture
+
+### What Runs Where
+
+RuriSkry is **not** a microservices mesh. All intelligence runs **in-process** inside a single FastAPI application. There are no separate agent services to deploy or orchestrate.
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  Azure Container Apps  (single container)                        │
+│                                                                  │
+│  FastAPI (src/api/dashboard_api.py)                              │
+│    │                                                             │
+│    ├── CostOptimizationAgent    ┐                                │
+│    ├── MonitoringAgent          ├── Operational agents           │
+│    ├── DeployAgent              ┘  (in-process, async)           │
+│    │                                                             │
+│    ├── BlastRadiusAgent         ┐                                │
+│    ├── PolicyComplianceAgent    ├── Governance agents            │
+│    ├── HistoricalPatternAgent   ┘  (in-process, async)           │
+│    └── FinancialImpactAgent                                      │
+│                                                                  │
+└──────────────────────────────────────────────────────────────────┘
+         │  HTTPS calls                    │  HTTPS calls
+         ▼                                 ▼
+Azure OpenAI Foundry              Azure AI Search
+Azure Cosmos DB                   Azure Resource Graph
+Azure Key Vault
+```
+
+### What Is Already Deployed
+
+| Service | Deployed via | Purpose |
+|---------|-------------|---------|
+| Azure OpenAI / GPT-4.1 | `infrastructure/terraform-core/` | LLM backbone for all 7 agents |
+| Azure AI Search | `infrastructure/terraform-core/` | Historical incident BM25 search |
+| Azure Cosmos DB | `infrastructure/terraform-core/` | Audit trail + agent registry + scan runs |
+| Azure Key Vault | `infrastructure/terraform-core/` | Runtime secrets |
+| Demo prod resources | `infrastructure/terraform-prod/` | Governed targets (VMs, NSG, storage) |
+
+### What Still Needs Deploying
+
+Two services remain undeployed — these are the only things needed to go from local to full cloud:
+
+| Service | What it hosts | Terraform location |
+|---------|--------------|-------------------|
+| **Azure Container Apps** | FastAPI backend (all agents in-process) | `infrastructure/terraform-core/` (to add) |
+| **Azure Static Web Apps** | React dashboard (`dashboard/`) | `infrastructure/terraform-core/` (to add) |
+
+### Request Flow (deployed)
+
+```
+Browser
+  │  HTTPS
+  ▼
+Azure Static Web Apps          ← React dashboard (dashboard/)
+  │  HTTPS API calls
+  ▼
+Azure Container Apps           ← FastAPI + all agents (src/)
+  │  HTTPS calls via SDK
+  ├──► Azure OpenAI Foundry    ← GPT-4.1 LLM calls (7 agents)
+  ├──► Azure AI Search         ← historical incident lookup
+  ├──► Azure Cosmos DB         ← audit trail reads/writes
+  ├──► Azure Resource Graph    ← live topology queries
+  └──► Azure Key Vault         ← secret resolution at startup
+```
+
+### In-Process Agent Model
+
+This architecture is **intentional**:
+
+- **No service discovery overhead** — agents call each other as Python function calls, not HTTP requests
+- **`asyncio.gather()` works natively** — all 4 governance agents run in true parallel inside one event loop; no message broker needed
+- **Single deployment unit** — one Container App image, one `az containerapp update`, done
+- **Scales vertically** — increase the Container App's CPU/memory to handle more concurrent scans; add replicas for availability
+
+The operational agents (`CostOptimizationAgent`, `MonitoringAgent`, `DeployAgent`) are instantiated once at FastAPI startup (`lifespan` handler) and reused across requests. They hold no per-request state — all state lives in Cosmos DB or local JSON.
 
 ---
 

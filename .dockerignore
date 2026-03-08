@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.pytest-tmp/
+htmlcov/
+.coverage
+
+# Tests (not needed at runtime)
+tests/
+
+# Local data overrides (runtime writes go inside the container)
+data/decisions/
+data/agents/
+data/scans/
+data/executions/
+
+# Dashboard (built separately, deployed to Static Web Apps)
+dashboard/
+
+# Infrastructure (Terraform — not needed in the runtime image)
+infrastructure/
+
+# Docs and dev files
+docs/
+learning/
+scripts/
+*.md
+*.png
+*.log
+*.jsonl
+
+# Sensitive files
+.env
+.env.*
+*.tfvars
+*.tfstate
+*.tfstate.*
+
+# Git
+.git/
+.gitignore

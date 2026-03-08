@@ -16,6 +16,15 @@ env/
 .env
 .env.local
 .env.*.local
+dashboard/.env.production
+
+# Test artifacts
+.pytest-tmp/
+dashboard/test-results/
+dashboard/playwright-report/
+
+# Dev screenshots
+screenshots/
 
 # IDE
 .vscode/
@@ -52,12 +61,12 @@ htmlcov/
 *.cert
 
 # Terraform — main infra
-infrastructure/terraform/.terraform/
-infrastructure/terraform/*.tfstate
-infrastructure/terraform/*.tfstate.*
-infrastructure/terraform/*.tfstate.backup
-infrastructure/terraform/terraform.tfvars
-infrastructure/terraform/.terraform.lock.hcl
+infrastructure/terraform-core/.terraform/
+infrastructure/terraform-core/*.tfstate
+infrastructure/terraform-core/*.tfstate.*
+infrastructure/terraform-core/*.tfstate.backup
+infrastructure/terraform-core/terraform.tfvars
+infrastructure/terraform-core/.terraform.lock.hcl
 
 # Terraform — mini prod environment
 infrastructure/terraform-prod/.terraform/

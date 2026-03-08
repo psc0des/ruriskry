@@ -41,3 +41,46 @@ keyvault_secret_name_cosmos_key  = "cosmos-primary-key"
 
 # Optional: object IDs of managed identities that should read Key Vault secrets
 managed_identity_principal_ids = []
+
+# =============================================================================
+# Container App + Static Web App (deployment)
+# =============================================================================
+
+# Docker image to run in the Container App.
+# Build and push to ACR first (see docs/SETUP.md → Cloud Deployment).
+backend_image        = "ruriskry-backend:latest"
+backend_cpu          = 1.0
+backend_memory       = "2Gi"
+backend_min_replicas = 1
+backend_max_replicas = 3
+
+# LLM tuning
+llm_timeout           = 120
+llm_concurrency_limit = 3
+
+# Execution Gateway — GitHub PAT
+# Store the PAT manually in Key Vault (never in this file):
+#   az keyvault secret set \
+#     --vault-name ruriskry-kv-<suffix> \
+#     --name github-pat \
+#     --value "github_pat_xxx..."
+# Then set use_github_pat = true and re-run terraform apply.
+use_github_pat  = false
+iac_github_repo = "psc0des/ruriskry-iac-test"
+iac_terraform_path        = "infrastructure/terraform-prod"
+execution_gateway_enabled = true
+
+# Org context (risk triage)
+org_name                  = "Contoso"
+org_compliance_frameworks = ""
+org_risk_tolerance        = "moderate"
+
+# Teams notifications (optional — leave empty to disable)
+teams_webhook_url = ""
+
+# dashboard_url: leave empty on first apply, then set to the Static Web App URL
+# from `terraform output dashboard_url` and re-apply.
+dashboard_url = ""
+
+# Static Web App location (limited regions — leave as eastus2 unless needed)
+static_web_app_location = "eastus2"

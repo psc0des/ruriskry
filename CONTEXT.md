@@ -474,7 +474,7 @@ to seed data. All ops agent framework calls are throttled via ``run_with_throttl
   `limit=1000` (was 200). Internal: `get_recent(limit=10_000)` used for
   `/api/evaluations/{id}` and `/api/metrics` (was `_load_all()` which does
   not exist on `DecisionTracker`; that caused 500 errors on both endpoints).
-- `infrastructure/terraform/main.tf` — `governance-agents` Cosmos container
+- `infrastructure/terraform-core/main.tf` — `governance-agents` Cosmos container
   added alongside `governance-decisions`.
 - `demo_a2a.py` — End-to-end A2A demo: server in background thread, 3
   scenarios (DENIED / APPROVED / ESCALATED), agent registry summary.

@@ -1,7 +1,7 @@
 """Microsoft Foundry client wrapper — GPT-4.1 calls for governance reasoning.
 
 The Foundry account and GPT-4.1 model deployment are Terraform-managed
-(azurerm_ai_services + azurerm_cognitive_deployment in infrastructure/terraform/).
+(azurerm_ai_services + azurerm_cognitive_deployment in infrastructure/terraform-core/).
 After `terraform apply`, run `bash scripts/setup_env.sh` to auto-populate .env
 with the endpoint and key from Terraform outputs.
 

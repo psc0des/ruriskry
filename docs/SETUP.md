@@ -1,6 +1,6 @@
 # Setup Guide
 
-Detailed infra runbook: `infrastructure/deploy.md`
+Detailed infra runbook: `infrastructure/terraform-core/deploy.md`
 
 ## Prerequisites
 
@@ -12,7 +12,7 @@ Detailed infra runbook: `infrastructure/deploy.md`
 
 ## Infrastructure Is Terraform-Managed
 
-Terraform in `infrastructure/terraform/` deploys:
+Terraform in `infrastructure/terraform-core/` deploys:
 
 1. Azure Resource Group
 2. Azure AI Foundry account (`azurerm_ai_services`)
@@ -215,6 +215,85 @@ resource, the gateway will create a PR in your repo with the proposed Terraform 
 Check the drilldown panel for execution status and a link to the PR.
 
 See `Adding-Terraform-Feature.md` for full implementation guide.
+
+---
+
+## Cloud Deployment
+
+RuriSkry is a **single FastAPI application** — all agents (governance + operational) run
+in-process. Deploying to Azure requires exactly two services:
+
+| Service | What to deploy | Terraform |
+|---------|---------------|-----------|
+| **Azure Container Apps** | FastAPI backend (`src/api/dashboard_api.py` + all agents) | `infrastructure/terraform-core/` (to add) |
+| **Azure Static Web Apps** | React dashboard (`dashboard/`) | `infrastructure/terraform-core/` (to add) |
+
+All other Azure services (OpenAI, AI Search, Cosmos DB, Key Vault) are already provisioned
+by the main `infrastructure/terraform-core/` runbook.
+
+### Container Apps — quick deploy
+
+The `Dockerfile` at the repo root builds the FastAPI backend. The Container App
+and ACR are created by `terraform apply` — you only need to push the image.
+
+```bash
+# 1. Log in to ACR (after terraform apply)
+az acr login --name $(terraform -chdir=infrastructure/terraform-core output -raw acr_name)
+
+# 2. Build the image
+docker build -t $(terraform -chdir=infrastructure/terraform-core output -raw acr_login_server)/ruriskry-backend:latest .
+
+# 3. Push to ACR
+docker push $(terraform -chdir=infrastructure/terraform-core output -raw acr_login_server)/ruriskry-backend:latest
+
+# 4. Update the Container App to pull the new image
+az containerapp update \
+  --name $(terraform -chdir=infrastructure/terraform-core output -raw backend_container_app_name) \
+  --resource-group ruriskry-rg \
+  --image $(terraform -chdir=infrastructure/terraform-core output -raw acr_login_server)/ruriskry-backend:latest
+
+# 5. Get the backend URL
+terraform -chdir=infrastructure/terraform-core output backend_url
+```
+
+All env vars (endpoints, feature flags, org context) are wired automatically by
+Terraform from the other provisioned resources. Secrets (API keys) are resolved at
+runtime from Key Vault via the Container App's Managed Identity — no `.env` file
+goes inside the container.
+
+### Static Web Apps — quick deploy
+
+```bash
+# Build the React app
+cd dashboard && npm run build
+
+# Deploy (GitHub Actions integration recommended)
+az staticwebapp create \
+  --name ruriskry-dashboard \
+  --resource-group ruriskry-rg \
+  --source https://github.com/<you>/ruriskry \
+  --branch main \
+  --app-location dashboard \
+  --output-location dist
+
+# Point VITE_API_URL at the Container App URL
+# dashboard/.env.production:
+# VITE_API_URL=https://ruriskry-backend.<region>.azurecontainerapps.io
+```
+
+### Why all agents run in-process (not as separate services)
+
+The 4 governance agents are called via `asyncio.gather()` inside `pipeline.py` — they
+run as Python coroutines in the same event loop, sharing a single process. There is no
+inter-service HTTP, no message broker, no service mesh. This gives:
+
+- True parallelism without network overhead
+- Single deployment unit — one `docker build`, one `az containerapp update`
+- No distributed tracing setup needed for the core evaluation path
+
+Scale by increasing Container App CPU/memory limits and replica count. For very high
+throughput, the governance agent calls can be extracted to worker replicas behind a queue
+— but that is not needed for the current workload.
 
 ---
 
