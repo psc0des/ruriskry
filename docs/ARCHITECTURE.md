@@ -193,14 +193,23 @@ org-specific assumptions. See the Two-Layer Intelligence Model section below.
 
 ### Governance Infrastructure (`infrastructure/terraform-core/`)
 
-| Service | Used by | Config var |
-|---|---|---|
-| Azure OpenAI / GPT-4.1 | All 7 agents (Agent Framework) | `AZURE_OPENAI_ENDPOINT` |
-| Azure AI Search | `HistoricalPatternAgent` | `AZURE_SEARCH_ENDPOINT` |
-| Azure Cosmos DB — `governance-decisions` | `DecisionTracker` | `COSMOS_ENDPOINT` |
-| Azure Cosmos DB — `governance-agents` | `AgentRegistry` | `COSMOS_ENDPOINT` |
-| Azure Cosmos DB — `governance-scan-runs` | `ScanRunTracker` | `COSMOS_CONTAINER_SCAN_RUNS` |
-| Azure Key Vault | All secrets at runtime | `AZURE_KEYVAULT_URL` |
+Two Terraform providers are used: `hashicorp/azurerm` (~> 4.0) for standard resources and `azure/azapi` (~> 2.0) for Foundry project management (`azapi_update_resource` to set `allowProjectManagement=true`, `azapi_resource` to create the Foundry project). Set `create_foundry_project = true` in `terraform.tfvars` to provision the project automatically.
+
+| Service | Used by | Config var | Security posture |
+|---|---|---|---|
+| Azure OpenAI / GPT-4.1 (Foundry) | All 7 agents (Agent Framework) | `AZURE_OPENAI_ENDPOINT` | `local_authentication_enabled=false` — Managed Identity only |
+| Azure AI Search | `HistoricalPatternAgent` | `AZURE_SEARCH_ENDPOINT` | — |
+| Azure Cosmos DB — `governance-decisions` | `DecisionTracker` | `COSMOS_ENDPOINT` | Managed Identity auth; `network_acl_bypass_for_azure_services=true` |
+| Azure Cosmos DB — `governance-agents` | `AgentRegistry` | `COSMOS_ENDPOINT` | Managed Identity auth |
+| Azure Cosmos DB — `governance-scan-runs` | `ScanRunTracker` | `COSMOS_CONTAINER_SCAN_RUNS` | Managed Identity auth |
+| Azure Key Vault | All secrets at runtime | `AZURE_KEYVAULT_URL` | `purge_protection_enabled=true`; `soft_delete_retention_days=90` |
+| Azure Container Registry | Backend image pull | — | `admin_enabled=false`; Container App MI has `AcrPull` role — no credentials in tfstate |
+
+Additional security controls managed by Terraform:
+- **Management lock** — `azurerm_management_lock` (CanNotDelete) on the resource group. Running `terraform destroy` requires removing this lock first: `az lock delete --name ruriskry-core-rg-lock --resource-group ruriskry-core-rg`
+- **Subscription-level Reader** — `azurerm_role_assignment.subscription_reader` grants the Container App's Managed Identity `Reader` at subscription scope for cross-RG Resource Graph scanning
+- **CORS** — enforced at the application layer in `src/api/dashboard_api.py` via `CORSMiddleware` using the `DASHBOARD_URL` env var (falls back to `localhost` for local development). The AzureRM provider does not support a `cors_policy` block on Container Apps ingress
+- **Teams webhook** — stored as a Key Vault secret and injected via the Container App secret mechanism; not exposed as a plain env var
 
 In mock mode (`USE_LOCAL_MOCKS=true`), all four Azure services are replaced by local JSON files
 and in-memory logic — no cloud connection needed.
@@ -257,20 +266,16 @@ Azure Key Vault
 
 | Service | Deployed via | Purpose |
 |---------|-------------|---------|
-| Azure OpenAI / GPT-4.1 | `infrastructure/terraform-core/` | LLM backbone for all 7 agents |
+| Azure OpenAI / GPT-4.1 (Foundry) | `infrastructure/terraform-core/` | LLM backbone for all 7 agents — project fully Terraform-managed via AzAPI provider |
 | Azure AI Search | `infrastructure/terraform-core/` | Historical incident BM25 search |
-| Azure Cosmos DB | `infrastructure/terraform-core/` | Audit trail + agent registry + scan runs |
-| Azure Key Vault | `infrastructure/terraform-core/` | Runtime secrets |
+| Azure Cosmos DB | `infrastructure/terraform-core/` | Audit trail + agent registry + scan runs — Managed Identity auth |
+| Azure Key Vault | `infrastructure/terraform-core/` | Runtime secrets — purge protection enabled, 90-day soft-delete |
+| Azure Container Registry | `infrastructure/terraform-core/` | Backend Docker image — admin disabled, pulled via Managed Identity |
+| Azure Container Apps | `infrastructure/terraform-core/` | FastAPI backend (all agents in-process) |
+| Azure Static Web Apps | `infrastructure/terraform-core/` | React dashboard (`dashboard/`) |
 | Demo prod resources | `infrastructure/terraform-prod/` | Governed targets (VMs, NSG, storage) |
 
-### What Still Needs Deploying
-
-Two services remain undeployed — these are the only things needed to go from local to full cloud:
-
-| Service | What it hosts | Terraform location |
-|---------|--------------|-------------------|
-| **Azure Container Apps** | FastAPI backend (all agents in-process) | `infrastructure/terraform-core/` (to add) |
-| **Azure Static Web Apps** | React dashboard (`dashboard/`) | `infrastructure/terraform-core/` (to add) |
+> All services are now provisioned by `terraform apply`. After apply, the only manual steps are building and pushing the Docker image (via `az acr build` — no Docker Desktop required) and deploying the React bundle to Static Web Apps.
 
 ### Request Flow (deployed)
 
@@ -700,7 +705,7 @@ data/
 ├── seed_incidents.json        # 7 historical incidents
 └── seed_resources.json        # Azure resource topology (see note below)
 infrastructure/
-├── terraform/                 # Main infra — Foundry, Search, Cosmos, Key Vault
+├── terraform-core/            # Main infra — Foundry, Search, Cosmos, Key Vault, ACR, Container Apps, Static Web App
 └── terraform-prod/            # Mini prod env — VMs, NSG, storage, App Service, alerts
 dashboard/                     # Vite + React frontend
 ```

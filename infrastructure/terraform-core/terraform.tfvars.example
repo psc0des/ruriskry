@@ -9,10 +9,10 @@
 subscription_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 
 # Core resources
-resource_group_name = "ruriskry-rg"
+resource_group_name = "ruriskry-core-rg"
 location            = "eastus2"
-env                 = "dev"
-suffix              = "replace-me"
+env                 = "core"
+suffix              = "replace-me"   # e.g. "jd4821" — short, globally unique, no spaces
 
 # Search and Cosmos
 search_sku       = "free"
@@ -25,14 +25,14 @@ foundry_account_name          = ""
 foundry_custom_subdomain_name = ""
 
 # Foundry project and deployment
-create_foundry_project    = false
+create_foundry_project    = true
 foundry_project_name      = "ruriskry"
 create_foundry_deployment = true
 foundry_model             = "gpt-4.1"
 foundry_model_version     = "2025-04-14"
 foundry_deployment_name   = "gpt-41"
 foundry_scale_type        = "GlobalStandard"
-foundry_capacity          = 1
+foundry_capacity          = 50
 
 # Key Vault secret names (runtime reads these via .env)
 keyvault_secret_name_foundry_key = "foundry-primary-key"
@@ -66,12 +66,12 @@ llm_concurrency_limit = 3
 #     --value "github_pat_xxx..."
 # Then set use_github_pat = true and re-run terraform apply.
 use_github_pat  = false
-iac_github_repo = "psc0des/ruriskry-iac-test"
+iac_github_repo = "owner/repo"           # your IaC GitHub repo for Execution Gateway PRs
 iac_terraform_path        = "infrastructure/terraform-prod"
 execution_gateway_enabled = true
 
 # Org context (risk triage)
-org_name                  = "Contoso"
+org_name                  = "YourOrgName"
 org_compliance_frameworks = ""
 org_risk_tolerance        = "moderate"
 

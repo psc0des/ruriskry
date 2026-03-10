@@ -44,7 +44,7 @@ output "foundry_account_name" {
 
 output "foundry_project_name" {
   description = "Foundry project name (empty when not created)"
-  value       = var.create_foundry_project ? azurerm_cognitive_account_project.foundry[0].name : ""
+  value       = var.create_foundry_project ? azapi_resource.foundry_project[0].name : ""
 }
 
 # --- Azure AI Search ---
@@ -160,6 +160,11 @@ output "backend_url" {
 output "backend_container_app_name" {
   description = "Container App resource name — used with 'az containerapp update'"
   value       = azurerm_container_app.backend.name
+}
+
+output "backend_container_app_principal_id" {
+  description = "Managed Identity principal ID of the Container App — use this to grant Reader on additional subscriptions for cross-subscription scanning"
+  value       = azurerm_container_app.backend.identity[0].principal_id
 }
 
 # --- Static Web App (dashboard) ---

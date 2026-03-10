@@ -9,24 +9,34 @@ Detailed infra runbook: `infrastructure/terraform-core/deploy.md`
 - Azure CLI (`az login` configured)
 - Terraform 1.5+
 - Azure subscription with credits/quota
+- Docker Desktop is **not** required — the backend image is built in Azure using `az acr build` (ACR Tasks provisioner runs automatically during `terraform apply`)
 
 ## Infrastructure Is Terraform-Managed
 
-Terraform in `infrastructure/terraform-core/` deploys:
+Terraform in `infrastructure/terraform-core/` deploys (two providers: `hashicorp/azurerm` ~> 4.0 and `azure/azapi` ~> 2.0):
 
-1. Azure Resource Group
+1. Azure Resource Group (`ruriskry-core-rg`) — with a CanNotDelete management lock
 2. Azure AI Foundry account (`azurerm_ai_services`)
 3. Foundry model deployment (`azurerm_cognitive_deployment`, default `gpt-4.1`)
-4. Azure AI Search
-5. Azure Cosmos DB (SQL API) — three containers: `governance-decisions` (partition `/resource_id`), `governance-agents` (partition `/name`), `governance-scan-runs` (partition `/agent_type`, auto-created by `ScanRunTracker` if missing)
-6. Azure Key Vault
-7. Azure Log Analytics
+4. **Foundry project** — fully Terraform-managed via AzAPI (`azapi_update_resource` to enable `allowProjectManagement`, `azapi_resource` to create the project). Set `create_foundry_project = true` in `terraform.tfvars`.
+5. Azure AI Search
+6. Azure Cosmos DB (SQL API) — three containers: `governance-decisions` (partition `/resource_id`), `governance-agents` (partition `/name`), `governance-scan-runs` (partition `/agent_type`, auto-created by `ScanRunTracker` if missing). Managed Identity auth; no connection string stored in tfstate.
+7. Azure Key Vault — purge protection enabled, 90-day soft-delete retention
+8. Azure Log Analytics
+9. Azure Container Registry (ACR) — admin disabled; Container App pulls via Managed Identity (`AcrPull` role)
+10. Azure Container Apps Environment + Container App (backend)
+11. Azure Static Web App (dashboard)
 
-Note:
-- Foundry project/agent objects are not reliably Terraform-manageable yet for this account path.
-- Keep `create_foundry_project=false` and create agents in the Foundry portal.
-- Runtime secrets are read from Key Vault by default via `DefaultAzureCredential`.
-  In Azure, use Managed Identity. Locally, `az login` is used by the same credential chain.
+Security notes:
+- ACR `admin_enabled = false` — credentials never appear in tfstate or env vars
+- Foundry `local_authentication_enabled = false` — Managed Identity only; agents use `DefaultAzureCredential` so local dev (`az login`) still works unchanged
+- Cosmos DB and Key Vault accessed via Managed Identity (no API keys in tfstate)
+- Teams webhook stored as a Key Vault secret, injected via Container App secret mechanism
+- CORS enforced at the FastAPI application layer using `DASHBOARD_URL` env var
+- `terraform destroy` requires removing the RG lock first: `az lock delete --name ruriskry-core-rg-lock --resource-group ruriskry-core-rg`
+
+Runtime secrets are read from Key Vault by default via `DefaultAzureCredential`.
+In Azure, use Managed Identity. Locally, `az login` is used by the same credential chain.
 
 ## Quick Setup
 
@@ -41,11 +51,12 @@ source .venv/bin/activate
 pip install -r requirements.txt
 
 # 3. Deploy Azure infrastructure
-cd infrastructure/terraform
+cd infrastructure/terraform-core
 cp terraform.tfvars.example terraform.tfvars
-# Edit terraform.tfvars: subscription_id + unique suffix
+# Edit terraform.tfvars: subscription_id + unique suffix + create_foundry_project = true
 terraform init
 terraform apply -input=false
+# terraform apply also builds and pushes the Docker image to ACR via az acr build (no Docker Desktop needed)
 cd ../..
 
 # 4. Generate .env from Terraform outputs (Key Vault + Managed Identity mode)
@@ -62,7 +73,7 @@ python scripts/seed_data.py
 
 # 6. Run tests (pytest-asyncio required — installs via requirements.txt)
 pytest tests/ -v
-# Expected: 500 passed, 0 failed
+# Expected: 719 passed, 0 failed
 
 # 7a. Start RuriSkry — MCP stdio server (for Claude Desktop)
 python -m src.mcp_server.server
@@ -138,9 +149,10 @@ empty.
 3. Give it a name (e.g. "RuriSkry Governance") → click **Create**
 4. Copy the webhook URL (looks like `https://xxx.webhook.office.com/webhookb2/...`)
 
-**Step 2 — Set the env var:**
+**Step 2 — Set the env var (local development):**
 ```bash
-# .env
+# .env (local only — in deployed environments the webhook URL is stored as a Key Vault secret
+#        and injected via the Container App secret mechanism, not as a plain env var)
 TEAMS_WEBHOOK_URL=https://xxx.webhook.office.com/webhookb2/...
 TEAMS_NOTIFICATIONS_ENABLED=true
 DASHBOARD_URL=http://localhost:5173   # URL in the "View in Dashboard" card button
@@ -225,60 +237,48 @@ in-process. Deploying to Azure requires exactly two services:
 
 | Service | What to deploy | Terraform |
 |---------|---------------|-----------|
-| **Azure Container Apps** | FastAPI backend (`src/api/dashboard_api.py` + all agents) | `infrastructure/terraform-core/` (to add) |
-| **Azure Static Web Apps** | React dashboard (`dashboard/`) | `infrastructure/terraform-core/` (to add) |
+| **Azure Container Apps** | FastAPI backend (`src/api/dashboard_api.py` + all agents) | `infrastructure/terraform-core/` |
+| **Azure Static Web Apps** | React dashboard (`dashboard/`) | `infrastructure/terraform-core/` |
 
-All other Azure services (OpenAI, AI Search, Cosmos DB, Key Vault) are already provisioned
-by the main `infrastructure/terraform-core/` runbook.
+Both services are now provisioned by `terraform apply`. All other Azure services (OpenAI Foundry, AI Search, Cosmos DB, Key Vault, ACR) are also provisioned in the same apply.
 
 ### Container Apps — quick deploy
 
-The `Dockerfile` at the repo root builds the FastAPI backend. The Container App
-and ACR are created by `terraform apply` — you only need to push the image.
+The `Dockerfile` at the repo root builds the FastAPI backend. The Container App, ACR, and the initial image build are all handled by `terraform apply` via an `az acr build` provisioner — **no Docker Desktop required locally**. To push a subsequent image update:
 
 ```bash
-# 1. Log in to ACR (after terraform apply)
-az acr login --name $(terraform -chdir=infrastructure/terraform-core output -raw acr_name)
+# Build and push to ACR using ACR Tasks (runs in Azure — no local Docker needed)
+ACR_NAME=$(terraform -chdir=infrastructure/terraform-core output -raw acr_name)
+ACR_SERVER=$(terraform -chdir=infrastructure/terraform-core output -raw acr_login_server)
+az acr build --registry $ACR_NAME --image ruriskry-backend:latest .
 
-# 2. Build the image
-docker build -t $(terraform -chdir=infrastructure/terraform-core output -raw acr_login_server)/ruriskry-backend:latest .
-
-# 3. Push to ACR
-docker push $(terraform -chdir=infrastructure/terraform-core output -raw acr_login_server)/ruriskry-backend:latest
-
-# 4. Update the Container App to pull the new image
+# Update the Container App to pull the new image
 az containerapp update \
   --name $(terraform -chdir=infrastructure/terraform-core output -raw backend_container_app_name) \
-  --resource-group ruriskry-rg \
-  --image $(terraform -chdir=infrastructure/terraform-core output -raw acr_login_server)/ruriskry-backend:latest
+  --resource-group ruriskry-core-rg \
+  --image $ACR_SERVER/ruriskry-backend:latest
 
-# 5. Get the backend URL
+# Get the backend URL
 terraform -chdir=infrastructure/terraform-core output backend_url
 ```
 
 All env vars (endpoints, feature flags, org context) are wired automatically by
-Terraform from the other provisioned resources. Secrets (API keys) are resolved at
-runtime from Key Vault via the Container App's Managed Identity — no `.env` file
-goes inside the container.
+Terraform from the other provisioned resources. Secrets (API keys, Teams webhook URL) are
+stored in Key Vault and injected at runtime via the Container App's Managed Identity —
+no `.env` file goes inside the container. ACR pulls also use the same Managed Identity
+(`AcrPull` role) — no registry credentials anywhere in tfstate or the container.
 
 ### Static Web Apps — quick deploy
 
 ```bash
-# Build the React app
-cd dashboard && npm run build
+# Build the React app (dashboard/.env.production must exist with VITE_API_URL set)
+cd dashboard
+echo "VITE_API_URL=$(terraform -chdir=../infrastructure/terraform-core output -raw backend_url)" > .env.production
+npm run build
 
-# Deploy (GitHub Actions integration recommended)
-az staticwebapp create \
-  --name ruriskry-dashboard \
-  --resource-group ruriskry-rg \
-  --source https://github.com/<you>/ruriskry \
-  --branch main \
-  --app-location dashboard \
-  --output-location dist
-
-# Point VITE_API_URL at the Container App URL
-# dashboard/.env.production:
-# VITE_API_URL=https://ruriskry-backend.<region>.azurecontainerapps.io
+# Deploy to Static Web Apps (token output by terraform apply)
+DEPLOY_TOKEN=$(terraform -chdir=../infrastructure/terraform-core output -raw dashboard_deployment_token)
+npx @azure/static-web-apps-cli deploy dist --deployment-token $DEPLOY_TOKEN --env production
 ```
 
 ### Why all agents run in-process (not as separate services)

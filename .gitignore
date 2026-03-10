@@ -66,7 +66,8 @@ infrastructure/terraform-core/*.tfstate
 infrastructure/terraform-core/*.tfstate.*
 infrastructure/terraform-core/*.tfstate.backup
 infrastructure/terraform-core/terraform.tfvars
-infrastructure/terraform-core/.terraform.lock.hcl
+infrastructure/terraform-core/tfplan
+# .terraform.lock.hcl is intentionally NOT ignored — commit it to pin provider versions
 
 # Terraform — mini prod environment
 infrastructure/terraform-prod/.terraform/
@@ -74,7 +75,8 @@ infrastructure/terraform-prod/*.tfstate
 infrastructure/terraform-prod/*.tfstate.*
 infrastructure/terraform-prod/*.tfstate.backup
 infrastructure/terraform-prod/terraform.tfvars
-infrastructure/terraform-prod/.terraform.lock.hcl
+infrastructure/terraform-prod/tfplan
+# .terraform.lock.hcl is intentionally NOT ignored — commit it to pin provider versions
 
 # Runtime-generated data (not source code)
 data/decisions/

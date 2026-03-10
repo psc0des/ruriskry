@@ -151,10 +151,18 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# Allow any frontend origin during development.
+# SEC-06: Restrict CORS to the dashboard origin.
+# In Azure, DASHBOARD_URL is set by Terraform from tfvars.
+# Locally, it falls back to localhost so dev still works.
+_dashboard_url = settings.dashboard_url.rstrip("/") if settings.dashboard_url else ""
+_allowed_origins = (
+    [_dashboard_url, "http://localhost:5173", "http://localhost:4173"]
+    if _dashboard_url
+    else ["http://localhost:5173", "http://localhost:4173"]
+)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_allowed_origins,
     allow_methods=["GET", "POST", "PATCH"],
     allow_headers=["*"],
 )

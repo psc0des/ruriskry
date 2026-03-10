@@ -172,7 +172,7 @@ Incoming Webhook — no one needs to watch the dashboard. The card shows the ver
 resource and agent info, SRI composite + 4-dimension breakdown, governance reason, top
 policy violation, and a "View in Dashboard" button.
 
-- **Zero-config default** — leave `TEAMS_WEBHOOK_URL` empty to disable silently
+- **Zero-config default** — leave the Teams webhook secret empty to disable silently (in deployed environments the URL is stored as a Key Vault secret and injected via Container App secret mechanism, not as a plain env var)
 - **Fire-and-forget** — never blocks or delays a governance decision
 - **Test button** in the dashboard header sends a realistic sample card
 
@@ -220,6 +220,7 @@ on 429s; operational agents return `[]` (no false positives from stale seed data
 - Azure CLI (`az login` completed)
 - Terraform 1.5+
 - Node.js 18+ (for dashboard)
+- Docker Desktop is **not** required — the backend image is built in Azure via `az acr build` (ACR Tasks)
 
 ### Setup
 
@@ -238,8 +239,8 @@ source .venv/bin/activate  # Linux/Mac
 # Install dependencies
 pip install -r requirements.txt
 
-# Provision Azure infrastructure (Foundry-only)
-cd infrastructure/terraform
+# Provision Azure infrastructure (Foundry, Search, Cosmos, Key Vault, Container Apps, Static Web App)
+cd infrastructure/terraform-core
 cp terraform.tfvars.example terraform.tfvars
 # Edit terraform.tfvars with subscription_id and unique suffix
 terraform init
@@ -279,7 +280,7 @@ npm run dev
 ### Run Tests
 
 ```bash
-# Expected: 666 passed, 0 failed
+# Expected: 719 passed, 0 failed
 pytest tests/ -v
 ```
 
@@ -373,7 +374,7 @@ challenge track: *Automate and Optimize Software Delivery — Leverage Agentic D
 Since its hackathon origins, the project has matured into a production-grade governance engine
 with fully async internals, live Azure topology analysis (Resource Graph + Retail Prices API),
 durable Cosmos DB audit trails, Microsoft Teams alerting, explainable AI with counterfactual
-drilldowns, and a comprehensive 666-test suite.
+drilldowns, and a comprehensive 719-test suite.
 
 ---
 

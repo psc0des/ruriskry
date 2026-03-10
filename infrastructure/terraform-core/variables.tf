@@ -13,7 +13,7 @@ variable "subscription_id" {
 variable "resource_group_name" {
   description = "Name of the Azure Resource Group to create"
   type        = string
-  default     = "ruriskry-rg"
+  default     = "ruriskry-core-rg"
 }
 
 variable "location" {
