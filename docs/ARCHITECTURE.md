@@ -275,7 +275,7 @@ Azure Key Vault
 | Azure Static Web Apps | `infrastructure/terraform-core/` | React dashboard (`dashboard/`) |
 | Demo prod resources | `infrastructure/terraform-prod/` | Governed targets (VMs, NSG, storage) |
 
-> All services are now provisioned by `terraform apply`. After apply, the only manual steps are building and pushing the Docker image (via `az acr build` — no Docker Desktop required) and deploying the React bundle to Static Web Apps.
+> All Azure resources are provisioned by Terraform. `scripts/deploy.sh` handles the full first-time deploy in one command: staged Terraform apply → Docker build + push (local Docker) → dashboard build + SWA deploy. For subsequent code changes see the Redeploy Workflows section in `infrastructure/terraform-core/deploy.md`.
 
 ### Request Flow (deployed)
 

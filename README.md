@@ -216,15 +216,15 @@ on 429s; operational agents return `[]` (no false positives from stale seed data
 ### Prerequisites
 
 - Python 3.11+
-- Azure subscription (Terraform deploys Foundry, Search, Cosmos DB, Key Vault, and Log Analytics)
+- Azure subscription
 - Azure CLI (`az login` completed)
 - Terraform 1.5+
 - Node.js 18+ (for dashboard)
-- Docker Desktop is **not** required — the backend image is built in Azure via `az acr build` (ACR Tasks)
+- Docker Desktop — required to build and push the backend image (`scripts/deploy.sh` handles this automatically)
 
 ### Setup
 
-Detailed infra runbook: `infrastructure/deploy.md`
+Detailed infra runbook: `infrastructure/terraform-core/deploy.md`
 
 ```bash
 # Clone the repository
@@ -239,12 +239,13 @@ source .venv/bin/activate  # Linux/Mac
 # Install dependencies
 pip install -r requirements.txt
 
-# Provision Azure infrastructure (Foundry, Search, Cosmos, Key Vault, Container Apps, Static Web App)
-cd infrastructure/terraform-core
-cp terraform.tfvars.example terraform.tfvars
-# Edit terraform.tfvars with subscription_id and unique suffix
-terraform init
-terraform apply -input=false
+# Provision all Azure infrastructure + deploy backend + deploy dashboard (one command)
+cp infrastructure/terraform-core/terraform.tfvars.example \
+   infrastructure/terraform-core/terraform.tfvars
+# Edit terraform.tfvars: set subscription_id and suffix at minimum
+# (see deploy.md for the one-time remote state storage setup)
+bash scripts/deploy.sh
+# If Stage 2 fails, resume without rebuilding: bash scripts/deploy.sh --stage2
 cd ../..
 
 # Generate .env from Terraform outputs (Key Vault + Managed Identity mode)

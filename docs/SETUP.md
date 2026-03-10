@@ -9,7 +9,7 @@ Detailed infra runbook: `infrastructure/terraform-core/deploy.md`
 - Azure CLI (`az login` configured)
 - Terraform 1.5+
 - Azure subscription with credits/quota
-- Docker Desktop is **not** required — the backend image is built in Azure using `az acr build` (ACR Tasks provisioner runs automatically during `terraform apply`)
+- Docker Desktop — required to build and push the backend image (`scripts/deploy.sh` handles the build automatically)
 
 ## Infrastructure Is Terraform-Managed
 
@@ -33,7 +33,7 @@ Security notes:
 - Cosmos DB and Key Vault accessed via Managed Identity (no API keys in tfstate)
 - Teams webhook stored as a Key Vault secret, injected via Container App secret mechanism
 - CORS enforced at the FastAPI application layer using `DASHBOARD_URL` env var
-- `terraform destroy` requires removing the RG lock first: `az lock delete --name ruriskry-core-rg-lock --resource-group ruriskry-core-rg`
+- `terraform destroy` automatically removes the RG lock first (the lock `depends_on` all major resources, so Terraform destroys it before anything else)
 
 Runtime secrets are read from Key Vault by default via `DefaultAzureCredential`.
 In Azure, use Managed Identity. Locally, `az login` is used by the same credential chain.
@@ -50,14 +50,14 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-# 3. Deploy Azure infrastructure
-cd infrastructure/terraform-core
-cp terraform.tfvars.example terraform.tfvars
-# Edit terraform.tfvars: subscription_id + unique suffix + create_foundry_project = true
-terraform init
-terraform apply -input=false
-# terraform apply also builds and pushes the Docker image to ACR via az acr build (no Docker Desktop needed)
-cd ../..
+# 3. Deploy Azure infrastructure + backend + dashboard (one command)
+cp infrastructure/terraform-core/terraform.tfvars.example \
+   infrastructure/terraform-core/terraform.tfvars
+# Edit terraform.tfvars: set subscription_id and suffix at minimum
+# (see infrastructure/terraform-core/deploy.md for remote state setup — one-time)
+bash scripts/deploy.sh
+# If Stage 2 fails, resume without re-waiting or rebuilding:
+#   bash scripts/deploy.sh --stage2
 
 # 4. Generate .env from Terraform outputs (Key Vault + Managed Identity mode)
 bash scripts/setup_env.sh
@@ -244,13 +244,15 @@ Both services are now provisioned by `terraform apply`. All other Azure services
 
 ### Container Apps — quick deploy
 
-The `Dockerfile` at the repo root builds the FastAPI backend. The Container App, ACR, and the initial image build are all handled by `terraform apply` via an `az acr build` provisioner — **no Docker Desktop required locally**. To push a subsequent image update:
+The `Dockerfile` at the repo root builds the FastAPI backend. For a first-time deploy, `scripts/deploy.sh` handles ACR creation, Docker build, push, and Container App provisioning in the correct order. To push a subsequent code update:
 
 ```bash
-# Build and push to ACR using ACR Tasks (runs in Azure — no local Docker needed)
+# Build and push using local Docker (requires Docker Desktop)
 ACR_NAME=$(terraform -chdir=infrastructure/terraform-core output -raw acr_name)
 ACR_SERVER=$(terraform -chdir=infrastructure/terraform-core output -raw acr_login_server)
-az acr build --registry $ACR_NAME --image ruriskry-backend:latest .
+az acr login --name $ACR_NAME
+docker build -t $ACR_SERVER/ruriskry-backend:latest .
+docker push $ACR_SERVER/ruriskry-backend:latest
 
 # Update the Container App to pull the new image
 az containerapp update \
