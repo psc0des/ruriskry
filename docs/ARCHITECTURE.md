@@ -206,9 +206,9 @@ Two Terraform providers are used: `hashicorp/azurerm` (~> 4.0) for standard reso
 | Azure Container Registry | Backend image pull | — | `admin_enabled=false`; Container App MI has `AcrPull` role — no credentials in tfstate |
 
 Additional security controls managed by Terraform:
-- **Management lock** — `azurerm_management_lock` (CanNotDelete) on the resource group. Running `terraform destroy` requires removing this lock first: `az lock delete --name ruriskry-core-rg-lock --resource-group ruriskry-core-rg`
+- **Management lock** — `azurerm_management_lock` (CanNotDelete) on the resource group. The lock `depends_on` all major resources so `terraform destroy` removes it automatically before deleting anything else — no manual step required
 - **Subscription-level Reader** — `azurerm_role_assignment.subscription_reader` grants the Container App's Managed Identity `Reader` at subscription scope for cross-RG Resource Graph scanning
-- **CORS** — enforced at the application layer in `src/api/dashboard_api.py` via `CORSMiddleware` using the `DASHBOARD_URL` env var (falls back to `localhost` for local development). The AzureRM provider does not support a `cors_policy` block on Container Apps ingress
+- **CORS** — enforced at the application layer in `src/api/dashboard_api.py` via `CORSMiddleware` with exact origin matching against `DASHBOARD_URL`. The SWA is provisioned in Stage 1 of `scripts/deploy.sh` (before the Container App), its URL is immediately patched into `terraform.tfvars`, and the Container App is created in Stage 2 with `DASHBOARD_URL` already correct — no stale CORS window, no wildcard patterns needed
 - **Teams webhook** — stored as a Key Vault secret and injected via the Container App secret mechanism; not exposed as a plain env var
 
 In mock mode (`USE_LOCAL_MOCKS=true`), all four Azure services are replaced by local JSON files
