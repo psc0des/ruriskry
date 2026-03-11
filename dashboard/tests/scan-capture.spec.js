@@ -116,6 +116,26 @@ test.describe('Scan run capture — end-to-end', () => {
       ).toBeVisible({ timeout: 10_000 })
 
       console.log('  ✓ Decisions page shows verdicts')
+
+      // ── Step 6: Drilldown shows execution status (not Failed) ─────────────
+      console.log('Checking drilldown execution status...')
+      await page.locator('tbody tr').first().click()
+
+      // Drilldown must open
+      await expect(
+        page.getByText(/governance verdict|execution status/i).first()
+      ).toBeVisible({ timeout: 10_000 })
+
+      // Execution status must NOT be "Failed"
+      const failedBadge = page.getByText(/^failed$/i)
+      const isFailed = await failedBadge.isVisible().catch(() => false)
+      if (isFailed) {
+        // Capture the error detail to surface it clearly
+        const errorText = await page.getByText(/error|github|api/i).allTextContents().catch(() => [])
+        throw new Error(`Execution status is Failed — details: ${errorText.join(' | ')}`)
+      }
+
+      console.log('  ✓ Drilldown execution status is not Failed')
     } else {
       console.log('  Scan found 0 proposals (clean environment) — skipping decisions check')
       test.info().annotations.push({
