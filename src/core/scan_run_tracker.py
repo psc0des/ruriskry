@@ -130,7 +130,8 @@ class ScanRunTracker:
             matches = [
                 r
                 for r in records
-                if r.get("agent_type") == agent_type and r.get("status") == "complete"
+                if r.get("agent_type") == agent_type
+                and r.get("status") in ("complete", "error")
             ]
             if not matches:
                 return None
@@ -138,7 +139,7 @@ class ScanRunTracker:
 
         query = (
             "SELECT TOP 1 * FROM c "
-            "WHERE c.agent_type = @agent_type AND c.status = 'complete' "
+            "WHERE c.agent_type = @agent_type AND (c.status = 'complete' OR c.status = 'error') "
             "ORDER BY c.started_at DESC"
         )
         items = list(
