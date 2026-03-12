@@ -277,6 +277,12 @@ resource "azurerm_linux_virtual_machine" "dr01" {
   admin_password                  = var.vm_admin_password
   disable_password_authentication = false
 
+  # System-assigned MI required by AMA to authenticate to Log Analytics.
+  # Without this, AMA cannot send heartbeats or metrics — alert fires forever.
+  identity {
+    type = "SystemAssigned"
+  }
+
   network_interface_ids = [azurerm_network_interface.dr01.id]
 
   os_disk {
@@ -320,6 +326,11 @@ resource "azurerm_linux_virtual_machine" "web01" {
   admin_username                  = var.vm_admin_username
   admin_password                  = var.vm_admin_password
   disable_password_authentication = false
+
+  # System-assigned MI required by AMA — same reason as dr01.
+  identity {
+    type = "SystemAssigned"
+  }
 
   # Cloud-init script: runs once on first boot after terraform apply.
   # Installs stress-ng and adds a cron job that spikes CPU every 30 minutes
@@ -504,6 +515,26 @@ resource "azurerm_monitor_data_collection_rule_association" "web01" {
 }
 
 # =============================================================================
+# AMA Role Assignments — Monitoring Metrics Publisher
+# =============================================================================
+# AMA authenticates to Log Analytics using the VM's System-Assigned MI.
+# Without this role, AMA silently drops all telemetry (heartbeats, perf)
+# even if the extension shows "Provisioning succeeded" in the portal.
+# Scope: resource group (not subscription) — least-privilege.
+
+resource "azurerm_role_assignment" "ama_dr01" {
+  scope                = azurerm_resource_group.prod.id
+  role_definition_name = "Monitoring Metrics Publisher"
+  principal_id         = azurerm_linux_virtual_machine.dr01.identity[0].principal_id
+}
+
+resource "azurerm_role_assignment" "ama_web01" {
+  scope                = azurerm_resource_group.prod.id
+  role_definition_name = "Monitoring Metrics Publisher"
+  principal_id         = azurerm_linux_virtual_machine.web01.identity[0].principal_id
+}
+
+# =============================================================================
 # 12. Monitor Action Group (alert destination)
 # =============================================================================
 
@@ -528,7 +559,7 @@ resource "azurerm_monitor_action_group" "prod" {
     content {
       name                    = "ruriskry-alert-trigger"
       service_uri             = var.alert_webhook_url
-      use_common_alert_schema = true
+      use_common_alert_schema = false
     }
   }
 }
