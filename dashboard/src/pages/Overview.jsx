@@ -10,13 +10,14 @@
  */
 
 import React, { useEffect, useState } from 'react'
-import { useOutletContext, useNavigate } from 'react-router-dom'
+import { useOutletContext, useNavigate, NavLink } from 'react-router-dom'
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
   CartesianGrid,
 } from 'recharts'
 import {
   CheckCircle, AlertTriangle, Clock, Zap, TrendingUp, RefreshCw, Cpu,
+  Activity as ActivityIcon, Terminal,
 } from 'lucide-react'
 import { fetchAgentLastRun } from '../api'
 import NumberTicker from '../components/magicui/NumberTicker'
@@ -159,10 +160,113 @@ function PendingCard({ review, onNavigate }) {
   )
 }
 
+// ── AlertsCard ─────────────────────────────────────────────────────────────
+
+function AlertsCard({ total, active, resolved, resolutionRate }) {
+  return (
+    <GlowCard
+      color={active > 0 ? 'red' : 'slate'}
+      intensity={active > 0 ? 'medium' : 'low'}
+      beam={active > 0}
+      beamDuration={3}
+      className="p-5"
+    >
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-sm font-semibold text-slate-300 flex items-center gap-2">
+          <Zap className="w-4 h-4 text-slate-500" />
+          Alert Activity
+        </h2>
+        <NavLink to="/alerts" className="text-xs text-blue-400 hover:text-blue-300 transition-colors">
+          View all →
+        </NavLink>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <p className="text-[10px] text-slate-500 uppercase tracking-wide font-semibold mb-1">Total</p>
+          <p className="text-2xl font-bold text-slate-200 tabular-nums" style={{ fontFamily: 'var(--font-data)' }}>
+            <NumberTicker value={total} />
+          </p>
+        </div>
+        <div>
+          <p className="text-[10px] text-slate-500 uppercase tracking-wide font-semibold mb-1">Active</p>
+          <div className="flex items-center gap-2">
+            <p className={`text-2xl font-bold tabular-nums ${active > 0 ? 'text-rose-400' : 'text-slate-500'}`} style={{ fontFamily: 'var(--font-data)' }}>
+              <NumberTicker value={active} />
+            </p>
+            {active > 0 && (
+              <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+            )}
+          </div>
+        </div>
+        <div>
+          <p className="text-[10px] text-slate-500 uppercase tracking-wide font-semibold mb-1">Investigated</p>
+          <p className="text-2xl font-bold text-emerald-400 tabular-nums" style={{ fontFamily: 'var(--font-data)' }}>
+            <NumberTicker value={resolved} />
+          </p>
+        </div>
+        <div>
+          <p className="text-[10px] text-slate-500 uppercase tracking-wide font-semibold mb-1">Investigation Rate</p>
+          <p className="text-2xl font-bold text-slate-300 tabular-nums" style={{ fontFamily: 'var(--font-data)' }}>
+            {resolutionRate !== null ? <><NumberTicker value={resolutionRate} />%</> : <span className="text-slate-600">—</span>}
+          </p>
+        </div>
+      </div>
+    </GlowCard>
+  )
+}
+
+// ── ExecutionMetricsCard ───────────────────────────────────────────────────
+
+function ExecutionMetricsCard({ executions }) {
+  if (!executions) return null
+  return (
+    <GlowCard color="purple" intensity="low" className="p-5">
+      <div className="flex items-center gap-2 mb-4">
+        <Terminal className="w-4 h-4 text-violet-400" />
+        <h2 className="text-sm font-semibold text-slate-300">Execution Metrics</h2>
+      </div>
+      <div className="grid grid-cols-3 gap-3 mb-4">
+        <div>
+          <p className="text-[10px] text-slate-500 uppercase tracking-wide font-semibold mb-1">Applied</p>
+          <p className="text-2xl font-bold text-emerald-400 tabular-nums" style={{ fontFamily: 'var(--font-data)' }}>
+            <NumberTicker value={executions.applied ?? 0} />
+          </p>
+        </div>
+        <div>
+          <p className="text-[10px] text-slate-500 uppercase tracking-wide font-semibold mb-1">PR Created</p>
+          <p className="text-2xl font-bold text-blue-400 tabular-nums" style={{ fontFamily: 'var(--font-data)' }}>
+            <NumberTicker value={executions.pr_created ?? 0} />
+          </p>
+        </div>
+        <div>
+          <p className="text-[10px] text-slate-500 uppercase tracking-wide font-semibold mb-1">Failed</p>
+          <p className="text-2xl font-bold text-rose-400 tabular-nums" style={{ fontFamily: 'var(--font-data)' }}>
+            <NumberTicker value={executions.failed ?? 0} />
+          </p>
+        </div>
+      </div>
+      <div className="border-t border-slate-800/60 pt-3 grid grid-cols-2 gap-3">
+        <div>
+          <p className="text-[10px] text-slate-500 uppercase tracking-wide font-semibold mb-1">Agent Fix Rate</p>
+          <p className="text-xl font-bold text-violet-400 tabular-nums" style={{ fontFamily: 'var(--font-data)' }}>
+            <NumberTicker value={executions.agent_fix_rate ?? 0} decimals={1} suffix="%" />
+          </p>
+        </div>
+        <div>
+          <p className="text-[10px] text-slate-500 uppercase tracking-wide font-semibold mb-1">Success Rate</p>
+          <p className="text-xl font-bold text-emerald-400 tabular-nums" style={{ fontFamily: 'var(--font-data)' }}>
+            <NumberTicker value={executions.success_rate ?? 0} decimals={1} suffix="%" />
+          </p>
+        </div>
+      </div>
+    </GlowCard>
+  )
+}
+
 // ── Main Component ─────────────────────────────────────────────────────────
 
 export default function Overview() {
-  const { evaluations, metrics, agents, pendingReviews } = useOutletContext()
+  const { evaluations, metrics, agents, pendingReviews, alerts } = useOutletContext()
   const navigate = useNavigate()
 
   const [recentScans, setRecentScans] = useState([])
@@ -202,6 +306,11 @@ export default function Overview() {
   const avgSri = metrics?.sri_composite?.avg ?? metrics?.avg_sri ?? 0
 
   const sriColor = avgSri <= 25 ? 'green' : avgSri <= 60 ? 'amber' : 'red'
+
+  const alertTotal          = alerts?.length ?? 0
+  const alertActive         = (alerts ?? []).filter(a => a.status === 'firing' || a.status === 'investigating').length
+  const alertResolved       = (alerts ?? []).filter(a => a.status === 'resolved').length
+  const alertResolutionRate = alertTotal > 0 ? Math.round(alertResolved / alertTotal * 100) : null
 
   return (
     <div className="p-6 space-y-6 max-w-6xl mx-auto">
@@ -283,6 +392,17 @@ export default function Overview() {
           color={pendingReviews.length > 0 ? 'amber' : 'slate'}
           urgent={pendingReviews.length > 0}
         />
+      </div>
+
+      {/* ── Alerts + Execution metrics ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <AlertsCard
+          total={alertTotal}
+          active={alertActive}
+          resolved={alertResolved}
+          resolutionRate={alertResolutionRate}
+        />
+        <ExecutionMetricsCard executions={metrics?.executions} />
       </div>
 
       {/* ── SRI trend + pending reviews ── */}
