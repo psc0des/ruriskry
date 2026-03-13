@@ -284,6 +284,12 @@ npx @azure/static-web-apps-cli deploy ./dist \
 
 ### Infrastructure changed (tfvars / main.tf)
 
+> **Rule: all configuration changes go through `terraform.tfvars` + `terraform apply`. Never use `az containerapp update --set-env-vars` to change runtime config.**
+>
+> `az containerapp update --set-env-vars` is only used in two controlled places in `deploy.sh`: image swap (Step 4a) and GitHub PAT wiring (Step 4b). Using it for anything else causes Terraform state drift — `terraform plan` will show "No changes" even though tfvars and the live Container App disagree. New contributors won't notice, and `terraform apply` will silently do nothing.
+>
+> Every runtime setting (`LLM_TIMEOUT`, `LLM_CONCURRENCY_LIMIT`, `EXECUTION_GATEWAY_ENABLED`, `ORG_NAME`, etc.) has a corresponding variable in `variables.tf` and is passed to the Container App as an env var in `main.tf`. Change the value in `terraform.tfvars` and apply — that is the only path.
+
 ```bash
 cd infrastructure/terraform-core
 terraform validate
@@ -438,6 +444,7 @@ npx @azure/static-web-apps-cli deploy ./dist \
 | Azure Monitor Agent silently drops VM telemetry (no metrics appear for `vm-dr-01` or `vm-web-01`) | VMs missing `SystemAssigned` managed identity and/or `Monitoring Metrics Publisher` role — AMA requires a valid MI to authenticate metric ingestion | Fixed in `infrastructure/terraform-prod/main.tf`: `identity { type = "SystemAssigned" }` block + `azurerm_role_assignment` (`Monitoring Metrics Publisher`) added to both VMs. Run `terraform apply` in `terraform-prod` to apply. |
 | All agent scans return `401 PermissionDenied ... lacks Microsoft.CognitiveServices/accounts/OpenAI/responses/write` | `local_authentication_enabled = false` on Foundry disables API key auth; the Container App MI is missing the `Cognitive Services OpenAI User` role | Handled automatically by `azurerm_role_assignment.foundry_openai_user` in Terraform. If you're hitting this on an existing deploy that pre-dates the fix, run `terraform apply` to add the role assignment. |
 | State lock stuck after network drop | Connection reset before Terraform could release the blob lease | Break the lease: `az storage blob lease break --account-name ruriskrytfstate<suffix> --container-name tfstate --blob-name terraform-core.tfstate` |
+| `terraform plan` shows "No changes" after manually running `az containerapp update --set-env-vars` | The Container App's active revision already has the value you set, so Azure reports no drift — even if `terraform.tfvars` disagrees. Terraform state is now inconsistent with reality. | Never use `az containerapp update --set-env-vars` for config changes. Always update the value in `terraform.tfvars` and run `terraform apply`. To verify the live value: `az containerapp show --name ruriskry-core-backend-<suffix> --resource-group ruriskry-core-engine-rg --query "properties.template.containers[0].env" -o table` |
 
 ---
 
