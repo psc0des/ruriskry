@@ -29,11 +29,11 @@ foundry_custom_subdomain_name = ""
 create_foundry_project    = true
 foundry_project_name      = "ruriskry"
 create_foundry_deployment = true
-foundry_model             = "gpt-4.1"
-foundry_model_version     = "2025-04-14"
-foundry_deployment_name   = "gpt-41"
+foundry_model             = "gpt-5-mini"
+foundry_model_version     = "2025-08-07"
+foundry_deployment_name   = "gpt-5-mini"
 foundry_scale_type        = "GlobalStandard"
-foundry_capacity          = 50
+foundry_capacity          = 200   # 200K TPM — supports 6 concurrent agent calls safely
 
 # Key Vault secret names (runtime reads these via .env)
 keyvault_secret_name_foundry_key = "foundry-primary-key"
@@ -56,8 +56,11 @@ backend_min_replicas = 1
 backend_max_replicas = 3
 
 # LLM tuning
-llm_timeout           = 120
-llm_concurrency_limit = 3
+# llm_timeout: hard wall-clock cap per agent call. Must be >300s for multi-step loops.
+# llm_concurrency_limit: shared semaphore across ALL agents (3 ops + 4 governance + 1 execution
+#   = up to 8 callers). 6 is safe at 200K TPM. Lower only if hitting sustained 429s.
+llm_timeout           = 600
+llm_concurrency_limit = 6
 
 # Execution Gateway — GitHub PAT
 # Store the PAT manually in Key Vault (never in this file):
