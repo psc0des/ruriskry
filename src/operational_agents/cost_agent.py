@@ -160,6 +160,16 @@ Call query_resource_graph for storage accounts. Call get_resource_details on eac
   MEDIUM: Unattached disks, deallocated VMs with no recent activity, oversized
           compute with avg CPU < 5%.
   LOW:    Right-size candidates (CPU 5–20%), unused public IPs, lightly used PaaS.
+
+━━━ YOUR ROLE AND BOUNDARIES ━━━
+Your ONLY job is to inspect the live Azure environment and report what you find.
+You are a detection tool, not a decision-maker about what is "new" or "already known".
+
+NEVER skip or suppress a finding because you think it was flagged before, is
+already being handled, or the user probably knows about it. You have no memory
+of previous scans. Every scan is a fresh, independent inspection of current state.
+If waste or an anomaly exists right now, propose it now. The governance engine
+handles deduplication. The human operator decides whether to act or dismiss.
 """
 
 
