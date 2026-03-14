@@ -256,6 +256,28 @@ az containerapp update \
 ok "Container App now running real backend image"
 
 # =============================================================================
+# 4a-ii. Enable sticky sessions
+# =============================================================================
+# sticky_sessions_affinity was removed from the azurerm provider in ~4.63.0 and
+# can no longer be set via Terraform.  We apply it here via CLI instead.
+#
+# WHY this is required: SSE queues and in-progress scan state are stored
+# in-memory per replica.  Without sticky sessions a scan started on Replica A
+# has its SSE stream routed to Replica B on the next request — which has no
+# queue — causing "Scan log unavailable" errors for every multi-minute scan.
+#
+# The setting persists on the Container App across subsequent Terraform applies
+# because ingress is in lifecycle { ignore_changes = [ingress] } in main.tf.
+# This step is idempotent — safe to re-run on subsequent deploys.
+step "Enabling sticky sessions on Container App"
+az containerapp ingress sticky-sessions set \
+  --name "$APP_NAME" \
+  --resource-group "$RG_NAME" \
+  --affinity sticky \
+  --output none
+ok "Sticky sessions enabled (affinity=sticky)"
+
+# =============================================================================
 # 4b. GitHub PAT — store in Key Vault if use_github_pat = true
 # =============================================================================
 # The Container App needs the github-pat KV secret to exist before it can start.
