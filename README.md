@@ -33,7 +33,7 @@ Today's tooling offers two options: **block actions with static rules** or **mon
 
 ## The Solution — A CAB for AI
 
-RuriSkry is the **Change Advisory Board for AI agents**. Just like a human CAB reviews production changes across risk, compliance, precedent, and cost — RuriSkry does the same for every AI agent action, automatically. Before any action executes, it runs through four specialized governance agents that produce a branded **Skry Risk Index (SRI™)**:
+RuriSkry is a **governance engine** that acts as the **Change Advisory Board for AI agents**. Just like a human CAB reviews production changes across risk, compliance, precedent, and cost — RuriSkry does the same for every AI agent action, automatically. Before any action executes, it runs through four specialized governance agents that produce a branded **Skry Risk Index (SRI™)**:
 
 ```
 ┌─────────────────────────────────────────────────────┐
