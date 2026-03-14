@@ -15,7 +15,6 @@ import { LayoutDashboard, ScanLine, Bot, ShieldCheck, FileText, Activity, Zap, S
 
 const NAV = [
   { to: '/overview',  icon: LayoutDashboard, label: 'Overview' },
-  { to: '/scans',     icon: ScanLine,        label: 'Scans' },
   { to: '/alerts',    icon: Zap,             label: 'Alerts' },
   { to: '/agents',    icon: Bot,             label: 'Agents' },
   { to: '/decisions', icon: ShieldCheck,     label: 'Decisions' },

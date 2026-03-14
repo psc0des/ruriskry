@@ -6,7 +6,8 @@ test.describe('RuriSkry dashboard e2e', () => {
 
     await expect(page.getByText(/agents connected/i)).toBeVisible()
     await expect(page.getByRole('link', { name: /overview/i })).toBeVisible()
-    await expect(page.getByRole('link', { name: /scans/i })).toBeVisible()
+    // Scans is merged into Agents — check for agents link instead
+    await expect(page.getByRole('link', { name: /agents/i })).toBeVisible()
     await expect(page.getByRole('link', { name: /decisions/i })).toBeVisible()
     await expect(page.getByRole('heading', { name: /Recent scan runs/i })).toBeVisible()
     await expect(page.getByText(/Auto-refresh 5s/i)).toBeVisible()
@@ -15,7 +16,7 @@ test.describe('RuriSkry dashboard e2e', () => {
   test('deploy scan runs and completes (verdict or framework error)', async ({ page }) => {
     // Deploy scans take 3-5 min on live Azure — override the global 180s limit.
     test.setTimeout(360_000)
-    await page.goto('/scans')
+    await page.goto('/agents')
 
     await page.getByLabel(/Resource Group/i).fill('ruriskry-prod-rg')
     await page.getByRole('button', { name: /Deploy Scan/i }).click()

@@ -355,6 +355,47 @@ class DeployAgent:
                 + (" | explicit deny-all: YES" if has_deny_all else " | no explicit deny-all")
             )
             scan_notes.append(note)
+
+            # ── Auto-propose for CRITICAL findings (deterministic path) ──────
+            # The LLM must call propose_action after reading this tool result,
+            # but LLM non-determinism means it can sometimes decide "no issues"
+            # on re-runs (e.g. it reasons the issue is already known/flagged).
+            # Internet-exposed management ports are too dangerous to leave to
+            # LLM discretion — auto-propose here so they are ALWAYS captured.
+            # tool_propose_action deduplicates so the LLM calling it too is safe.
+            if critical_rules:
+                already_proposed = any(
+                    p.target.resource_id == nsg_resource_id
+                    and p.action_type == ActionType.MODIFY_NSG
+                    for p in proposals_holder
+                )
+                if not already_proposed:
+                    rule_descriptions = "; ".join(
+                        f"'{r.get('name','?')}' port={r.get('destinationPortRange') or r.get('properties',{}).get('destinationPortRange','?')} src={r.get('sourceAddressPrefix') or r.get('properties',{}).get('sourceAddressPrefix','?')}"
+                        for r in critical_rules[:5]
+                    )
+                    proposals_holder.append(ProposedAction(
+                        agent_id=_AGENT_ID,
+                        action_type=ActionType.MODIFY_NSG,
+                        target=ActionTarget(
+                            resource_id=nsg_resource_id,
+                            resource_type="Microsoft.Network/networkSecurityGroups",
+                        ),
+                        reason=(
+                            f"CRITICAL: {len(critical_rules)} internet-exposed management "
+                            f"port rule(s) on NSG '{nsg_name}': {rule_descriptions}. "
+                            "Each rule exposes a management port to the open internet "
+                            "(source=*/Any/Internet), creating unauthorized remote access "
+                            "and RCE risk. Remove or restrict these rules immediately."
+                        ),
+                        urgency=Urgency.HIGH,
+                        nsg_change_direction="restrict",
+                    ))
+                    logger.info(
+                        "DeployAgent: auto-proposed CRITICAL NSG fix — %d rule(s) on %s",
+                        len(critical_rules), nsg_name,
+                    )
+
             return json.dumps(rules, default=str)
 
         @af.tool(
@@ -451,6 +492,17 @@ class DeployAgent:
                 urgency_enum = Urgency(urgency.lower())
             except ValueError:
                 urgency_enum = Urgency.MEDIUM
+
+            # Deduplicate: CRITICAL NSG findings are auto-proposed by tool_list_nsg_rules.
+            # If the LLM also calls propose_action for the same (resource_id, action_type),
+            # skip it silently to avoid duplicate governance pipeline evaluations.
+            if any(
+                p.target.resource_id == resource_id and p.action_type == action_type_enum
+                for p in proposals_holder
+            ):
+                name = resource_id.split("/")[-1]
+                logger.debug("DeployAgent: deduped proposal — %s on %s", action_type, name)
+                return f"Already proposed: {action_type} on {name} (governance dedup)"
 
             if not resource_group and "/" in resource_id:
                 parts = resource_id.split("/")
