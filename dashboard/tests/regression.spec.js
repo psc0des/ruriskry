@@ -21,7 +21,8 @@ test.describe('Sidebar navigation', () => {
         const nav = page.locator('nav, [class*="sidebar"], [class*="Sidebar"]')
         await expect(nav).toBeVisible()
 
-        const navItems = ['overview', 'scans', 'agents', 'decisions', 'audit']
+        // Scans is now merged into Agents — sidebar has 5 items: overview, alerts, agents, decisions, audit
+        const navItems = ['overview', 'alerts', 'agents', 'decisions', 'audit']
         for (const item of navItems) {
             await expect(
                 page.getByRole('link', { name: new RegExp(item, 'i') })
@@ -32,12 +33,7 @@ test.describe('Sidebar navigation', () => {
     test('navigates between all pages without errors', async ({ page }) => {
         await page.goto('/overview')
 
-        // Scans
-        await page.getByRole('link', { name: /scans/i }).click()
-        await expect(page).toHaveURL(/\/scans/)
-        await expect(page.getByRole('heading', { name: /scans/i })).toBeVisible()
-
-        // Agents
+        // Agents (formerly separate Scans + Agents — now merged under /agents)
         await page.getByRole('link', { name: /agents/i }).click()
         await expect(page).toHaveURL(/\/agents/)
         await expect(page.getByRole('heading', { name: /agents/i }).first()).toBeVisible()

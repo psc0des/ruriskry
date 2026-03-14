@@ -29,7 +29,6 @@ import {
 } from './api'
 import Sidebar from './components/Sidebar'
 import Overview  from './pages/Overview'
-import Scans     from './pages/Scans'
 import Agents    from './pages/Agents'
 import Decisions from './pages/Decisions'
 import AuditLog  from './pages/AuditLog'
@@ -221,7 +220,7 @@ export default function App() {
         <Route path="/" element={<AppShell />}>
           <Route index element={<Navigate to="/overview" replace />} />
           <Route path="overview"    element={<Overview />} />
-          <Route path="scans"       element={<Scans />} />
+          <Route path="scans"       element={<Navigate to="/agents" replace />} />
           <Route path="agents"      element={<Agents />} />
           <Route path="decisions"   element={<Decisions />} />
           <Route path="decisions/:id" element={<Decisions />} />
