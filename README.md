@@ -36,20 +36,20 @@ Today's tooling offers two options: **block actions with static rules** or **mon
 RuriSkry is a **governance engine** that acts as the **Change Advisory Board for AI agents**. Just like a human CAB reviews production changes across risk, compliance, precedent, and cost — RuriSkry does the same for every AI agent action, automatically. Before any action executes, it runs through four specialized governance agents that produce a branded **Skry Risk Index (SRI™)**:
 
 ```
-┌─────────────────────────────────────────────────────┐
-│              SKRY RISK INDEX (SRI™)              │
-│                                                     │
-│   SRI:Infrastructure ████████████░░░░░░░░  32/100   │
-│   SRI:Policy         ████████████████░░░░  40/100   │
-│   SRI:Historical     ██████░░░░░░░░░░░░░░  15/100   │
-│   SRI:Cost           ████░░░░░░░░░░░░░░░░  10/100   │
-│                                          ─────────  │
-│   SRI Composite                           72/100    │
-│                                                     │
-│   Verdict: ❌ DENIED                                │
-│   Reason: Critical policy violation + high blast    │
-│           radius on production dependency chain     │
-└─────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│               SKRY RISK INDEX (SRI™)                     │
+│                                                          │
+│   SRI:Infrastructure  ████████████░░░░░░░░░░  32/100    │
+│   SRI:Policy          ████████████████░░░░░░  40/100    │
+│   SRI:Historical      ██████░░░░░░░░░░░░░░░░  15/100    │
+│   SRI:Cost            ████░░░░░░░░░░░░░░░░░░  10/100    │
+│                       ──────────────────────────────     │
+│   SRI Composite                               72/100    │
+│                                                          │
+│   Verdict:  ❌  DENIED                                   │
+│   Reason:   Critical policy violation + high blast       │
+│             radius on production dependency chain        │
+└──────────────────────────────────────────────────────────┘
 ```
 
 ### SRI™ Dimensions
