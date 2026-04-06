@@ -43,29 +43,72 @@ In Azure, use Managed Identity. Locally, `az login` is used by the same credenti
 
 Deploy the full stack to Azure in one command. No local Python or Node.js runtime needed.
 
+### Step 1 — Clone
 ```bash
-# 1. Clone
-git clone https://github.com/psc0codes/ruriskry.git
+git clone https://github.com/psc0des/ruriskry.git
 cd ruriskry
+```
 
-# 2. Configure Terraform
+### Step 2 — Create Terraform remote state storage *(one-time, run in PowerShell)*
+
+> Skip this if you already have a `ruriskrytfstate<suffix>` storage account.
+
+```powershell
+# Replace <suffix> with a short unique string (e.g. "jd4821") — use the same value throughout
+az group create --name ruriskry-tfstate-rg --location eastus2
+az storage account create --name ruriskrytfstate<suffix> --resource-group ruriskry-tfstate-rg --location eastus2 --sku Standard_LRS --allow-blob-public-access false
+az storage container create --name tfstate --account-name ruriskrytfstate<suffix>
+```
+
+### Step 3 — Create `backend.hcl` *(not committed — contains your storage account name)*
+
+```bash
+cat > infrastructure/terraform-core/backend.hcl <<EOF
+resource_group_name  = "ruriskry-tfstate-rg"
+storage_account_name = "ruriskrytfstate<suffix>"
+container_name       = "tfstate"
+key                  = "terraform-core.tfstate"
+EOF
+```
+
+### Step 4 — Configure tfvars
+
+```bash
 cp infrastructure/terraform-core/terraform.tfvars.example \
    infrastructure/terraform-core/terraform.tfvars
-# Edit terraform.tfvars — set subscription_id and suffix at minimum
-# See infrastructure/terraform-core/deploy.md for remote state setup (one-time)
+```
 
-# 3. Deploy everything — Terraform + Docker build + ACR push + Container App + Static Web App
+Edit `terraform.tfvars` — at minimum set:
+```hcl
+subscription_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"   # az account show --query id -o tsv
+suffix          = "<suffix>"   # same as Step 2 — used in all Azure resource names
+```
+
+### Step 5 — Deploy everything
+
+```bash
+# Run in Git Bash (not PowerShell) from the repo root
 bash scripts/deploy.sh
-# If Stage 2 fails, resume without re-waiting or rebuilding:
+# If Stage 2 fails partway, resume without rebuilding:
 #   bash scripts/deploy.sh --stage2
 ```
 
-After `deploy.sh` completes, the app is live. Terraform injects all environment variables
-into the Container App automatically — no `.env` file is needed for cloud deployment.
+`deploy.sh` handles Terraform init (with `backend.hcl`) → ACR creation → Docker build/push
+→ full infra apply → frontend deploy → health check. When it finishes:
 
-**Outputs:**
-- Backend URL: `terraform -chdir=infrastructure/terraform-core output backend_url`
-- Dashboard URL: `terraform -chdir=infrastructure/terraform-core output dashboard_url`
+```
+Dashboard  →  https://<app>.azurestaticapps.net
+Backend    →  https://ruriskry-core-backend-<suffix>.<hash>.eastus2.azurecontainerapps.io
+```
+
+Terraform injects all environment variables into the Container App automatically — no `.env`
+file is needed for cloud deployment.
+
+**Get URLs after deployment:**
+```bash
+terraform -chdir=infrastructure/terraform-core output backend_url
+terraform -chdir=infrastructure/terraform-core output dashboard_url
+```
 
 ---
 
@@ -75,7 +118,7 @@ Run the backend and dashboard locally against your Azure infrastructure (or in m
 
 ```bash
 # 1. Clone and install
-git clone https://github.com/psc0codes/ruriskry.git
+git clone https://github.com/psc0des/ruriskry.git
 cd ruriskry
 python -m venv .venv
 source .venv/bin/activate       # Linux/Mac
@@ -262,7 +305,7 @@ Run a scan from the dashboard. When an APPROVED verdict is issued for an IaC-man
 resource, the gateway will create a PR in your repo with the proposed Terraform change.
 Check the drilldown panel for execution status and a link to the PR.
 
-See `Adding-Terraform-Feature.md` for full implementation guide.
+See `infrastructure/terraform-core/deploy.md` for full implementation guide.
 
 ---
 
