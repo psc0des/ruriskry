@@ -132,7 +132,7 @@ class Settings(BaseSettings):
 
     # Path within iac_github_repo to the Terraform config directory.
     # Env var: IAC_TERRAFORM_PATH
-    iac_terraform_path: str = "infrastructure/terraform-prod"
+    iac_terraform_path: str = "infrastructure/terraform-demo"
 
     # Master on/off switch for the Execution Gateway.
     # False (default) = verdicts are informational only; no PRs are created.

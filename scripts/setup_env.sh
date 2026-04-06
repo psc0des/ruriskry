@@ -34,7 +34,7 @@ done
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 TERRAFORM_DIR="$PROJECT_ROOT/infrastructure/terraform-core"
-TERRAFORM_PROD_DIR="$PROJECT_ROOT/infrastructure/terraform-prod"
+TERRAFORM_PROD_DIR="$PROJECT_ROOT/infrastructure/terraform-demo"
 ENV_FILE="$PROJECT_ROOT/.env"
 ENV_EXAMPLE_FILE="$PROJECT_ROOT/.env.example"
 
@@ -85,7 +85,7 @@ SEARCH_KEY_SECRET_NAME=$(tf_raw keyvault_secret_name_search_key)
 COSMOS_KEY_SECRET_NAME=$(tf_raw keyvault_secret_name_cosmos_key)
 
 # Live topology defaults:
-# Prefer terraform-prod workspace GUID when available (monitoring/demo alerts),
+# Prefer terraform-demo workspace GUID when available (monitoring/demo alerts),
 # otherwise fall back to core terraform output.
 PROD_LOG_WORKSPACE_GUID="$(tf_raw_optional_from_dir "$TERRAFORM_PROD_DIR" "log_analytics_workspace_guid")"
 LOG_WORKSPACE_SOURCE="core"

@@ -53,7 +53,7 @@ application code to add a new alert.
 
 ## Adding a new VM
 
-Follow these steps in `infrastructure/terraform-prod/main.tf`. Each step builds
+Follow these steps in `infrastructure/terraform-demo/main.tf`. Each step builds
 on the previous one.
 
 ### Step 1 — Define the VM resource
@@ -71,7 +71,7 @@ resource "azurerm_linux_virtual_machine" "my_vm" {
     "criticality"  = "high"          # low | medium | high | critical
     "cost-center"  = "my-team"
     "environment"  = "production"
-    "iac_path"     = "infrastructure/terraform-prod"
+    "iac_path"     = "infrastructure/terraform-demo"
     "iac_repo"     = "yourorg/yourrepo"
   })
 }
@@ -211,7 +211,7 @@ resource "azurerm_monitor_metric_alert" "my_vm_cpu" {
 ### Step 4 — Apply
 
 ```bash
-cd infrastructure/terraform-prod
+cd infrastructure/terraform-demo
 terraform plan   # verify only your new resources appear
 terraform apply
 ```

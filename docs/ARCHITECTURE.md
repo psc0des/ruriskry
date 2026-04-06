@@ -225,7 +225,7 @@ To activate live Azure topology queries for governance agents (Phase 19), also s
 `USE_LIVE_TOPOLOGY=true`. This third flag is required alongside `USE_LOCAL_MOCKS=false` and
 `AZURE_SUBSCRIPTION_ID` — defaulting to `false` keeps tests safe even in live-mode environments.
 
-### Governed Resources (`infrastructure/terraform-prod/`)
+### Governed Resources (`infrastructure/terraform-demo/`)
 
 The resources that RuriSkry **governs** in live demos. These are the targets of operational
 agent actions — not the governance system itself.
@@ -280,7 +280,7 @@ Azure Key Vault
 | Azure Container Registry | `infrastructure/terraform-core/` | Backend Docker image — admin disabled, pulled via Managed Identity |
 | Azure Container Apps | `infrastructure/terraform-core/` | FastAPI backend (all agents in-process) |
 | Azure Static Web Apps | `infrastructure/terraform-core/` | React dashboard (`dashboard/`) |
-| Demo prod resources | `infrastructure/terraform-prod/` | Governed targets (VMs, NSG, storage) |
+| Demo prod resources | `infrastructure/terraform-demo/` | Governed targets (VMs, NSG, storage) |
 
 > All Azure resources are provisioned by Terraform. `scripts/deploy.sh` handles the full first-time deploy in one command: staged Terraform apply → Docker build + push (local Docker) → dashboard build + SWA deploy. For subsequent code changes see the Redeploy Workflows section in `infrastructure/terraform-core/deploy.md`.
 
@@ -777,7 +777,7 @@ data/
 └── seed_resources.json        # Azure resource topology (see note below)
 infrastructure/
 ├── terraform-core/            # Main infra — Foundry, Search, Cosmos, Key Vault, ACR, Container Apps, Static Web App
-└── terraform-prod/            # Mini prod env — VMs, NSG, storage, App Service, alerts
+└── terraform-demo/            # Mini prod env — VMs, NSG, storage, App Service, alerts
 dashboard/                     # Vite + React frontend
 ```
 
@@ -786,7 +786,7 @@ dashboard/                     # Vite + React frontend
 `data/seed_resources.json` contains two groups of resources:
 
 1. **Mini prod resources** (ruriskry-prod-rg) — `vm-dr-01`, `vm-web-01`, `payment-api-prod`,
-   `nsg-east-prod`, `ruriskryprodprod`. These match `infrastructure/terraform-prod/` exactly.
+   `nsg-east-prod`, `ruriskryprodprod`. These match `infrastructure/terraform-demo/` exactly.
    After `terraform apply`, replace `YOUR-SUBSCRIPTION-ID` with your real subscription ID.
    Each has a specific governance scenario (DENIED / APPROVED / ESCALATED).
 

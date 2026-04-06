@@ -16,7 +16,7 @@
 
 **Last updated (prev):** 2026-03-14 (Non-IaC action type guard in Terraform PR flow: `RESTART_SERVICE` (and any future operational action types) is now blocked before it reaches GitHub — `create_pr_from_manual` checks `action.action_type in _NON_IAC_ACTION_TYPES` and raises `ValueError` with a clear message: "restart_service cannot be expressed as a Terraform change — use Fix by Agent or az vm start"; API converts this to HTTP 400; `EvaluationDrilldown.jsx` now shows the error inline (rose banner) instead of a browser `alert()` popup — matching the existing `Alerts.jsx` pattern; 1 new test `test_restart_service_raises_non_iac_error`; **793 tests passing, 0 failed**)
 
-**Last updated (prev):** 2026-03-14 (Cosmos execution persistence + Activity Logs diagnostic setting: (1) **`CosmosExecutionClient`** — execution gateway records were stored only in the Container App's ephemeral filesystem (`data/executions/*.json`), so every new revision wiped all `manual_required` records and made "PR failed: API error 404" appear when clicking the Terraform PR button (backend returned HTTP 404 because execution_id was gone); migrated to Cosmos DB using the established `CosmosDecisionClient` pattern — new `CosmosExecutionClient` class in `src/infrastructure/cosmos_client.py` with `upsert()`, `get_all()`, `delete()` (mock: `data/executions/*.json`, live: `governance-executions` container, partition key `/resource_id`); `cosmos_container_executions: str = "governance-executions"` added to `src/config.py`; `ExecutionGateway` updated to import and use `CosmosExecutionClient` — `_save()` now calls `cosmos.upsert()`, `_ensure_loaded()` calls `cosmos.get_all()`; both `governance-executions` (partition key `/resource_id`) and the previously-missing `governance-scan-runs` (partition key `/agent_type`) added as `azurerm_cosmosdb_sql_container` resources in `infrastructure/terraform-core/main.tf` — both added to management lock `depends_on`; all 5 Cosmos containers now fully Terraform-managed so `deploy.sh` provisions them on every fresh deploy; (2) **`query_activity_log` fix** — both sync and async variants of `query_activity_log` in `azure_tools.py` were the only functions that raised `RuntimeError` on failure instead of returning `[]`; fixed to catch exceptions and `logger.warning()` + `return []` matching the pattern of all other azure_tools functions; this eliminated the "query_activity_log API failed" error in alert investigations; (3) **Activity Logs Diagnostic Setting** — `AzureActivity` KQL table requires a Diagnostic Setting to stream subscription activity logs to Log Analytics; added `azurerm_monitor_diagnostic_setting.activity_logs` to `infrastructure/terraform-prod/main.tf` targeting `/subscriptions/{subscription_id}` → prod Log Analytics workspace; 8 log categories: Administrative, Security, ServiceHealth, Alert, Recommendation, Policy, Autoscale, ResourceHealth; applied via `terraform apply -target`; **792 tests passing, 0 failed**)
+**Last updated (prev):** 2026-03-14 (Cosmos execution persistence + Activity Logs diagnostic setting: (1) **`CosmosExecutionClient`** — execution gateway records were stored only in the Container App's ephemeral filesystem (`data/executions/*.json`), so every new revision wiped all `manual_required` records and made "PR failed: API error 404" appear when clicking the Terraform PR button (backend returned HTTP 404 because execution_id was gone); migrated to Cosmos DB using the established `CosmosDecisionClient` pattern — new `CosmosExecutionClient` class in `src/infrastructure/cosmos_client.py` with `upsert()`, `get_all()`, `delete()` (mock: `data/executions/*.json`, live: `governance-executions` container, partition key `/resource_id`); `cosmos_container_executions: str = "governance-executions"` added to `src/config.py`; `ExecutionGateway` updated to import and use `CosmosExecutionClient` — `_save()` now calls `cosmos.upsert()`, `_ensure_loaded()` calls `cosmos.get_all()`; both `governance-executions` (partition key `/resource_id`) and the previously-missing `governance-scan-runs` (partition key `/agent_type`) added as `azurerm_cosmosdb_sql_container` resources in `infrastructure/terraform-core/main.tf` — both added to management lock `depends_on`; all 5 Cosmos containers now fully Terraform-managed so `deploy.sh` provisions them on every fresh deploy; (2) **`query_activity_log` fix** — both sync and async variants of `query_activity_log` in `azure_tools.py` were the only functions that raised `RuntimeError` on failure instead of returning `[]`; fixed to catch exceptions and `logger.warning()` + `return []` matching the pattern of all other azure_tools functions; this eliminated the "query_activity_log API failed" error in alert investigations; (3) **Activity Logs Diagnostic Setting** — `AzureActivity` KQL table requires a Diagnostic Setting to stream subscription activity logs to Log Analytics; added `azurerm_monitor_diagnostic_setting.activity_logs` to `infrastructure/terraform-demo/main.tf` targeting `/subscriptions/{subscription_id}` → prod Log Analytics workspace; 8 log categories: Administrative, Security, ServiceHealth, Alert, Recommendation, Policy, Autoscale, ResourceHealth; applied via `terraform apply -target`; **792 tests passing, 0 failed**)
 
 **Last updated (prev):** 2026-03-14 (Backend restart fix + live test suite to 36/36: (1) **Root route added** — FastAPI had no `GET /` route; Azure Container Apps' default HTTP liveness probe hits `GET /` → 404 → restart after ~41s (3 probe failures × 10s period); added `@app.get("/")` returning `{"status":"ok","service":"ruriskry-backend"}` — probe now succeeds and container stays alive during long scans; deployed as revision `r202603141700`; (2) **live-test-round2.spec.js** — testing team's 36-test live suite fixed from 31/36 → **36/36**: (a) `/scans` SPA routing test updated (redirects to `/agents`, heading is "Agents" exact); (b) sidebar navigation updated (no "Scans" link, only "Agents"); (c) Admin "shows system configuration" — `getByText(/system configuration/i)` strict mode violation (matched heading + subtitle paragraph) fixed to `getByRole('heading', ...)`; Admin badge `/live.*azure/i` cross-node text split fixed — checked `\blive\b` and `azure` separately; (d) Decisions search filter — `getByPlaceholder(/search/i)` found nothing (page uses select dropdowns) — broadened to `or(select).or(placeholder).or(class filter)`; (e) Admin Alerts filter broadened similarly; (f) Decisions drilldown execution status scroll added; **792 tests passing, 0 failed**)
 
@@ -44,7 +44,7 @@
 
 **Last updated (prev):** 2026-03-13 (Agent intelligence overhaul — all 3 operational agent system prompts completely rewritten for enterprise-grade coverage: **MonitoringAgent** `_SCAN_INSTRUCTIONS` now 6-step scan (VM power state via `get_resource_details`, DB health, Container Apps/App Services, observability gaps including AMA extension, orphaned disks/public IPs); `_ALERT_INSTRUCTIONS` expanded from 2 to 5 alert types (availability/heartbeat, CPU/memory, disk/storage, database, network/connectivity); **root cause fix for vm-web-01 false-clean bug** — old instructions checked CPU metrics only; deallocated VMs return no metrics, which the old agent interpreted as "all clear" instead of as confirmation of down state; new instructions explicitly mandate checking VM power state first before any metric queries; **DeployAgent** `_AGENT_INSTRUCTIONS` expanded from NSG-only to 7 security domains: resource discovery (NSGs/VMs/storage/DBs/Key Vaults/public IPs), NSG audit, storage security (publicBlobAccess/HTTPS/TLS), DB & Key Vault security (publicNetworkAccess/private endpoints/soft-delete), VM security posture (disk encryption/auth type/public IP without NSG), recent config changes via activity log, zero-tag governance; **CostAgent** `_AGENT_INSTRUCTIONS` gains deallocated VM waste detection, unattached disk flagging (`diskState=Unattached` → MEDIUM delete_resource), orphaned public IP flagging (LOW), Redis/storage in discovery query, urgency scale (MEDIUM/LOW) added; **777 tests passing**)
 
-**Last updated (prev):** 2026-03-13 (Phase 30 complete + doc sync — alert labels "Resolved"→"Investigated" (display only, stored value unchanged); Overview AlertsCard "Resolution Rate"→"Investigation Rate"; Decisions table new Agent column with colored badge pills (Monitoring=blue, Cost=amber, Deploy=purple); `initialAgent` prop on DecisionTable for URL-driven pre-selection; Scans verdict count now navigates to `/decisions?agent=<id>`; `key={agentParam}` on DecisionTable forces remount on agent filter change; all "SRE" labels renamed to "Monitoring" across AgentControls/DecisionTable/LiveLogPanel/AuditLog/Overview/Scans; dedup `action_id` update fix — existing `manual_required` record's `action_id` now updated to latest verdict's `action_id` on re-scan (prevents "No execution record" for re-scanned resources); terraform-prod AMA identity fix — both VMs (`vm-dr-01`, `vm-web-01`) given `SystemAssigned` MI + `azurerm_role_assignment` for "Monitoring Metrics Publisher" role to fix silent telemetry drop; **777 tests passing**)
+**Last updated (prev):** 2026-03-13 (Phase 30 complete + doc sync — alert labels "Resolved"→"Investigated" (display only, stored value unchanged); Overview AlertsCard "Resolution Rate"→"Investigation Rate"; Decisions table new Agent column with colored badge pills (Monitoring=blue, Cost=amber, Deploy=purple); `initialAgent` prop on DecisionTable for URL-driven pre-selection; Scans verdict count now navigates to `/decisions?agent=<id>`; `key={agentParam}` on DecisionTable forces remount on agent filter change; all "SRE" labels renamed to "Monitoring" across AgentControls/DecisionTable/LiveLogPanel/AuditLog/Overview/Scans; dedup `action_id` update fix — existing `manual_required` record's `action_id` now updated to latest verdict's `action_id` on re-scan (prevents "No execution record" for re-scanned resources); terraform-demo AMA identity fix — both VMs (`vm-dr-01`, `vm-web-01`) given `SystemAssigned` MI + `azurerm_role_assignment` for "Monitoring Metrics Publisher" role to fix silent telemetry drop; **777 tests passing**)
 
 **Last updated (prev):** 2026-03-12 (Phase 30 — Rollback for Agent-Applied Fixes: `Rollback` button appears next to `Applied` badge in both `EvaluationDrilldown.jsx` and `Alerts.jsx` — only when status is `applied` (agent-executed fix); confirm dialog shows `rollback_hint` from stored `execution_plan`; `ExecutionAgent.rollback()` public method with `_rollback_mock()` (deterministic inverse: RESTART→deallocate, SCALE_UP/DOWN→resize back, NSG→restore rule, DELETE→cannot auto-rollback) and `_rollback_with_framework()` (LLM-driven with write tools + `_ROLLBACK_INSTRUCTIONS`); `ExecutionGateway.rollback_agent_fix()` validates status=applied, calls `agent.rollback()`, sets status→`rolled_back`, stores `rollback_log`; `POST /api/execution/{id}/rollback` endpoint; `ExecutionRecord.rolled_back` status + `rollback_log` field; `rolled_back` badge (amber) in both status configs; `ExecutionLogView` accepts `label` prop for rollback steps display; 13 new tests; **776 tests passing**; backend + dashboard deployed)
 
@@ -54,7 +54,7 @@
 
 **Last updated (prev):** 2026-03-12 (MonitoringAgent + alert UX fixes: (1) `_ALERT_INSTRUCTIONS` updated — new explicit guidance for heartbeat/availability alerts: stopped/deallocated VMs have no queryable metrics, empty metric results confirm the alert, agent should call `get_resource_details` + `query_activity_log` then propose `restart_service`; (2) metric field in `_normalize_azure_alert_payload()` now prefers human-readable `essentials.alertRule` over raw KQL `SearchQuery` for log alerts; (3) `description` field added to normalizer output so it flows into `alert_payload` and dashboard; (4) AlertPanel "no findings" message improved with explanatory text; (5) AlertPanel Alert Reference section now shows Value/Threshold row and Description field; backend + frontend deployed; **732 tests passing**)
 
-**Last updated (prev):** 2026-03-12 (Alert infrastructure wiring + payload normalizer fixes — `_normalize_azure_alert_payload()` added to `dashboard_api.py`: handles Azure Monitor Common Alert Schema, non-common schema, and flat pass-through; workspace pivot: when Azure Monitor reports a Log Analytics workspace as target (Log Alerts V2 always does this), regex-extracts the actual affected VM name from `essentials.description` or `alertRule` name and constructs correct VM ARM ID — eliminates LLM non-determinism that caused ~50% of alerts to show 0 findings; `infrastructure/terraform-prod/main.tf`: `use_common_alert_schema = false` on webhook receiver; `infrastructure/terraform-prod/terraform.tfvars`: `alert_webhook_url` set to backend URL — activates `dynamic webhook_receiver` in `ag-ruriskry-prod` action group; both `alert-vm-dr-01-heartbeat` and `alert-vm-web-01-cpu-high` rules now wire to governance engine via single action group update; `deploy.md` wiring section rewritten to use `terraform-prod` approach; **732 tests passing**; backend revision `r202603120006` deployed)
+**Last updated (prev):** 2026-03-12 (Alert infrastructure wiring + payload normalizer fixes — `_normalize_azure_alert_payload()` added to `dashboard_api.py`: handles Azure Monitor Common Alert Schema, non-common schema, and flat pass-through; workspace pivot: when Azure Monitor reports a Log Analytics workspace as target (Log Alerts V2 always does this), regex-extracts the actual affected VM name from `essentials.description` or `alertRule` name and constructs correct VM ARM ID — eliminates LLM non-determinism that caused ~50% of alerts to show 0 findings; `infrastructure/terraform-demo/main.tf`: `use_common_alert_schema = false` on webhook receiver; `infrastructure/terraform-demo/terraform.tfvars`: `alert_webhook_url` set to backend URL — activates `dynamic webhook_receiver` in `ag-ruriskry-prod` action group; both `alert-vm-dr-01-heartbeat` and `alert-vm-web-01-cpu-high` rules now wire to governance engine via single action group update; `deploy.md` wiring section rewritten to use `terraform-prod` approach; **732 tests passing**; backend revision `r202603120006` deployed)
 
 **Last updated (prev):** 2026-03-11 (Dedicated Alerts tab — Azure Monitor alert investigations now visible on dashboard; `POST /api/alert-trigger` refactored to async (returns immediately with `{status: "firing", alert_id}`, investigation runs in background via `BackgroundTasks`); `AlertTracker` persistence class (`data/alerts/` mock, Cosmos `governance-alerts` live); 4 new endpoints: `GET /api/alerts` (list), `GET /api/alerts/active-count`, `GET /api/alerts/{id}/status`, `GET /api/alerts/{id}/stream` (SSE); `Alerts.jsx` page with table, severity/status filters, search, drilldown panel (timeline, outcome summary, agent findings with SRI/violations); Sidebar `Zap` icon with red active-count badge; duplicate alert detection (same resource+metric); admin reset clears `data/alerts/`; 4 new tests; **732 tests passing**; backend revision `r202603111949` + dashboard deployed)
 
@@ -64,7 +64,7 @@
 
 **Last updated (prev):** 2026-03-11 (Two fixes: (1) AuthorizationFailed on "Execute via Agent" NSG delete — Container App MI was missing `Network Contributor` role; added `azurerm_role_assignment.network_contributor` at subscription scope in `main.tf`; targeted apply applied it; (2) Audit Log clickable rows — click any row → slide-in details panel showing: full resource ARM ID (copyable), "What the Agent Found" (full action reason), SRI™ breakdown bars (infrastructure/policy/historical/financial), policy violations list, governance rationale, triage tier/mode, audit reference IDs; `ChevronRight` indicator on each row; backdrop click closes panel; active row highlighted with blue ring)
 
-**Last updated (prev):** 2026-03-11 (PR generator fix: root cause of stub-file fallback identified and resolved — (1) code: `_apply_nsg_fix_to_content()` Pass 2 now handles `security_rule` blocks where `{` is on the next line; better logging added to both `_find_and_patch_tf_file()` and `_apply_nsg_fix_to_content()` so failures are diagnosed immediately in Container App logs; 9 new unit tests covering standalone resource, inline block, multi-rule NSG, already-Deny, brace-on-next-line; Docker image rebuilt + pushed; new Container App revision `r202603111556` deployed; E2E test passes in 56s; (2) root cause in test env: live Azure NSG rule is named `ssh` but IaC test repo has `allow-ssh-anywhere` — name mismatch causes `_apply_nsg_fix_to_content()` to return None → stub fallback; fix: update `your-org/your-iac-repo/infrastructure/terraform-prod/main.tf` to rename `security_rule.name` from `allow-ssh-anywhere` to `ssh`; **728 tests passing**)
+**Last updated (prev):** 2026-03-11 (PR generator fix: root cause of stub-file fallback identified and resolved — (1) code: `_apply_nsg_fix_to_content()` Pass 2 now handles `security_rule` blocks where `{` is on the next line; better logging added to both `_find_and_patch_tf_file()` and `_apply_nsg_fix_to_content()` so failures are diagnosed immediately in Container App logs; 9 new unit tests covering standalone resource, inline block, multi-rule NSG, already-Deny, brace-on-next-line; Docker image rebuilt + pushed; new Container App revision `r202603111556` deployed; E2E test passes in 56s; (2) root cause in test env: live Azure NSG rule is named `ssh` but IaC test repo has `allow-ssh-anywhere` — name mismatch causes `_apply_nsg_fix_to_content()` to return None → stub fallback; fix: update `your-org/your-iac-repo/infrastructure/terraform-demo/main.tf` to rename `security_rule.name` from `allow-ssh-anywhere` to `ssh`; **728 tests passing**)
 
 **Last updated (prev):** 2026-03-11 (Production debugging session — 4 bugs found and fixed via E2E Playwright testing: (1) `src/infrastructure/search_client.py` — catches `HttpResponseError 404` when `incident-history` index missing on fresh deploy; returns `[]` instead of crashing scan; (2) `src/core/scan_run_tracker.py` — `get_latest_completed_by_agent_type()` now includes `status='error'` alongside `status='complete'` — previously error scans were invisible in last-run and scan history; (3) `terraform.tfvars` — `iac_github_repo` typo fixed: `psc0codes` → `psc0des`; every Execution Gateway PR creation was returning GitHub 404; applied via targeted terraform apply; (4) `dashboard/tests/scan-capture.spec.js` — new E2E test: triggers deploy scan, polls to completion, verifies last-run endpoint captures it, checks scan history table shows the row, checks decisions table shows verdict, clicks drilldown and asserts execution status is not Failed; also fixed Container App revision force-update pattern: `--revision-suffix` required to pull new `latest` image when tag hasn't changed)
 
@@ -82,7 +82,7 @@
 
 **Last updated (prev):** 2026-03-10 (Terraform-native DASHBOARD_URL wiring: removed `var.dashboard_url` variable and Python tfvars-patching from `deploy.sh`; Container App now references `azurerm_static_web_app.dashboard.default_host_name` directly — Terraform creates SWA first (implicit dependency), reads the URL in-memory, and passes it into `DASHBOARD_URL` in the same apply; SWA removed from Stage 1 targets; Step 6 "Wire dashboard URL back" deleted from Manual Deploy path; `acr_admin_username` + `acr_admin_password` dead outputs removed (`admin_enabled = false`); `next_steps` heredoc rewritten to show live URLs; stale comment "Secrets (ACR password)" corrected in `main.tf`; `--stage2` guard added; health check retries 3× with 15s delay for Container App cold start)
 
-**Last updated (prev):** 2026-03-10 (Production deployment hardening: `scripts/deploy.sh` one-command deploy — staged apply (ACR + User-Assigned MI + AcrPull role + 90s sleep → docker build/push → full apply → dashboard → tfvars wiring); `--stage2` flag for resuming after Stage 1; image-exists detection skips redundant Docker rebuild; cross-platform python3/python detection; `npx` prerequisite check; `azurerm_user_assigned_identity.acr_pull` fixes `Operation expired` — AcrPull granted before Container App exists, no chicken-and-egg race; `azurerm_management_lock` `depends_on` all major resources — `terraform destroy` removes lock first automatically, no manual `az lock delete` needed; removed `terraform_data.docker_push` provisioner (was fragile, trigger-based); `terraform.tfvars.example` updated with correct defaults (`ruriskry-core-rg`, `create_foundry_project=true`, `foundry_capacity=50`, placeholder `iac_github_repo`); `deploy.md` fully rewritten with prerequisites table, Windows/Git Bash callout, failure recovery table, `--stage2` guidance; Docker Desktop now required (local build replaces ACR Tasks); provider lock files committed for both terraform-core and terraform-prod)
+**Last updated (prev):** 2026-03-10 (Production deployment hardening: `scripts/deploy.sh` one-command deploy — staged apply (ACR + User-Assigned MI + AcrPull role + 90s sleep → docker build/push → full apply → dashboard → tfvars wiring); `--stage2` flag for resuming after Stage 1; image-exists detection skips redundant Docker rebuild; cross-platform python3/python detection; `npx` prerequisite check; `azurerm_user_assigned_identity.acr_pull` fixes `Operation expired` — AcrPull granted before Container App exists, no chicken-and-egg race; `azurerm_management_lock` `depends_on` all major resources — `terraform destroy` removes lock first automatically, no manual `az lock delete` needed; removed `terraform_data.docker_push` provisioner (was fragile, trigger-based); `terraform.tfvars.example` updated with correct defaults (`ruriskry-core-rg`, `create_foundry_project=true`, `foundry_capacity=50`, placeholder `iac_github_repo`); `deploy.md` fully rewritten with prerequisites table, Windows/Git Bash callout, failure recovery table, `--stage2` guidance; Docker Desktop now required (local build replaces ACR Tasks); provider lock files committed for both terraform-core and terraform-demo)
 
 **Last updated (prev):** 2026-03-08 (Deployment infra: `infrastructure/terraform` renamed to `infrastructure/terraform-core`; ACR + Container Apps Environment + Container App + Static Web App resources added to `terraform-core/main.tf`; new variables (backend_image, backend_cpu/memory, backend_min/max_replicas, execution_gateway_enabled, llm_timeout, llm_concurrency_limit, slack_webhook_url, dashboard_url, org_name/compliance/risk_tolerance, static_web_app_location); new outputs (acr_login_server, acr_name, backend_url, dashboard_url, dashboard_deployment_token); `Dockerfile` + `.dockerignore` created at repo root; `docs/ARCHITECTURE.md` + `docs/SETUP.md` updated with deployment architecture and deploy commands; all references to old `infrastructure/terraform/` path updated)
 
@@ -135,7 +135,7 @@
 | Agent action menus (Phase 16) | ✅ Complete | ⋮ dropdown on each ConnectedAgents card — 6 actions |
 | Environment-agnosticism fixes | ✅ Complete | Broadened KQL, generic tags, `[]` fallback, mock fixes |
 | Azure infrastructure (Terraform) | ✅ Deployed | Foundry · Search · Cosmos · KV |
-| Mini prod environment (Terraform) | ✅ Complete | `infrastructure/terraform-prod/` |
+| Mini prod environment (Terraform) | ✅ Complete | `infrastructure/terraform-demo/` |
 | Secret management | ✅ Complete | Key Vault + `DefaultAzureCredential` |
 | Live Azure wiring | ✅ Complete | All 3 services connected |
 | React dashboard | ✅ Complete | `dashboard/` (Vite + React, same repo) |
@@ -336,7 +336,7 @@ must query Azure *right now* to know actual blast radius and real monthly cost.
   in live mode.
 - `src/governance_agents/financial_agent.py` — same branch pattern. `_find_resource()` in
   live mode returns dict with `monthly_cost` already populated by `_azure_enrich_topology`.
-- `infrastructure/terraform-prod/main.tf` — added `depends-on` and `governs` tags to all
+- `infrastructure/terraform-demo/main.tf` — added `depends-on` and `governs` tags to all
   4 governed resources so live tag-based inference works immediately after `terraform apply`.
 - `src/config.py` — `use_live_topology: bool = False` (env var `USE_LIVE_TOPOLOGY=true`).
   Third gate required alongside `USE_LOCAL_MOCKS=false` + `AZURE_SUBSCRIPTION_ID`. Default
@@ -632,7 +632,7 @@ Comprehensive correctness audit of Phase 12 and Phase 13.  All findings fixed.
 - [x] Learning: `learning/23-intelligent-agents.md`
 
 ### Phase 11 — Mini Production Environment
-- [x] `infrastructure/terraform-prod/main.tf` — 14 Azure resources in `ruriskry-prod-rg`:
+- [x] `infrastructure/terraform-demo/main.tf` — 14 Azure resources in `ruriskry-prod-rg`:
   - `vm-dr-01` (Standard_B1ms, Ubuntu) — idle DR VM; cost agent → `DELETE` → **DENIED**
     (tags: `disaster-recovery=true`, `environment=production`, `owner=platform-team`, `cost-center=infrastructure`)
   - `vm-web-01` (Standard_B1ms, Ubuntu) — active web server; SRE agent → `SCALE_UP` → **APPROVED**
@@ -646,57 +646,57 @@ Comprehensive correctness audit of Phase 12 and Phase 13.  All findings fixed.
   - CPU metric alert on `vm-web-01` (>80%, 15-min window) — triggers monitoring agent
   - Heartbeat scheduled-query alert on `vm-dr-01` (no heartbeat in 15 min) — triggers cost agent
   - Log Analytics workspace + Monitor action group backing both alerts
-- [x] `infrastructure/terraform-prod/variables.tf` — 6 variables: `subscription_id`, `location`,
+- [x] `infrastructure/terraform-demo/variables.tf` — 6 variables: `subscription_id`, `location`,
   `suffix` (regex-validated, drives globally-unique names), `vm_admin_username`,
   `vm_admin_password` (sensitive, 12-char min), `alert_email`
-- [x] `infrastructure/terraform-prod/outputs.tf` — all resource IDs, names, tags, IPs,
+- [x] `infrastructure/terraform-demo/outputs.tf` — all resource IDs, names, tags, IPs,
   App Service URL, `seed_resources_ids` helper output for updating `data/seed_resources.json`
-- [x] `infrastructure/terraform-prod/terraform.tfvars.example` — template with all placeholders
-- [x] `infrastructure/terraform-prod/README.md` — governance scenario SRI score breakdowns,
+- [x] `infrastructure/terraform-demo/terraform.tfvars.example` — template with all placeholders
+- [x] `infrastructure/terraform-demo/README.md` — governance scenario SRI score breakdowns,
   deploy/destroy commands, cost table (~$0.35/day with auto-shutdown), agent install note
 - [x] `data/seed_resources.json` — new `ruriskry-prod-rg` resources added with real Azure ID paths
   (placeholder subscription ID until `terraform apply`). Legacy mock resources (`vm-23`,
   `api-server-03`, `nsg-east`, etc.) **kept** for test compatibility.
-- [x] `.gitignore` — `infrastructure/terraform-prod/` tfstate and tfvars entries added
+- [x] `.gitignore` — `infrastructure/terraform-demo/` tfstate and tfvars entries added
 - [x] `learning/21-mini-prod-environment.md` — IaC concepts, tagging strategy, auto-shutdown
   cost math, full governance scenario walkthrough for a non-programmer audience (gitignored)
 - [x] **Test result: 398 passed, 10 xfailed, 0 failed** ✅ (seed_resources still has all legacy names)
 
 #### Phase 11 Bugfix — Azure capacity/quota constraints + region switch
-- [x] `infrastructure/terraform-prod/main.tf` — VM size `Standard_B1s` → `Standard_B2ls_v2`
+- [x] `infrastructure/terraform-demo/main.tf` — VM size `Standard_B1s` → `Standard_B2ls_v2`
   (B1s/B1ms capacity unavailable in eastus/eastus2 on trial subscriptions; B2ls_v2 available in canadacentral)
-- [x] `infrastructure/terraform-prod/main.tf` — App Service plan `B1` → `F1`
+- [x] `infrastructure/terraform-demo/main.tf` — App Service plan `B1` → `F1`
   (F1 free tier sufficient for governance demo; saves ~$0.43/day)
-- [x] `infrastructure/terraform-prod/variables.tf` — default `location` changed to `canadacentral`
+- [x] `infrastructure/terraform-demo/variables.tf` — default `location` changed to `canadacentral`
   (eastus/eastus2 had consistent quota failures; canadacentral has reliable B2ls_v2 + F1 availability)
-- [x] `infrastructure/terraform-prod/variables.tf` — location description updated (removed eastus2 reference)
-- [x] `infrastructure/terraform-prod/terraform.tfvars.example` — location updated to `canadacentral`, `vm_size` added explicitly
+- [x] `infrastructure/terraform-demo/variables.tf` — location description updated (removed eastus2 reference)
+- [x] `infrastructure/terraform-demo/terraform.tfvars.example` — location updated to `canadacentral`, `vm_size` added explicitly
 - Demo intent unchanged: governance verdicts (DENIED/APPROVED/ESCALATED) are tag-driven,
   not SKU-driven — swapping VM size has zero effect on SRI scoring
 
 #### Phase 11 Enhancement — CPU stress automation + AMA/DCR + Bastion removal
-- [x] `infrastructure/terraform-prod/main.tf` — `custom_data` (cloud-init) added to `vm-web-01`:
+- [x] `infrastructure/terraform-demo/main.tf` — `custom_data` (cloud-init) added to `vm-web-01`:
   installs `stress-ng` + adds cron job (`*/30 * * * *`, 20-min CPU spike) on first boot.
   CPU alert fires naturally every 30 min without manual intervention or SSH access.
   Cron persists across deallocation (OS disk preserved); only lost on `terraform destroy`.
-- [x] `infrastructure/terraform-prod/main.tf` — Azure Monitor Agent (AMA) VM extension added
+- [x] `infrastructure/terraform-demo/main.tf` — Azure Monitor Agent (AMA) VM extension added
   to both VMs (`azurerm_virtual_machine_extension`); Data Collection Rule (DCR) +
   associations added — heartbeat alert now uses real telemetry, not "no data" state
-- [x] `infrastructure/terraform-prod/main.tf` — Azure Bastion removed (subnet, public IP, host,
+- [x] `infrastructure/terraform-demo/main.tf` — Azure Bastion removed (subnet, public IP, host,
   SSH NSG rule). SSH not needed — VMs are governance targets, not interactive boxes.
   Saves ~$4.56/day. Use `az vm run-command invoke` for any one-off commands.
-- [x] `infrastructure/terraform-prod/main.tf` — dynamic cost lookup map (`vm_hourly_rate_usd_by_sku`)
+- [x] `infrastructure/terraform-demo/main.tf` — dynamic cost lookup map (`vm_hourly_rate_usd_by_sku`)
   added to `locals`; `outputs.tf` now prints actual hourly rate for the configured SKU
-- [x] `infrastructure/terraform-prod/README.md` — updated: SKU, region, cost table,
+- [x] `infrastructure/terraform-demo/README.md` — updated: SKU, region, cost table,
   cloud-init note, AMA/DCR note, Bastion removal note
 
 #### Phase 11 Bugfix — Storage ip_rules `/32` rejection (commit 31b40ba)
-- [x] `infrastructure/terraform-prod/main.tf` — split `locals` into two:
+- [x] `infrastructure/terraform-demo/main.tf` — split `locals` into two:
   - `local.allowed_source_cidr` → `<ip>/32` — used for NSG `source_address_prefix` (NSG accepts `/32`)
   - `local.storage_allowed_ip` → plain IP — used for storage `ip_rules` (Azure Storage rejects `/31` and `/32` CIDRs)
   - `local.raw_public_ip` — intermediate: `trimspace(api.ipify.org response)`, consumed by both
   - For override CIDRs ending in `/32`: `cidrhost()` strips to plain IP for storage; NSG keeps the `/32`
-- [x] `infrastructure/terraform-prod/outputs.tf` — added `storage_allowed_ip` output alongside
+- [x] `infrastructure/terraform-demo/outputs.tf` — added `storage_allowed_ip` output alongside
   the existing `nsg_allowed_source_cidr` so both effective values are visible after apply
 
 ### Phase 10 — A2A Protocol
@@ -954,7 +954,7 @@ GovernanceVerdict → ExecutionGateway
   `seed_resources.json` on failure or in mock mode
 - [x] `dashboard/src/components/EvaluationDrilldown.jsx` — Section 7: Execution Status panel with Approve/Dismiss buttons
 - [x] `dashboard/src/api.js` — `fetchExecutionStatus()`, `approveExecution()`, `dismissExecution()`
-- [x] `infrastructure/terraform-prod/main.tf` + `variables.tf` — `iac_repo` + `iac_path` from variables
+- [x] `infrastructure/terraform-demo/main.tf` + `variables.tf` — `iac_repo` + `iac_path` from variables
 - [x] `tests/test_execution_gateway.py` (33 tests) — IaC detection, verdict routing, approval, persistence, snapshot
 - [x] `tests/test_dashboard_api.py::TestGetResourceTags` (6 tests) — mock path, live path, fallback on failure
 - [x] `requirements.txt` — `PyGithub>=2.1.0` (commented as optional)
@@ -963,7 +963,7 @@ GovernanceVerdict → ExecutionGateway
 **Env vars (new):**
 - `GITHUB_TOKEN` — GitHub PAT with repo write access
 - `IAC_GITHUB_REPO` — e.g. `your-org/ruriskry`
-- `IAC_TERRAFORM_PATH` — e.g. `infrastructure/terraform-prod`
+- `IAC_TERRAFORM_PATH` — e.g. `infrastructure/terraform-demo`
 - `EXECUTION_GATEWAY_ENABLED` — `false` by default (opt-in)
 
 **Post-deploy fixes (same phase, incremental commits):**
@@ -1123,7 +1123,7 @@ through RuriSkry automatically — fully autonomous cloud governance loop.
 | `src/infrastructure/resource_graph.py` | `_azure_enrich_topology()` — 5-step KQL topology + cost_lookup; `_azure_get_resource()` + `_azure_list_all()` call it | Phase 19 |
 | `tests/test_live_topology.py` | 16 tests — cost_lookup, ResourceGraph enrichment, blast-radius + financial live mode | Phase 19 |
 | `tests/test_decision_tracker.py` | 10 xfail markers removed; `tracker._dir` → `tracker._cosmos._decisions_dir` | Phase 19 fix |
-| `infrastructure/terraform-prod/main.tf` | `depends-on` + `governs` tags on 4 governed resources | Phase 19 |
+| `infrastructure/terraform-demo/main.tf` | `depends-on` + `governs` tags on 4 governed resources | Phase 19 |
 | `src/core/explanation_engine.py` | `DecisionExplainer` — factors, counterfactuals, LLM summary, module-level cache | Phase 18 |
 | `tests/test_explanation_engine.py` | 5 tests — denied/escalated/approved shapes, factor ordering, API endpoint round-trip | Phase 18 |
 | `src/api/dashboard_api.py` | FastAPI REST — 18 endpoints; durable scan store; SSE live log; cancel; last-run; Slack status + test; explanation | Phase 18 |
@@ -1140,9 +1140,9 @@ through RuriSkry automatically — fully autonomous cloud governance loop.
 | `data/scans/` | Local JSON scan-run store (mock mode for ScanRunTracker) | Phase 16 |
 | `data/alerts/` | Local JSON alert investigation store (mock mode for AlertTracker) | Alerts |
 | `infrastructure/terraform-core/main.tf` | Azure infra — Foundry, Search, Cosmos (2 containers), KV | Phase 10 bugfixes |
-| `infrastructure/terraform-prod/main.tf` | Mini prod env — 2 VMs, NSG, storage, App Service, monitor alerts | Phase 11 |
-| `infrastructure/terraform-prod/outputs.tf` | Exports all resource IDs, names, tags, URLs | Phase 11 |
-| `infrastructure/terraform-prod/variables.tf` | Input variables incl. sensitive vm_admin_password | Phase 11 |
+| `infrastructure/terraform-demo/main.tf` | Mini prod env — 2 VMs, NSG, storage, App Service, monitor alerts | Phase 11 |
+| `infrastructure/terraform-demo/outputs.tf` | Exports all resource IDs, names, tags, URLs | Phase 11 |
+| `infrastructure/terraform-demo/variables.tf` | Input variables incl. sensitive vm_admin_password | Phase 11 |
 | `data/seed_resources.json` | Azure resource topology — ruriskry-prod-rg resources + legacy mocks | Phase 11 |
 | `dashboard/src/App.jsx` | Root component — fetchAll, setInterval, ConnectedAgents, LiveActivityFeed | Runtime fixes |
 | `dashboard/src/components/ConnectedAgents.jsx` | Agent card grid with online status + bar chart (NEW) | Runtime fixes |

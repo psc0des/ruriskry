@@ -75,7 +75,7 @@ def _make_verdict(decision: SRIVerdict, resource_id: str = "vm-web-01") -> Gover
 _TERRAFORM_TAGS = {
     "managed_by": "terraform",
     "iac_repo": "your-org/ruriskry",
-    "iac_path": "infrastructure/terraform-prod",
+    "iac_path": "infrastructure/terraform-demo",
 }
 
 
@@ -90,7 +90,7 @@ class TestIaCDetection:
         assert managed is True
         assert tool == "terraform"
         assert repo == "your-org/ruriskry"
-        assert path == "infrastructure/terraform-prod"
+        assert path == "infrastructure/terraform-demo"
 
     def test_bicep_tag_detected(self, gateway):
         tags = {"managed_by": "bicep", "iac_repo": "org/bicep-repo", "iac_path": "infra"}
@@ -408,7 +408,7 @@ class TestTerraformPRGenerator:
         with patch("src.core.terraform_pr_generator.settings") as mock_settings:
             mock_settings.github_token = ""
             mock_settings.iac_github_repo = "your-org/ruriskry"
-            mock_settings.iac_terraform_path = "infrastructure/terraform-prod"
+            mock_settings.iac_terraform_path = "infrastructure/terraform-demo"
             mock_settings.dashboard_url = "http://localhost:5173"
 
             gen = TerraformPRGenerator()
@@ -423,7 +423,7 @@ class TestTerraformPRGenerator:
                 iac_managed=True,
                 iac_tool="terraform",
                 iac_repo="your-org/ruriskry",
-                iac_path="infrastructure/terraform-prod",
+                iac_path="infrastructure/terraform-demo",
                 created_at=datetime.now(timezone.utc),
                 updated_at=datetime.now(timezone.utc),
             )
@@ -440,7 +440,7 @@ class TestTerraformPRGenerator:
         with patch("src.core.terraform_pr_generator.settings") as mock_settings:
             mock_settings.github_token = "ghp_fake_token"
             mock_settings.iac_github_repo = ""
-            mock_settings.iac_terraform_path = "infrastructure/terraform-prod"
+            mock_settings.iac_terraform_path = "infrastructure/terraform-demo"
             mock_settings.dashboard_url = "http://localhost:5173"
 
             gen = TerraformPRGenerator()
@@ -455,7 +455,7 @@ class TestTerraformPRGenerator:
                 iac_managed=True,
                 iac_tool="terraform",
                 iac_repo="",
-                iac_path="infrastructure/terraform-prod",
+                iac_path="infrastructure/terraform-demo",
                 created_at=datetime.now(timezone.utc),
                 updated_at=datetime.now(timezone.utc),
             )
@@ -472,7 +472,7 @@ class TestTerraformPRGenerator:
         with patch("src.core.terraform_pr_generator.settings") as mock_settings:
             mock_settings.github_token = ""
             mock_settings.iac_github_repo = ""
-            mock_settings.iac_terraform_path = "infrastructure/terraform-prod"
+            mock_settings.iac_terraform_path = "infrastructure/terraform-demo"
             mock_settings.dashboard_url = ""
             gen = TerraformPRGenerator()
 
@@ -506,7 +506,7 @@ class TestTerraformPRGenerator:
             iac_managed=True,
             iac_tool="terraform",
             iac_repo="your-org/ruriskry",
-            iac_path="infrastructure/terraform-prod",
+            iac_path="infrastructure/terraform-demo",
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc),
         )
@@ -524,7 +524,7 @@ class TestTerraformPRGenerator:
         with patch("src.core.terraform_pr_generator.settings") as mock_settings:
             mock_settings.github_token = ""
             mock_settings.iac_github_repo = "your-org/ruriskry"
-            mock_settings.iac_terraform_path = "infrastructure/terraform-prod"
+            mock_settings.iac_terraform_path = "infrastructure/terraform-demo"
             mock_settings.dashboard_url = "http://localhost:5173"
             gen = TerraformPRGenerator()
 
@@ -537,7 +537,7 @@ class TestTerraformPRGenerator:
             iac_managed=True,
             iac_tool="terraform",
             iac_repo="your-org/ruriskry",
-            iac_path="infrastructure/terraform-prod",
+            iac_path="infrastructure/terraform-demo",
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc),
         )

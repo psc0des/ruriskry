@@ -218,12 +218,12 @@ STATUS.md for full phase breakdown.
 4. `data/seed_incidents.json` — 7 past incidents for HistoricalPatternAgent.
 5. `data/seed_resources.json` — Azure resource topology. Contains two sections:
    - **Mini prod resources** (`ruriskry-prod-rg`): `vm-dr-01`, `vm-web-01`, `payment-api-prod`,
-     `nsg-east-prod`, `ruriskryproddata` — matches `infrastructure/terraform-prod/` deployment.
+     `nsg-east-prod`, `ruriskryproddata` — matches `infrastructure/terraform-demo/` deployment.
    - **Legacy mock resources**: `vm-23`, `api-server-03`, `nsg-east`, `aks-prod`, `storageshared01`
      — kept for test compatibility (all unit tests reference these names).
 6. `src/a2a/ruriskry_a2a_server.py` — A2A entry point: `RuriSkryAgentExecutor` + `AgentCard`.
 7. `src/a2a/agent_registry.py` — Agent registry: tracks connected agents and their stats.
-8. `infrastructure/terraform-prod/` — Mini production environment for live demos. Deploy these
+8. `infrastructure/terraform-demo/` — Mini production environment for live demos. Deploy these
    resources so RuriSkry governs real Azure VMs instead of purely mock data.
 
 ## Current Development Phase
@@ -259,7 +259,7 @@ Expanded from NSG-only to full infrastructure security posture: (1) resource dis
 - `src/api/dashboard_api.py`: `_run_agent_scan()` now persists `"status": "error"` (+ `"scan_error"` message) when the agent's LLM call fails or times out. Previously always wrote `"status": "complete"`, making timed-out scans indistinguishable from clean scans.
 - `dashboard/src/pages/Scans.jsx`: Added `AGENT_TYPE_LABELS` map keyed by `scan.agent_type` (`"deploy"/"monitoring"/"cost"`). Label lookup now uses `agent_type` first — fixes `scan_tracker` showing in the Agent column. Added `AlertTriangle` red "Error" badge for `status === "error"` with tooltip showing the error message.
 - `infrastructure/terraform-core/main.tf`: `azurerm_monitor_action_group.ruriskry` created as a named resource pointing at `https://<backend-fqdn>/api/alert-trigger`. No variable needed — webhook URL derived from Container App FQDN directly.
-- `infrastructure/terraform-prod/main.tf`: `azurerm_monitor_action_group.prod` (`ag-ruriskry-prod`) has `use_common_alert_schema = false` and a `dynamic webhook_receiver` activated by `var.alert_webhook_url`. Both `alert-vm-dr-01-heartbeat` (scheduled query) and `alert-vm-web-01-cpu-high` (metric) rules reference this action group — setting `alert_webhook_url` in tfvars wires both rules to RuriSkry in one apply.
+- `infrastructure/terraform-demo/main.tf`: `azurerm_monitor_action_group.prod` (`ag-ruriskry-prod`) has `use_common_alert_schema = false` and a `dynamic webhook_receiver` activated by `var.alert_webhook_url`. Both `alert-vm-dr-01-heartbeat` (scheduled query) and `alert-vm-web-01-cpu-high` (metric) rules reference this action group — setting `alert_webhook_url` in tfvars wires both rules to RuriSkry in one apply.
 - `src/api/dashboard_api.py`: `_normalize_azure_alert_payload()` added — normalises Azure Monitor Common Alert Schema and non-common schema to flat internal format. **Workspace pivot**: Log Alerts V2 always reports the Log Analytics workspace as `alertTargetID` (never the monitored VM) and `configurationItems` is empty when query returns 0 rows. The normalizer detects `operationalinsights/workspaces` in resource_id and regex-extracts the actual VM name from `essentials.description` or `alertRule` name, constructing the correct VM ARM ID. Without this, MonitoringAgent investigated the workspace and found nothing ~50% of the time (LLM non-determinism).
 - `dashboard/tests/regression.spec.js` + `e2e.spec.js`: Fixed 5 brittle test assertions (metrics contract `approval_rate` → `decisions`/`decision_percentages`; verdict badge locator scoped to `tbody`; Agents heading strict-mode `.first()`; table header waits via `locator('table').filter`; deploy scan e2e accepts framework error outcome).
 
@@ -392,7 +392,7 @@ Dashboard and backend refinements shipped after the rollback feature:
   `action_id` is now updated to the latest verdict's `action_id` before returning. Previously
   the stale `action_id` caused the drilldown to show "No execution record" because the new
   verdict's `action_id` didn't match any execution record.
-- `terraform-prod` AMA identity fix: both VMs (`vm-dr-01`, `vm-web-01`) given
+- `terraform-demo` AMA identity fix: both VMs (`vm-dr-01`, `vm-web-01`) given
   `identity { type = "SystemAssigned" }` blocks + `azurerm_role_assignment` resources for
   "Monitoring Metrics Publisher" role. Azure Monitor Agent silently drops telemetry without a
   valid managed identity — this was causing intermittent metric gaps in alert investigations.
@@ -529,7 +529,7 @@ until human dismisses them ("flag until fixed" governance pattern).
   `_get_affected_zones()` all route to `_rg_client` in live mode.
 - `src/governance_agents/financial_agent.py` — same branch pattern. Live `monthly_cost` from
   enriched ResourceGraphClient dict replaces static JSON value.
-- `infrastructure/terraform-prod/main.tf` — `depends-on` + `governs` tags on 4 resources.
+- `infrastructure/terraform-demo/main.tf` — `depends-on` + `governs` tags on 4 resources.
 - `src/config.py` — `use_live_topology: bool = False` (env var `USE_LIVE_TOPOLOGY=true`).
   Explicit opt-in required to activate live Azure topology; default `false` keeps tests safe
   even when `USE_LOCAL_MOCKS=false` + `AZURE_SUBSCRIPTION_ID` are set.
@@ -617,14 +617,14 @@ to seed data. All ops agent framework calls are throttled via ``run_with_throttl
 
 **Phase 11 — Mini Production Environment (complete)**
 
-- `infrastructure/terraform-prod/` — Terraform config that creates 5 real Azure resources in
+- `infrastructure/terraform-demo/` — Terraform config that creates 5 real Azure resources in
   `ruriskry-prod-rg` for live hackathon demos: `vm-dr-01` (DENIED scenario), `vm-web-01`
   (APPROVED scenario), `payment-api-prod` (critical dependency), `nsg-east-prod` (ESCALATED
   scenario), shared storage `ruriskryprod{suffix}`. Auto-shutdown at 22:00 UTC on both VMs.
   Azure Monitor alerts: CPU >80% on `vm-web-01`, heartbeat on `vm-dr-01`.
 - `data/seed_resources.json` updated: real `ruriskry-prod-rg` resource IDs added alongside
   legacy mock resources. Replace `YOUR-SUBSCRIPTION-ID` with your subscription ID after
-  running `terraform apply` in `infrastructure/terraform-prod/`.
+  running `terraform apply` in `infrastructure/terraform-demo/`.
 - **Test result: 420 passed, 10 xfailed, 0 failed** ✅
 
 **Previous: Phase 10 — A2A Protocol + Bug Fixes**

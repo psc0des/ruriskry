@@ -18,11 +18,11 @@ terraform {
   required_version = ">= 1.5.0"
 
   # Remote state — configured via backend.hcl at init time (not committed).
-  # Create infrastructure/terraform-prod/backend.hcl:
+  # Create infrastructure/terraform-demo/backend.hcl:
   #   resource_group_name  = "ruriskry-tfstate-rg"
   #   storage_account_name = "ruriskrytfstate<suffix>"
   #   container_name       = "tfstate"
-  #   key                  = "terraform-prod.tfstate"
+  #   key                  = "terraform-demo.tfstate"
   # Then: terraform init -backend-config=backend.hcl
   backend "azurerm" {}
 

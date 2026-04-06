@@ -106,5 +106,5 @@ variable "iac_github_repo" {
 variable "iac_terraform_path" {
   description = "Path within iac_github_repo to this Terraform directory. Written as iac_path tag on all resources."
   type        = string
-  default     = "infrastructure/terraform-prod"
+  default     = "infrastructure/terraform-demo"
 }

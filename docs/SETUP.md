@@ -174,7 +174,7 @@ python demo_live.py --resource-group ruriskry-prod-rg  # scope to a specific RG
 
 ## Optional: Deploy Mini Production Environment
 
-`infrastructure/terraform-prod/` creates 5 real Azure resources that RuriSkry governs
+`infrastructure/terraform-demo/` creates 5 real Azure resources that RuriSkry governs
 in live demos — turning mock IDs into actual Azure resource IDs on the dashboard.
 
 > **Deploy terraform-core first** (Path A above). You need the backend URL from
@@ -182,7 +182,7 @@ in live demos — turning mock IDs into actual Azure resource IDs on the dashboa
 > to fill in `alert_webhook_url` below.
 
 ```bash
-cd infrastructure/terraform-prod
+cd infrastructure/terraform-demo
 cp terraform.tfvars.example terraform.tfvars
 
 # Fill in terraform.tfvars — required fields:
@@ -198,7 +198,7 @@ cat > backend.hcl <<EOF
 resource_group_name  = "ruriskry-tfstate-rg"
 storage_account_name = "ruriskrytfstate<suffix>"
 container_name       = "tfstate"
-key                  = "terraform-prod.tfstate"
+key                  = "terraform-demo.tfstate"
 EOF
 
 terraform init -backend-config=backend.hcl
@@ -225,7 +225,7 @@ Resources created and their governance roles:
 | `nsg-east-prod` (NSG) | Deploy agent proposes open port 8080 | ESCALATED — affects all governed workloads |
 | `ruriskryprod{suffix}` (Storage) | Shared dependency of all three above | Deletion → high blast radius |
 
-See `infrastructure/terraform-prod/README.md` for full detail including cost estimates.
+See `infrastructure/terraform-demo/README.md` for full detail including cost estimates.
 
 ---
 
@@ -298,12 +298,12 @@ instead of directly modifying Azure resources. This prevents IaC state drift.
 
 **Step 1 — Add IaC tags to your Terraform resources:**
 
-All resources in `infrastructure/terraform-prod/main.tf` need:
+All resources in `infrastructure/terraform-demo/main.tf` need:
 ```hcl
 tags = {
   managed_by = "terraform"
   iac_repo   = "your-org/ruriskry"
-  iac_path   = "infrastructure/terraform-prod"
+  iac_path   = "infrastructure/terraform-demo"
 }
 ```
 
@@ -326,7 +326,7 @@ For local development only:
 # .env
 GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 IAC_GITHUB_REPO=owner/ruriskry
-IAC_TERRAFORM_PATH=infrastructure/terraform-prod
+IAC_TERRAFORM_PATH=infrastructure/terraform-demo
 EXECUTION_GATEWAY_ENABLED=true
 ```
 
@@ -438,7 +438,7 @@ throughput, the governance agent calls can be extracted to worker replicas behin
 | `DEFAULT_RESOURCE_GROUP` | No | `""` | Default Azure resource group for dashboard scan endpoints. Empty = scan whole subscription. Body `resource_group` overrides this. |
 | `GITHUB_TOKEN` | Phase 21 | `""` | GitHub PAT with repo write access (Contents + Pull requests). Required for Terraform PR generation. |
 | `IAC_GITHUB_REPO` | Phase 21 | `""` | GitHub repo for IaC PRs (e.g. `your-org/ruriskry`). |
-| `IAC_TERRAFORM_PATH` | Phase 21 | `infrastructure/terraform-prod` | Path within the repo to the Terraform config directory. |
+| `IAC_TERRAFORM_PATH` | Phase 21 | `infrastructure/terraform-demo` | Path within the repo to the Terraform config directory. |
 | `EXECUTION_GATEWAY_ENABLED` | No | `false` | Enable the Execution Gateway. When `false`, verdicts are informational only (no PRs created). |
 | `LLM_TIMEOUT` | No | `600` | Hard timeout (seconds) for any single agentic LLM call. Applied at two layers: (1) each individual HTTP request to Azure OpenAI, (2) the entire `agent.run()` agentic loop via `asyncio.wait_for`. gpt-5-mini multi-step audit loops need 10+ minutes; 600s is the production-tested minimum. Scans that exceed this limit set `scan_error` and show a red Error badge. |
 | `LLM_CONCURRENCY_LIMIT` | No | `6` | Maximum simultaneous LLM calls across all agents (3 operational + 4 governance + execution share one semaphore). `6` is safe at 200K TPM. Set lower only if hitting 429 errors. |

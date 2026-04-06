@@ -1,7 +1,15 @@
-# Mini Production Environment — Terraform
+# Demo Environment — Terraform
 
-This folder creates a **real Azure environment** that RuriSkry governs in live demos.
-Every resource here has a specific role in the governance story.
+This is a **demo environment** for testing and showcasing the RuriSkry core engine.
+It creates a small set of real Azure resources — 2 VMs, an App Service, an NSG, and a
+storage account — that represent a realistic production workload RuriSkry can govern.
+
+**This is not a production environment.** It exists solely to give the core engine
+real Azure resources to scan, evaluate, and act on. Deploy it in a separate subscription
+from `terraform-core` to emulate a real-world hub-spoke governance model where the
+governance engine is isolated from the workloads it oversees.
+
+Every resource here has a specific role in the governance demo story.
 
 ---
 
@@ -78,7 +86,7 @@ RuriSkry evaluates:
 
 ```bash
 # 1. Go to this folder
-cd infrastructure/terraform-prod
+cd infrastructure/terraform-demo
 
 # 2. Copy and fill in your variables
 cp terraform.tfvars.example terraform.tfvars
@@ -94,7 +102,7 @@ cat > backend.hcl <<EOF
 resource_group_name  = "ruriskry-tfstate-rg"
 storage_account_name = "ruriskrytfstate<suffix>"
 container_name       = "tfstate"
-key                  = "terraform-prod.tfstate"
+key                  = "terraform-demo.tfstate"
 EOF
 
 # 4. Initialize Terraform with remote state
@@ -132,7 +140,7 @@ mock Azure Resource Graph point to the actual resources, so the dashboard shows 
 ## Destroy (When You're Done)
 
 ```bash
-# From infrastructure/terraform-prod/
+# From infrastructure/terraform-demo/
 terraform destroy
 ```
 
@@ -164,7 +172,7 @@ az vm start --resource-group ruriskry-prod-rg --name vm-web-01
 ## File Map
 
 ```
-infrastructure/terraform-prod/
+infrastructure/terraform-demo/
 ├── main.tf                   ← All resources (VMs, NSG, storage, alerts, App Service)
 ├── variables.tf              ← Input variable definitions
 ├── outputs.tf                ← Exports all resource IDs, names, tags, URLs

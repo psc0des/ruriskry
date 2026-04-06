@@ -758,7 +758,7 @@ Get the execution status for a governance verdict.
       "iac_managed": true,
       "iac_tool": "terraform",
       "iac_repo": "your-org/ruriskry",
-      "iac_path": "infrastructure/terraform-prod",
+      "iac_path": "infrastructure/terraform-demo",
       "pr_url": "https://github.com/your-org/ruriskry/pull/42",
       "pr_number": 42,
       "reviewed_by": "",

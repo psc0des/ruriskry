@@ -62,11 +62,11 @@ to create the cross-subscription RBAC role assignments. Set `target_subscription
 
 Deploy order matters:
 1. `terraform-core` first (creates Container App — gives you the backend URL)
-2. `terraform-prod` second (put the backend URL into `alert_webhook_url` in its tfvars)
+2. `terraform-demo` second (put the backend URL into `alert_webhook_url` in its tfvars)
 
 Both use the same tfstate storage account (`ruriskrytfstate<suffix>`) with different state keys:
 - `terraform-core.tfstate` → core infrastructure
-- `terraform-prod.tfstate` → prod demo environment
+- `terraform-demo.tfstate` → prod demo environment
 
 ---
 
@@ -152,7 +152,7 @@ Other fields to review:
 
 ```hcl
 iac_github_repo    = "owner/repo"                   # for Execution Gateway PR creation
-iac_terraform_path = "infrastructure/terraform-prod"
+iac_terraform_path = "infrastructure/terraform-demo"
 use_github_pat     = false                          # set true after you store the PAT
 enable_rg_lock     = false                          # set true in production
 ```
@@ -245,7 +245,7 @@ Notifications fire for DENIED/ESCALATED verdicts and Azure Monitor alerts.
 
 ### Wire alert rules to the RuriSkry backend
 
-**If you use `infrastructure/terraform-prod`** (the recommended path):
+**If you use `infrastructure/terraform-demo`** (the recommended path):
 
 1. Get the backend URL from `terraform-core`:
    ```bash
@@ -253,20 +253,20 @@ Notifications fire for DENIED/ESCALATED verdicts and Azure Monitor alerts.
    terraform output -raw backend_url
    ```
 
-2. Set it in `infrastructure/terraform-prod/terraform.tfvars`:
+2. Set it in `infrastructure/terraform-demo/terraform.tfvars`:
    ```hcl
    alert_webhook_url = "https://<backend-url>/api/alert-trigger"
    ```
 
 3. Apply — this adds the webhook receiver to `ag-ruriskry-prod` alongside the existing email receiver. All alert rules already wired to `ag-ruriskry-prod` pick it up automatically:
    ```bash
-   cd infrastructure/terraform-prod
+   cd infrastructure/terraform-demo
    terraform apply -target=azurerm_monitor_action_group.prod
    ```
 
-> This is the correct approach. Every alert rule in `terraform-prod` references `azurerm_monitor_action_group.prod`, so setting `alert_webhook_url` once wires all of them — no per-rule steps.
+> This is the correct approach. Every alert rule in `terraform-demo` references `azurerm_monitor_action_group.prod`, so setting `alert_webhook_url` once wires all of them — no per-rule steps.
 
-**If you have alert rules outside `terraform-prod`** (manually created rules or rules in other RGs):
+**If you have alert rules outside `terraform-demo`** (manually created rules or rules in other RGs):
 
 Attach them to `ag-ruriskry-prod` — Action Groups are subscription-scoped, so they work cross-RG:
 
@@ -514,7 +514,7 @@ npx @azure/static-web-apps-cli deploy ./dist \
 | `terraform destroy` fails with `ScopeLocked` | Only occurs if `enable_rg_lock = true` and lock removal fails. Default is `false` so this should not occur. | Remove manually: `az lock delete --name ruriskry-core-engine-rg-lock --resource-group ruriskry-core-engine-rg`, then retry |
 | `409 Conflict: ResourceGroupBeingDeleted` on fresh deploy | Key Vault soft-delete recovery put the new RG into a deprovisioning state | Purge the soft-deleted KV first: `az keyvault purge --name ruriskry-core-kv-<suffix> --location eastus2`, wait, then re-run |
 | Container App `unable to pull image using Managed identity` | Azure IAM role propagation race condition | Fixed by placeholder image pattern — should not occur with `deploy.sh` |
-| Azure Monitor Agent silently drops VM telemetry (no metrics appear for `vm-dr-01` or `vm-web-01`) | VMs missing `SystemAssigned` managed identity and/or `Monitoring Metrics Publisher` role — AMA requires a valid MI to authenticate metric ingestion | Fixed in `infrastructure/terraform-prod/main.tf`: `identity { type = "SystemAssigned" }` block + `azurerm_role_assignment` (`Monitoring Metrics Publisher`) added to both VMs. Run `terraform apply` in `terraform-prod` to apply. |
+| Azure Monitor Agent silently drops VM telemetry (no metrics appear for `vm-dr-01` or `vm-web-01`) | VMs missing `SystemAssigned` managed identity and/or `Monitoring Metrics Publisher` role — AMA requires a valid MI to authenticate metric ingestion | Fixed in `infrastructure/terraform-demo/main.tf`: `identity { type = "SystemAssigned" }` block + `azurerm_role_assignment` (`Monitoring Metrics Publisher`) added to both VMs. Run `terraform apply` in `terraform-demo` to apply. |
 | All agent scans return `401 PermissionDenied ... lacks Microsoft.CognitiveServices/accounts/OpenAI/responses/write` | `local_authentication_enabled = false` on Foundry disables API key auth; the Container App MI is missing the `Cognitive Services OpenAI User` role | Handled automatically by `azurerm_role_assignment.foundry_openai_user` in Terraform. If you're hitting this on an existing deploy that pre-dates the fix, run `terraform apply` to add the role assignment. |
 | State lock stuck after network drop | Connection reset before Terraform could release the blob lease | Break the lease: `az storage blob lease break --account-name ruriskrytfstate<suffix> --container-name tfstate --blob-name terraform-core.tfstate` |
 | `terraform plan` shows "No changes" after manually running `az containerapp update --set-env-vars` | The Container App's active revision already has the value you set, so Azure reports no drift — even if `terraform.tfvars` disagrees. Terraform state is now inconsistent with reality. | Never use `az containerapp update --set-env-vars` for config changes. Always update the value in `terraform.tfvars` and run `terraform apply`. To verify the live value: `az containerapp show --name ruriskry-core-backend-<suffix> --resource-group ruriskry-core-engine-rg --query "properties.template.containers[0].env" -o table` |
