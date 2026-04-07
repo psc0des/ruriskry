@@ -215,6 +215,60 @@ fi
 ok "All prerequisites satisfied"
 
 # =============================================================================
+# 0. Pre-flight: purge soft-deleted resources from previous failed deploys
+# =============================================================================
+# If a previous deploy partially succeeded and the resource group was deleted,
+# Azure soft-deletes Cognitive Services accounts and Key Vault secrets.
+# Terraform cannot recreate them until purged — this causes confusing 409 errors.
+# This step detects and purges them automatically so re-deploys work cleanly.
+
+FOUNDRY_ACCOUNT_NAME=$(grep -E '^foundry_account_name\s*=' "$TF_DIR/terraform.tfvars" 2>/dev/null \
+  | sed 's/.*=\s*"\([^"]*\)".*/\1/' | tr -d '[:space:]')
+# If blank, derive the name the same way Terraform does: <prefix>-foundry-<suffix>
+# prefix = "ruriskry-${env}" where env defaults to "core"
+ENV_VAL=$(grep -E '^env\s*=' "$TF_DIR/terraform.tfvars" 2>/dev/null \
+  | sed 's/.*=\s*"\([^"]*\)".*/\1/' | tr -d '[:space:]')
+ENV_VAL=${ENV_VAL:-core}
+if [[ -z "$FOUNDRY_ACCOUNT_NAME" ]]; then
+  FOUNDRY_ACCOUNT_NAME="ruriskry-${ENV_VAL}-foundry-${SUFFIX}"
+fi
+
+KV_NAME="ruriskry-${ENV_VAL}-kv-${SUFFIX}"
+
+step "Pre-flight: checking for soft-deleted resources"
+
+# Check for soft-deleted Foundry / Cognitive Services account
+DELETED_FOUNDRY=$(az cognitiveservices account list-deleted \
+  --subscription "$SUBSCRIPTION_ID" \
+  --query "[?name=='${FOUNDRY_ACCOUNT_NAME}'].name" \
+  -o tsv 2>/dev/null)
+if [[ -n "$DELETED_FOUNDRY" ]]; then
+  log "Purging soft-deleted Foundry account: $FOUNDRY_ACCOUNT_NAME"
+  az cognitiveservices account purge \
+    --location "$FOUNDRY_LOCATION" \
+    --resource-group "$(grep -E '^resource_group_name\s*=' "$TF_DIR/terraform.tfvars" | sed 's/.*=\s*"\([^"]*\)".*/\1/' | tr -d '[:space:]' || echo "ruriskry-${ENV_VAL}-engine-rg")" \
+    --name "$FOUNDRY_ACCOUNT_NAME" \
+    --subscription "$SUBSCRIPTION_ID" 2>/dev/null || true
+  ok "Foundry account purged"
+else
+  ok "No soft-deleted Foundry account found"
+fi
+
+# Check for soft-deleted Key Vault
+DELETED_KV=$(az keyvault list-deleted \
+  --subscription "$SUBSCRIPTION_ID" \
+  --query "[?name=='${KV_NAME}'].name" \
+  -o tsv 2>/dev/null)
+if [[ -n "$DELETED_KV" ]]; then
+  log "Purging soft-deleted Key Vault: $KV_NAME"
+  az keyvault purge --name "$KV_NAME" --location "$FOUNDRY_LOCATION" \
+    --subscription "$SUBSCRIPTION_ID" 2>/dev/null || true
+  ok "Key Vault purged"
+else
+  ok "No soft-deleted Key Vault found"
+fi
+
+# =============================================================================
 # 0a. Register required Azure providers
 # =============================================================================
 step "Registering Azure providers"
