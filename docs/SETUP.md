@@ -8,7 +8,18 @@ Detailed infra runbook: `infrastructure/terraform-core/deploy.md`
 - Node.js 18+ (for dashboard)
 - Azure CLI (`az login` configured)
 - Terraform 1.5+
-- Azure subscription with credits/quota
+- Azure subscription(s) with sufficient quota:
+
+  | Quota | Sub | Default on new sub | Action if missing |
+  |---|---|---|---|
+  | Container Apps (6 vCPU, Consumption) | Core | Usually available | Request via portal |
+  | **gpt-5-mini GlobalStandard 200K TPM** | Core | Often 30K TPM | **Request at aka.ms/oai/quotaincrease** |
+  | AI Search Free tier | Core | 1 per sub | Set `search_sku = "basic"` in tfvars if taken |
+  | Cosmos DB Free tier | Core | 1 per sub | Set `cosmos_free_tier = false` in tfvars if taken |
+  | Standard_B2ls_v2 (4 vCPUs) | Demo | 0 on new subs | Request standardBsv2Family quota increase |
+
+  Estimated cost: ~$70–85/month (core ~$70, demo VMs ~$10 with nightly auto-shutdown)
+
 - Docker Desktop — required to build and push the backend image (`scripts/deploy.sh` handles the build automatically)
 
 ## Infrastructure Is Terraform-Managed
