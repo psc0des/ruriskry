@@ -160,11 +160,7 @@ export default function LiveActivityFeed({ evaluations, onDrilldown }) {
         <div className="text-center py-8">
           <p className="text-sm text-slate-500">No activity yet.</p>
           <p className="text-xs text-slate-600 mt-1">
-            Run{' '}
-            <code className="text-slate-400 bg-slate-900 px-1.5 py-0.5 rounded">
-              python demo_a2a.py
-            </code>{' '}
-            to generate events.
+            Go to the <span className="text-slate-400">Scans</span> tab and trigger a scan to generate events.
           </p>
         </div>
       ) : (

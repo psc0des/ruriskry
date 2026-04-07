@@ -494,13 +494,10 @@ export default function ConnectedAgents({ agents }) {
 
       {agents.length === 0 ? (
         <div className="bg-slate-800 rounded-xl border border-slate-700 p-6 text-center">
-          <p className="text-sm text-slate-500">No A2A agents connected yet.</p>
+          <p className="text-sm text-slate-500">No agents registered yet.</p>
           <p className="text-xs text-slate-600 mt-1">
-            Run{' '}
-            <code className="text-slate-400 bg-slate-900 px-1.5 py-0.5 rounded">
-              python demo_a2a.py
-            </code>{' '}
-            to connect agents.
+            Agents appear here after their first scan. Go to the{' '}
+            <span className="text-slate-400">Scans</span> tab and trigger a scan to get started.
           </p>
         </div>
       ) : (
