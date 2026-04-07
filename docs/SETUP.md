@@ -43,10 +43,18 @@ In Azure, use Managed Identity. Locally, `az login` is used by the same credenti
 
 Deploy the full stack to Azure in one command. No local Python or Node.js runtime needed.
 
-### Step 1 — Clone
+### Step 1 — Clone and login
 ```bash
 git clone https://github.com/psc0des/ruriskry.git
 cd ruriskry
+
+# Login and set the CORE subscription (where RuriSkry will be deployed)
+az login --use-device-code
+az account set --subscription "<core-sub-id>"
+az account show --query "{sub:id, name:name}" -o table   # confirm correct sub
+
+# Register the Container Apps provider — required on new subscriptions
+az provider register --namespace Microsoft.App --wait
 ```
 
 ### Step 2 — Create Terraform remote state storage *(one-time, run in PowerShell)*
@@ -121,6 +129,23 @@ file is needed for cloud deployment.
 ```bash
 terraform -chdir=infrastructure/terraform-core output backend_url
 terraform -chdir=infrastructure/terraform-core output dashboard_url
+```
+
+### Step 6 — Wire demo environment to RuriSkry *(if using terraform-demo)*
+
+If you deployed `infrastructure/terraform-demo/` in a separate subscription, connect
+its Azure Monitor alerts to RuriSkry now that the backend URL is known:
+
+```bash
+# Get backend URL
+BACKEND_URL=$(terraform -chdir=infrastructure/terraform-core output -raw backend_url)
+
+# Update alert_webhook_url in terraform-demo/terraform.tfvars:
+#   alert_webhook_url = "<BACKEND_URL>/api/alert-trigger"
+
+# Apply just the action group — fast, no VM restart
+cd infrastructure/terraform-demo
+terraform apply -target=azurerm_monitor_action_group.prod
 ```
 
 ---
