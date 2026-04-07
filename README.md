@@ -440,12 +440,14 @@ ruriskry/
 │   ├── SETUP.md                     # Setup instructions, environment variables
 │   ├── API.md                       # API endpoint reference
 │   ├── SERVICES.md                  # Azure service dependency map
+│   ├── FAQ.md                       # Common post-deploy questions and answers
 │   ├── slack-setup.md               # Slack webhook setup guide for contributors
 │   └── alert-wiring.md              # Azure Monitor → RuriSkry wiring guide
 └── scripts/
     ├── deploy.sh                    # One-command full deploy (Terraform + Docker + dashboard)
+    ├── cleanup.sh                   # Wipe Azure resources for a clean re-deploy
     ├── setup_env.sh                 # Generate .env from Terraform outputs (for local dev)
-    └── seed_data.py                 # Seed demo incidents into AI Search
+    └── seed_data.py                 # Seed demo incidents into AI Search (local dev only)
 ```
 
 ---
