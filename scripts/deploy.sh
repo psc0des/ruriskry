@@ -101,6 +101,16 @@ SUFFIX=$(grep -E '^suffix\s*=' "$TF_DIR/terraform.tfvars" 2>/dev/null \
 [[ -n "$SUFFIX" && "$SUFFIX" != "replace-me" ]] \
   || die "suffix is not set in terraform.tfvars.\n   Open terraform.tfvars and set a short unique suffix (e.g. \"jd4821\")."
 
+# Read subscription_id and explicitly set it — prevents SubscriptionNotFound errors
+# on new subscriptions where az defaults can lag behind
+SUBSCRIPTION_ID=$(grep -E '^subscription_id\s*=' "$TF_DIR/terraform.tfvars" 2>/dev/null \
+  | sed 's/.*=\s*"\([^"]*\)".*/\1/' | tr -d '[:space:]')
+[[ -n "$SUBSCRIPTION_ID" ]] \
+  || die "subscription_id is not set in terraform.tfvars."
+az account set --subscription "$SUBSCRIPTION_ID" \
+  || die "Could not set subscription $SUBSCRIPTION_ID.\n   Run: az login\n   Then verify: az account list -o table"
+ok "Active subscription: $SUBSCRIPTION_ID"
+
 ok "All prerequisites satisfied"
 
 # =============================================================================
@@ -109,12 +119,12 @@ ok "All prerequisites satisfied"
 step "Registering Azure providers"
 
 for PROVIDER in Microsoft.App Microsoft.ContainerService Microsoft.OperationalInsights; do
-  STATE=$(az provider show --namespace "$PROVIDER" --query "registrationState" -o tsv 2>/dev/null || echo "NotRegistered")
+  STATE=$(az provider show --namespace "$PROVIDER" --subscription "$SUBSCRIPTION_ID" --query "registrationState" -o tsv 2>/dev/null || echo "NotRegistered")
   if [[ "$STATE" == "Registered" ]]; then
     ok "$PROVIDER already registered"
   else
     log "Registering $PROVIDER (this may take a minute)..."
-    az provider register --namespace "$PROVIDER" --wait
+    az provider register --namespace "$PROVIDER" --subscription "$SUBSCRIPTION_ID" --wait
     ok "$PROVIDER registered"
   fi
 done
@@ -130,27 +140,31 @@ if [[ ! -f "$TF_DIR/backend.hcl" ]]; then
   step "Setting up Terraform remote state"
 
   # Create resource group if it doesn't exist
-  if ! az group show --name "$TFSTATE_RG" &>/dev/null; then
+  if ! az group show --name "$TFSTATE_RG" --subscription "$SUBSCRIPTION_ID" &>/dev/null; then
     log "Creating resource group: $TFSTATE_RG"
-    az group create --name "$TFSTATE_RG" --location "$TFSTATE_LOCATION" --output none
+    az group create --name "$TFSTATE_RG" --location "$TFSTATE_LOCATION" \
+      --subscription "$SUBSCRIPTION_ID" --output none
     ok "Resource group created: $TFSTATE_RG"
   else
     ok "Resource group already exists: $TFSTATE_RG"
   fi
 
   # Create storage account if it doesn't exist
-  if ! az storage account show --name "$TFSTATE_SA" --resource-group "$TFSTATE_RG" &>/dev/null; then
+  if ! az storage account show --name "$TFSTATE_SA" --resource-group "$TFSTATE_RG" \
+       --subscription "$SUBSCRIPTION_ID" &>/dev/null; then
     log "Creating storage account: $TFSTATE_SA"
     az storage account create \
       --name "$TFSTATE_SA" \
       --resource-group "$TFSTATE_RG" \
       --location "$TFSTATE_LOCATION" \
+      --subscription "$SUBSCRIPTION_ID" \
       --sku Standard_LRS \
       --allow-blob-public-access false \
       --output none
     az storage container create \
       --name tfstate \
       --account-name "$TFSTATE_SA" \
+      --auth-mode login \
       --output none
     ok "Storage account created: $TFSTATE_SA"
   else
