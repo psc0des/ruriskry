@@ -135,7 +135,7 @@ if [[ "$CREATE_DEPLOYMENT" == "true" && "$STAGE2_ONLY" == "false" ]]; then
   QUOTA=$(az cognitiveservices usage list \
     --location "$FOUNDRY_LOCATION" \
     --subscription "$SUBSCRIPTION_ID" \
-    --query "[?contains(name.value,'${FOUNDRY_MODEL}')].limit" \
+    --query "[?name.value=='OpenAI.GlobalStandard.${FOUNDRY_MODEL}'].limit" \
     -o tsv 2>/dev/null | head -1)
   QUOTA=${QUOTA:-0}
   # Strip decimal (0.0 → 0)
@@ -173,7 +173,7 @@ if [[ "$CREATE_DEPLOYMENT" == "true" && "$STAGE2_ONLY" == "false" ]]; then
     QUOTA2=$(az cognitiveservices usage list \
       --location "$FOUNDRY_LOCATION" \
       --subscription "$SUBSCRIPTION_ID" \
-      --query "[?contains(name.value,'${FOUNDRY_MODEL}')].limit" \
+      --query "[?name.value=='OpenAI.GlobalStandard.${FOUNDRY_MODEL}'].limit" \
       -o tsv 2>/dev/null | head -1)
     QUOTA2=${QUOTA2:-0}
     QUOTA2_INT=${QUOTA2%.*}
