@@ -6,14 +6,15 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     """Application settings loaded from .env file."""
 
-    # --- Microsoft Foundry — gpt-5-mini (Terraform-managed) ---
+    # --- Microsoft Foundry — configurable model (Terraform-managed) ---
+    # Default: gpt-4.1-mini (Standard, 50K TPM — pre-allocated on new subscriptions)
+    # To use gpt-5-mini: set foundry_model = "gpt-5-mini" in terraform.tfvars and re-apply.
     # Endpoint and key are populated automatically by scripts/setup_env.sh
     # from Terraform outputs (foundry_endpoint, foundry_primary_key).
-    # The openai SDK is used for all calls — Foundry exposes a compatible API.
     azure_openai_endpoint: str = ""
     azure_openai_api_key: str = ""
     azure_openai_api_key_secret_name: str = "foundry-primary-key"
-    azure_openai_deployment: str = "gpt-5-mini"
+    azure_openai_deployment: str = "gpt-4.1-mini"
     azure_openai_api_version: str = "2025-01-01-preview"
 
     # --- Azure AI Search ---

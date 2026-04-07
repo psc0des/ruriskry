@@ -13,8 +13,8 @@ Detailed infra runbook: `infrastructure/terraform-core/deploy.md`
   | Quota | Sub | Default on new sub | Action if missing |
   |---|---|---|---|
   | Container Apps (6 vCPU, Consumption) | Core | Usually available | Request via portal |
-  | gpt-5-mini GlobalStandard 30K TPM | Core | Available by default | Default — no request needed |
-  | gpt-5-mini GlobalStandard 200K TPM | Core | Requires approval | Set `foundry_capacity = 200` after quota approved; run `terraform apply` |
+  | gpt-4.1-mini Standard 50K TPM | Core | Pre-allocated on all new subs | Default — no request needed |
+  | gpt-5-mini GlobalStandard 30K TPM | Core | Not pre-allocated | Request via ai.azure.com/quota (upgrade option) |
   | AI Search Free tier | Core | 1 per sub | Set `search_sku = "basic"` in tfvars if taken |
   | Cosmos DB Free tier | Core | 1 per sub | Set `cosmos_free_tier = false` in tfvars if taken |
   | Standard_B2ls_v2 (4 vCPUs) | Demo | 0 on new subs | Request standardBsv2Family quota increase |
@@ -29,7 +29,7 @@ Terraform in `infrastructure/terraform-core/` deploys (two providers: `hashicorp
 
 1. Azure Resource Group (`ruriskry-core-engine-rg`) — with a CanNotDelete management lock
 2. Azure AI Foundry account (`azurerm_ai_services`)
-3. Foundry model deployment (`azurerm_cognitive_deployment`, default `gpt-5-mini` version `2025-08-07`, GlobalStandard, 200K TPM)
+3. Foundry model deployment (`azurerm_cognitive_deployment`, default `gpt-4.1-mini` version `2025-04-14`, Standard, 50K TPM)
 4. **Foundry project** — fully Terraform-managed via AzAPI (`azapi_update_resource` to enable `allowProjectManagement`, `azapi_resource` to create the project). Set `create_foundry_project = true` in `terraform.tfvars`.
 5. Azure AI Search
 6. Azure Cosmos DB (SQL API) — five containers, all Terraform-managed (`azurerm_cosmosdb_sql_container`): `governance-decisions` (partition `/resource_id`), `governance-agents` (partition `/name`), `governance-scan-runs` (partition `/agent_type`), `governance-alerts` (partition `/severity`), `governance-executions` (partition `/resource_id`). Managed Identity auth; no connection string stored in tfstate.
@@ -613,7 +613,7 @@ throughput, the governance agent calls can be extracted to worker replicas behin
 | `USE_LOCAL_MOCKS` | No | `true` | `true` = JSON files; `false` = live Azure |
 | `USE_LIVE_TOPOLOGY` | No | `false` | `true` = governance agents query Azure Resource Graph for real dependency topology and SKU cost (Phase 19). Only effective when `USE_LOCAL_MOCKS=false` and `AZURE_SUBSCRIPTION_ID` is set. |
 | `AZURE_OPENAI_ENDPOINT` | Live only | — | Foundry endpoint URL |
-| `AZURE_OPENAI_DEPLOYMENT` | Live only | `gpt-5-mini` | Model deployment name |
+| `AZURE_OPENAI_DEPLOYMENT` | Live only | `gpt-4.1-mini` | Model deployment name (set via `foundry_deployment_name` in terraform.tfvars) |
 | `AZURE_SEARCH_ENDPOINT` | Live only | — | Azure AI Search endpoint |
 | `AZURE_SEARCH_INDEX` | Live only | `incident-history` | Search index name |
 | `COSMOS_ENDPOINT` | Live only | — | Cosmos DB endpoint |

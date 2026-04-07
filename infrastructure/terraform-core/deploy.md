@@ -28,7 +28,7 @@ LLM / Search / Cosmos / Key Vault  →  provisioned by Terraform
 | Resource Group | `ruriskry-core-engine-rg` | Container for all resources |
 | Log Analytics | `ruriskry-core-log-<suffix>` | Container + infra logs |
 | Key Vault | `ruriskry-core-kv-<suffix>` | Runtime secrets (API keys) |
-| Azure AI Foundry | `ruriskry-core-foundry-<suffix>` | gpt-5-mini LLM (version 2025-08-07, GlobalStandard, 200K TPM) |
+| Azure AI Foundry | `ruriskry-core-foundry-<suffix>` | gpt-4.1-mini LLM (version 2025-04-14, Standard, 50K TPM — configurable via tfvars) |
 | Azure AI Search | `ruriskry-core-search-<suffix>` | Historical incident BM25 |
 | Cosmos DB | `ruriskry-core-cosmos-<suffix>` | Audit trail + agent registry |
 | Container Registry | `ruriskrycore<suffix>` | Docker image store (alphanumeric only) |
@@ -555,7 +555,7 @@ terraform destroy
 | Resource | Approximate cost |
 |----------|--------------------|
 | Container App (1–3 replicas, 2 vCPU / 4 GiB, sticky sessions) | ~$70–210/month |
-| Azure AI Foundry (gpt-5-mini GlobalStandard, 200K TPM) | Pay-per-token |
+| Azure AI Foundry (gpt-4.1-mini Standard, 50K TPM default) | Pay-per-token |
 | Azure AI Search (free tier) | $0 |
 | Cosmos DB (free tier) | $0 |
 | Static Web App (free tier) | $0 |

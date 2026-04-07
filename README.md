@@ -84,8 +84,8 @@ RuriSkry is a **governance engine** that acts as the **Change Advisory Board for
 | Component | Technology | Purpose |
 |-----------|-----------|---------|
 | Agent-to-Agent Protocol | A2A SDK (`a2a-sdk`) + `agent-framework-a2a` | Network protocol for agent discovery and task streaming |
-| Agent Orchestration | Microsoft Agent Framework (`agent-framework-core`) | Multi-agent coordination + gpt-5-mini tool calls |
-| Model Intelligence | Azure OpenAI Foundry — gpt-5-mini | LLM reasoning for each governance agent |
+| Agent Orchestration | Microsoft Agent Framework (`agent-framework-core`) | Multi-agent coordination + configurable LLM tool calls |
+| Model Intelligence | Azure OpenAI Foundry — gpt-4.1-mini (default) | LLM reasoning for each governance agent (configurable via `foundry_model` in tfvars) |
 | MCP Interception | FastMCP stdio server | Intercept actions from Claude Desktop / MCP hosts |
 | Infrastructure Graph | Azure Resource Graph + Azure Retail Prices API | Real-time dependency topology (KQL + tags) and SKU cost data |
 | Incident Search | Azure AI Search (BM25) | Historical incident similarity |

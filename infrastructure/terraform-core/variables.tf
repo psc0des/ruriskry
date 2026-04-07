@@ -268,7 +268,7 @@ variable "execution_gateway_enabled" {
 }
 
 variable "llm_timeout" {
-  description = "Hard timeout in seconds for each LLM call (asyncio.wait_for + HTTP client timeout). Must be >300s for multi-step agent loops with gpt-5-mini."
+  description = "Hard timeout in seconds for each LLM call (asyncio.wait_for + HTTP client timeout). Must be >300s for multi-step agent loops."
   type        = number
   default     = 600
 }

@@ -26,8 +26,8 @@ These are the services that RuriSkry **runs on**.
 
 | Service | Terraform resource | Config var | Used by | Notes |
 |---|---|---|---|---|
-| Azure AI Foundry (OpenAI) | `azurerm_ai_services.foundry` | `AZURE_OPENAI_ENDPOINT` / `AZURE_OPENAI_API_KEY` | All 7 agents via agent-framework-core | Model: `gpt-5-mini`; 200K TPM; `local_authentication_enabled=false` — MI auth only |
-| Model deployment | `azurerm_cognitive_deployment.foundry_primary` | `AZURE_OPENAI_DEPLOYMENT` (`gpt-5-mini`) | All agents | GlobalStandard tier |
+| Azure AI Foundry (OpenAI) | `azurerm_ai_services.foundry` | `AZURE_OPENAI_ENDPOINT` / `AZURE_OPENAI_API_KEY` | All 7 agents via agent-framework-core | Default model: `gpt-4.1-mini`; 50K TPM Standard; `local_authentication_enabled=false` — MI auth only |
+| Model deployment | `azurerm_cognitive_deployment.foundry_primary` | `AZURE_OPENAI_DEPLOYMENT` (`gpt-4.1-mini`) | All agents | Standard tier (configurable via `foundry_scale_type` in tfvars) |
 | Foundry project | `azapi_resource.foundry_project` | — | Agent Framework project isolation | Created when `create_foundry_project=true` |
 | Azure AI Search | `azurerm_search_service.ruriskry` | `AZURE_SEARCH_ENDPOINT` / `AZURE_SEARCH_API_KEY` | `HistoricalPatternAgent` | BM25 full-text search; index: `incident-history` |
 
@@ -121,7 +121,7 @@ All variables read by `src/config.py` from `.env` or Azure Container App environ
 |---|---|---|---|
 | `AZURE_OPENAI_ENDPOINT` | `""` | `deploy.sh` (from `terraform output`) | Required for live LLM calls |
 | `AZURE_OPENAI_API_KEY` | `""` | KV secret `foundry-primary-key` | Resolved at runtime by `KeyVaultSecretResolver` |
-| `AZURE_OPENAI_DEPLOYMENT` | `gpt-5-mini` | `terraform.tfvars` | Model deployment name |
+| `AZURE_OPENAI_DEPLOYMENT` | `gpt-4.1-mini` | `terraform.tfvars` (`foundry_deployment_name`) | Model deployment name |
 | `AZURE_OPENAI_API_VERSION` | `2025-01-01-preview` | `config.py` | Responses API requires this version |
 | `AZURE_SEARCH_ENDPOINT` | `""` | `deploy.sh` | Required for historical incident search |
 | `AZURE_SEARCH_API_KEY` | `""` | KV secret `search-primary-key` | |

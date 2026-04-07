@@ -179,7 +179,7 @@ if [[ "$CREATE_DEPLOYMENT" == "true" && "$STAGE2_ONLY" == "false" ]]; then
     QUOTA2=$(az cognitiveservices usage list \
       --location "$FOUNDRY_LOCATION" \
       --subscription "$SUBSCRIPTION_ID" \
-      --query "[?name.value=='OpenAI.GlobalStandard.${FOUNDRY_MODEL}'].limit" \
+      --query "[?name.value=='${QUOTA_KEY}'].limit" \
       -o tsv 2>/dev/null | head -1)
     QUOTA2=${QUOTA2:-0}
     QUOTA2_INT=${QUOTA2%.*}
