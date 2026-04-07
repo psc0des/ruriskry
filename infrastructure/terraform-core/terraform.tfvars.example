@@ -104,8 +104,17 @@ org_compliance_frameworks = ""
 org_risk_tolerance        = "moderate"
 
 # Slack notifications (optional — leave slack_webhook_url empty to disable)
-# Get the webhook URL from: api.slack.com/apps → Incoming Webhooks → Add New Webhook to Workspace
-# The URL is stored in Key Vault and injected via Managed Identity (never in tfstate).
+#
+# Full setup guide: docs/slack-setup.md
+#
+# Short version:
+#   1. Go to https://api.slack.com/apps → Create New App → From scratch
+#   2. Enable Incoming Webhooks → Add New Webhook to Workspace → pick a channel
+#   3. Copy the webhook URL (looks like https://hooks.slack.com/services/T.../B.../XXX...)
+#   4. Paste it below and run: terraform apply
+#
+# The URL is stored in Azure Key Vault and injected into the Container App via
+# Managed Identity — it never appears in tfstate or environment variables in plaintext.
 slack_webhook_url           = ""
 slack_notifications_enabled = true
 
