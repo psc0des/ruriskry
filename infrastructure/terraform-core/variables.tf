@@ -77,6 +77,16 @@ variable "search_sku" {
   }
 }
 
+variable "search_location" {
+  description = <<-EOT
+    Region for Azure AI Search. Defaults to "eastus" (separate from main location)
+    because free-tier Search capacity in eastus2 is frequently exhausted.
+    If you hit InsufficientResourcesAvailable, try: eastus, westus2, westeurope, canadacentral.
+  EOT
+  type        = string
+  default     = "eastus"
+}
+
 variable "cosmos_location" {
   description = "Region for Cosmos DB account (use an alternate region if East US has capacity issues)."
   type        = string

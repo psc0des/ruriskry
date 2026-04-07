@@ -282,7 +282,7 @@ resource "azurerm_cognitive_deployment" "foundry_primary" {
 resource "azurerm_search_service" "ruriskry" {
   name                = "${local.name_prefix}-search-${local.name_suffix}"
   resource_group_name = azurerm_resource_group.ruriskry.name
-  location            = azurerm_resource_group.ruriskry.location
+  location            = var.search_location
   sku                 = var.search_sku
 
   replica_count   = var.search_sku == "free" ? null : 1

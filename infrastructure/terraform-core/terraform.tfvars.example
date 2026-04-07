@@ -38,7 +38,9 @@ suffix              = "replace-me"   # e.g. "jd4821" — short, globally unique,
 enable_rg_lock      = false          # set true in production to protect against accidental deletion
 
 # Search and Cosmos
-search_sku       = "free"
+search_sku      = "free"
+search_location = "eastus"    # separate from main location — eastus2 free tier is frequently exhausted
+                               # alternatives: westus2, westeurope, canadacentral
 cosmos_free_tier = true
 cosmos_location  = "eastus2"
 
