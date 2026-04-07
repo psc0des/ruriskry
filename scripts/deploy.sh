@@ -111,6 +111,81 @@ az account set --subscription "$SUBSCRIPTION_ID" \
   || die "Could not set subscription $SUBSCRIPTION_ID.\n   Run: az login\n   Then verify: az account list -o table"
 ok "Active subscription: $SUBSCRIPTION_ID"
 
+# =============================================================================
+# 0. Pre-flight: Foundry quota check
+# =============================================================================
+# Check gpt-5-mini GlobalStandard quota BEFORE running Terraform.
+# A quota of 0 causes a mid-apply failure that is confusing to diagnose.
+# This check fails fast with clear instructions so the user knows what to do.
+
+FOUNDRY_LOCATION=$(grep -E '^foundry_location\s*=' "$TF_DIR/terraform.tfvars" 2>/dev/null \
+  | sed 's/.*=\s*"\([^"]*\)".*/\1/' | tr -d '[:space:]')
+FOUNDRY_LOCATION=${FOUNDRY_LOCATION:-eastus2}
+
+FOUNDRY_MODEL=$(grep -E '^foundry_model\s*=' "$TF_DIR/terraform.tfvars" 2>/dev/null \
+  | sed 's/.*=\s*"\([^"]*\)".*/\1/' | tr -d '[:space:]')
+FOUNDRY_MODEL=${FOUNDRY_MODEL:-gpt-5-mini}
+
+CREATE_DEPLOYMENT=$(grep -E '^create_foundry_deployment\s*=' "$TF_DIR/terraform.tfvars" 2>/dev/null \
+  | sed 's/.*=\s*//;s/\s*#.*//' | tr -d '[:space:]')
+CREATE_DEPLOYMENT=${CREATE_DEPLOYMENT:-true}
+
+if [[ "$CREATE_DEPLOYMENT" == "true" && "$STAGE2_ONLY" == "false" ]]; then
+  step "Pre-flight: checking Foundry quota"
+  QUOTA=$(az cognitiveservices usage list \
+    --location "$FOUNDRY_LOCATION" \
+    --subscription "$SUBSCRIPTION_ID" \
+    --query "[?contains(name.value,'${FOUNDRY_MODEL}')].limit" \
+    -o tsv 2>/dev/null | head -1)
+  QUOTA=${QUOTA:-0}
+  # Strip decimal (0.0 → 0)
+  QUOTA_INT=${QUOTA%.*}
+
+  if [[ "${QUOTA_INT:-0}" -gt 0 ]]; then
+    ok "Foundry quota: ${QUOTA} units for ${FOUNDRY_MODEL} in ${FOUNDRY_LOCATION}"
+  else
+    echo ""
+    echo -e "${RED}${BOLD}╔══════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${RED}${BOLD}║  Foundry quota is 0 — deploy will fail without it       ║${NC}"
+    echo -e "${RED}${BOLD}╚══════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo "  Model   : $FOUNDRY_MODEL (GlobalStandard)"
+    echo "  Region  : $FOUNDRY_LOCATION"
+    echo "  Quota   : 0  ← needs to be > 0"
+    echo ""
+    echo "  How to request quota (takes a few minutes to hours):"
+    echo "  1. Go to https://ai.azure.com → Management → Quota"
+    echo "  2. Select region: $FOUNDRY_LOCATION"
+    echo "  3. Find '$FOUNDRY_MODEL — GlobalStandard' → Request increase → enter 3"
+    echo "     (3 units = 30,000 TPM, enough to run RuriSkry)"
+    echo "  4. Wait for approval (usually minutes for small requests)"
+    echo "  5. Re-run this script once approved"
+    echo ""
+    echo "  Check approval status:"
+    echo "    az cognitiveservices usage list --location $FOUNDRY_LOCATION \\"
+    echo "      --subscription $SUBSCRIPTION_ID \\"
+    echo "      --query \"[?contains(name.value,'${FOUNDRY_MODEL}')].limit\" -o tsv"
+    echo ""
+    echo -e "  ${BOLD}Press Enter to continue anyway (if you know quota was just approved)${NC}"
+    echo    "  or Ctrl+C to exit and request quota first."
+    read -r _
+    # Re-check after user confirms
+    QUOTA2=$(az cognitiveservices usage list \
+      --location "$FOUNDRY_LOCATION" \
+      --subscription "$SUBSCRIPTION_ID" \
+      --query "[?contains(name.value,'${FOUNDRY_MODEL}')].limit" \
+      -o tsv 2>/dev/null | head -1)
+    QUOTA2=${QUOTA2:-0}
+    QUOTA2_INT=${QUOTA2%.*}
+    if [[ "${QUOTA2_INT:-0}" -gt 0 ]]; then
+      ok "Quota confirmed: ${QUOTA2} units — continuing"
+    else
+      warn "Quota still shows 0 — continuing anyway. Terraform may fail on the Foundry deployment."
+      warn "If it does, fix quota then re-run: bash scripts/deploy.sh --stage2"
+    fi
+  fi
+fi
+
 ok "All prerequisites satisfied"
 
 # =============================================================================
