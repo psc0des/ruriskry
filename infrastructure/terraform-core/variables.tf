@@ -154,12 +154,12 @@ variable "foundry_deployment_name" {
 variable "foundry_capacity" {
   description = <<-EOT
     Foundry deployment capacity in thousands TPM (tokens per minute).
-    50  = full pre-allocated Standard quota for gpt-4.1-mini (no request needed)
-    200 = production — requires quota approval; run `terraform apply` after approval
+    150 = safe for 3 concurrent agent scans on Standard tier (pre-allocated, no request needed)
+    200 = max Standard pre-allocated quota for gpt-4.1-mini — use for high-load production
     Check current quota: az cognitiveservices usage list --location eastus2 --query "[?contains(name.value,'gpt')]" -o table
   EOT
   type        = number
-  default     = 50
+  default     = 150
 }
 
 variable "foundry_scale_type" {
