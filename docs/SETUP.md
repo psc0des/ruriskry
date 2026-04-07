@@ -13,7 +13,8 @@ Detailed infra runbook: `infrastructure/terraform-core/deploy.md`
   | Quota | Sub | Default on new sub | Action if missing |
   |---|---|---|---|
   | Container Apps (6 vCPU, Consumption) | Core | Usually available | Request via portal |
-  | **gpt-5-mini GlobalStandard 200K TPM** | Core | Often 30K TPM | **Request at aka.ms/oai/quotaincrease** |
+  | gpt-5-mini GlobalStandard 30K TPM | Core | Available by default | Default — no request needed |
+  | gpt-5-mini GlobalStandard 200K TPM | Core | Requires approval | Set `foundry_capacity = 200` after quota approved; run `terraform apply` |
   | AI Search Free tier | Core | 1 per sub | Set `search_sku = "basic"` in tfvars if taken |
   | Cosmos DB Free tier | Core | 1 per sub | Set `cosmos_free_tier = false` in tfvars if taken |
   | Standard_B2ls_v2 (4 vCPUs) | Demo | 0 on new subs | Request standardBsv2Family quota increase |

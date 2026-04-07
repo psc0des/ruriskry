@@ -142,9 +142,14 @@ variable "foundry_deployment_name" {
 }
 
 variable "foundry_capacity" {
-  description = "Foundry deployment capacity (thousands TPM)."
+  description = <<-EOT
+    Foundry deployment capacity in thousands TPM (tokens per minute).
+    30  = works on new subscriptions with no quota request (demo / getting started)
+    200 = production — requires quota approval; run `terraform apply` after approval
+    Check current quota: az cognitiveservices usage list --location eastus2 --query "[?contains(name.value,'gpt')]" -o table
+  EOT
   type        = number
-  default     = 1
+  default     = 30
 }
 
 variable "foundry_scale_type" {
