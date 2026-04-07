@@ -130,22 +130,92 @@ terraform -chdir=infrastructure/terraform-core output backend_url
 terraform -chdir=infrastructure/terraform-core output dashboard_url
 ```
 
-### Step 4 — Wire demo environment to RuriSkry *(if using terraform-demo)*
+### Step 4 — Wire your workload infrastructure to RuriSkry
 
-If you deployed `infrastructure/terraform-demo/` in a separate subscription, connect
-its Azure Monitor alerts to RuriSkry now that the backend URL is known:
+RuriSkry receives Azure Monitor alerts via a webhook endpoint:
+
+```
+POST https://<your-backend>/api/alert-trigger
+```
+
+Any Azure subscription can send alerts to this endpoint — not just `terraform-demo`. Choose the method that matches how your workload infrastructure is managed:
+
+#### Option A — terraform-demo (test/demo environment)
+
+`deploy.sh` handles this automatically if `terraform-demo` is already deployed.
+To wire it manually:
 
 ```bash
-# Get backend URL
 BACKEND_URL=$(terraform -chdir=infrastructure/terraform-core output -raw backend_url)
 
-# Update alert_webhook_url in terraform-demo/terraform.tfvars:
+# Set in infrastructure/terraform-demo/terraform.tfvars:
 #   alert_webhook_url = "<BACKEND_URL>/api/alert-trigger"
 
-# Apply just the action group — fast, no VM restart
 cd infrastructure/terraform-demo
 terraform apply -target=azurerm_monitor_action_group.prod
 ```
+
+#### Option B — Terraform-managed production infrastructure
+
+Add the backend URL to your existing Terraform action group resource:
+
+```hcl
+resource "azurerm_monitor_action_group" "alerts" {
+  name                = "ruriskry-alerts"
+  resource_group_name = var.resource_group_name
+  short_name          = "ruriskry"
+
+  webhook_receiver {
+    name                    = "ruriskry-backend"
+    service_uri             = "https://<your-backend>/api/alert-trigger"
+    use_common_alert_schema = false
+  }
+}
+```
+
+#### Option C — ARM/Bicep-managed infrastructure
+
+```json
+{
+  "type": "Microsoft.Insights/actionGroups",
+  "properties": {
+    "webhookReceivers": [{
+      "name": "ruriskry-backend",
+      "serviceUri": "https://<your-backend>/api/alert-trigger",
+      "useCommonAlertSchema": false
+    }]
+  }
+}
+```
+
+#### Option D — Existing infrastructure (no IaC / click-ops)
+
+Azure Portal → **Monitor** → **Action Groups** → **+ Create**
+- Action type: **Webhook**
+- URI: `https://<your-backend>/api/alert-trigger`
+- Enable common alert schema: **No**
+
+Or via CLI:
+```bash
+BACKEND_URL=$(terraform -chdir=infrastructure/terraform-core output -raw backend_url)
+
+az monitor action-group create \
+  --name ruriskry-alerts \
+  --resource-group <your-rg> \
+  --short-name ruriskry \
+  --action webhook ruriskry-webhook "$BACKEND_URL/api/alert-trigger"
+```
+
+Then attach this action group to your existing alert rules:
+```bash
+az monitor metrics alert update \
+  --name <your-alert-rule> \
+  --resource-group <your-rg> \
+  --add-action ruriskry-alerts
+```
+
+> **`use_common_alert_schema = false`** — RuriSkry's alert normaliser expects the richer
+> non-common schema. Setting this to `true` will cause resource extraction to fail.
 
 ---
 
