@@ -133,7 +133,7 @@ done
 # 0b. Terraform remote state — auto-create if missing
 # =============================================================================
 TFSTATE_RG="ruriskry-tfstate-rg"
-TFSTATE_SA="ruriskrytfstate${SUFFIX}"
+TFSTATE_SA="ruriskrytf${SUFFIX}"
 TFSTATE_LOCATION="eastus2"
 
 if [[ ! -f "$TF_DIR/backend.hcl" ]]; then
