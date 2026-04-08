@@ -228,6 +228,15 @@ class ScanRequest(BaseModel):
     """Optional body for POST /api/scan/* endpoints."""
 
     resource_group: str | None = None
+    subscription_id: str | None = None          # override configured subscription
+    inventory_mode: str = "existing"            # "existing" | "refresh" | "skip"
+
+
+class InventoryRefreshRequest(BaseModel):
+    """Optional body for POST /api/inventory/refresh."""
+
+    subscription_id: str | None = None   # default: settings.azure_subscription_id
+    resource_group: str | None = None    # optional scope filter
 
 
 # Keyed by scan_id (UUID str).  Values:
@@ -247,6 +256,29 @@ _scan_events: dict[str, asyncio.Queue] = {}
 
 # Scan IDs whose background tasks should stop at the next checkpoint.
 _scan_cancelled: set[str] = set()
+
+# ---------------------------------------------------------------------------
+# Inventory refresh in-memory state
+# Keyed by refresh_id (UUID str).  Values:
+#   status          "running" | "complete" | "failed"
+#   resource_count  int (set on completion)
+#   error           str | None
+# ---------------------------------------------------------------------------
+
+_inventory_refreshes: dict[str, dict] = {}
+
+# Module-level CosmosInventoryClient singleton (lazy).
+_cosmos_inventory = None
+
+
+def _get_cosmos_inventory():
+    """Return the CosmosInventoryClient singleton."""
+    global _cosmos_inventory  # noqa: PLW0603
+    if _cosmos_inventory is None:
+        from src.infrastructure.cosmos_client import CosmosInventoryClient  # noqa: PLC0415
+        _cosmos_inventory = CosmosInventoryClient()
+    return _cosmos_inventory
+
 
 # ---------------------------------------------------------------------------
 # Alert in-memory state (mirrors _scans pattern)
@@ -341,6 +373,8 @@ async def _run_agent_scan(
     scan_id: str,
     agent_type: str,
     resource_group: str | None,
+    subscription_id: str | None = None,
+    inventory_mode: str = "existing",
 ) -> None:
     """Background coroutine: run one ops agent, evaluate all proposals, persist results.
 
@@ -350,9 +384,11 @@ async def _run_agent_scan(
 
     Parameters
     ----------
-    scan_id:        UUID string used as the key in ``_scans``.
-    agent_type:     One of ``"cost"``, ``"monitoring"``, or ``"deploy"``.
-    resource_group: Optional Azure resource group to scope the scan to.
+    scan_id:          UUID string used as the key in ``_scans``.
+    agent_type:       One of ``"cost"``, ``"monitoring"``, or ``"deploy"``.
+    resource_group:   Optional Azure resource group to scope the scan to.
+    subscription_id:  Optional override for the configured Azure subscription.
+    inventory_mode:   "existing" | "refresh" | "skip"
     """
     from src.core.pipeline import RuriSkryPipeline
     from src.operational_agents.cost_agent import CostOptimizationAgent
@@ -360,7 +396,8 @@ async def _run_agent_scan(
     from src.operational_agents.monitoring_agent import MonitoringAgent
 
     rg_label = resource_group or "whole subscription"
-    logger.info("scan %s (%s): starting — rg=%s", scan_id[:8], agent_type, rg_label)
+    sub_id = subscription_id or settings.azure_subscription_id or ""
+    logger.info("scan %s (%s): starting — rg=%s inv=%s", scan_id[:8], agent_type, rg_label, inventory_mode)
     await _emit_event(
         scan_id,
         "scan_started",
@@ -380,17 +417,68 @@ async def _run_agent_scan(
         scan_id[:8], agent_type, len(scanned_resources),
     )
 
+    # ------------------------------------------------------------------
+    # Build or fetch inventory based on inventory_mode
+    # ------------------------------------------------------------------
+    inventory: list[dict] | None = None
+    if inventory_mode != "skip" and sub_id:
+        try:
+            cosmos_inv = _get_cosmos_inventory()
+            if inventory_mode == "refresh":
+                from src.infrastructure.inventory_builder import build_inventory  # noqa: PLC0415
+                await _emit_event(
+                    scan_id, "info", agent=agent_type,
+                    message="Refreshing resource inventory from Azure…",
+                )
+
+                def _on_progress(msg: str) -> None:
+                    asyncio.ensure_future(
+                        _emit_event(scan_id, "info", agent=agent_type, message=msg)
+                    )
+
+                inv_doc = await build_inventory(sub_id, resource_group, on_progress=_on_progress)
+                cosmos_inv.upsert(inv_doc)
+                inventory = inv_doc.get("resources", [])
+                await _emit_event(
+                    scan_id, "info", agent=agent_type,
+                    message=f"Inventory refreshed — {inv_doc.get('resource_count', 0)} resources.",
+                )
+            else:  # "existing"
+                inv_doc = cosmos_inv.get_latest(sub_id)
+                if inv_doc:
+                    inventory = inv_doc.get("resources", [])
+                    refreshed = inv_doc.get("refreshed_at", "unknown")
+                    count = inv_doc.get("resource_count", len(inventory))
+                    await _emit_event(
+                        scan_id, "info", agent=agent_type,
+                        message=f"Using existing inventory ({count} resources, refreshed {refreshed}).",
+                    )
+                else:
+                    await _emit_event(
+                        scan_id, "info", agent=agent_type,
+                        message="No inventory found — agent will discover resources via tools.",
+                    )
+        except Exception as _inv_exc:  # noqa: BLE001
+            logger.warning(
+                "scan %s (%s): inventory fetch failed (%s) — falling back to LLM discovery",
+                scan_id[:8], agent_type, _inv_exc,
+            )
+            await _emit_event(
+                scan_id, "info", agent=agent_type,
+                message=f"⚠ Inventory unavailable ({_inv_exc}) — agent will discover resources.",
+            )
+
     try:
         # --- Pick the right ops agent and run scan ---
         if agent_type == "cost":
             agent = CostOptimizationAgent()
-            proposals = await agent.scan(target_resource_group=resource_group)
+            proposals = await agent.scan(target_resource_group=resource_group, inventory=inventory)
         elif agent_type == "monitoring":
             agent = MonitoringAgent()
-            proposals = await agent.scan(target_resource_group=resource_group)
+            proposals = await agent.scan(target_resource_group=resource_group, inventory=inventory)
         else:  # "deploy"
             agent = DeployAgent()
-            proposals = await agent.scan(target_resource_group=resource_group)
+            proposals = await agent.scan(target_resource_group=resource_group, inventory=inventory)
 
         # Surface framework errors to the scan log so they are visible in the
         # dashboard live log (previously silent — only appeared in server terminal).
@@ -1832,9 +1920,10 @@ async def trigger_cost_scan(
         {"resource_group": "ruriskry-prod-rg"}
     """
     rg = body.resource_group or settings.default_resource_group or None
+    sub = body.subscription_id or settings.azure_subscription_id or None
     scan_id, _ = _make_scan_record("cost", rg)
-    background_tasks.add_task(_run_agent_scan, scan_id, "cost", rg)
-    logger.info("scan %s (cost) started rg=%s", scan_id[:8], rg)
+    background_tasks.add_task(_run_agent_scan, scan_id, "cost", rg, sub, body.inventory_mode)
+    logger.info("scan %s (cost) started rg=%s inv=%s", scan_id[:8], rg, body.inventory_mode)
     return {"status": "started", "scan_id": scan_id, "agent_type": "cost"}
 
 
@@ -1854,9 +1943,10 @@ async def trigger_monitoring_scan(
     ``GET /api/scan/{scan_id}/status`` to retrieve results.
     """
     rg = body.resource_group or settings.default_resource_group or None
+    sub = body.subscription_id or settings.azure_subscription_id or None
     scan_id, _ = _make_scan_record("monitoring", rg)
-    background_tasks.add_task(_run_agent_scan, scan_id, "monitoring", rg)
-    logger.info("scan %s (monitoring) started rg=%s", scan_id[:8], rg)
+    background_tasks.add_task(_run_agent_scan, scan_id, "monitoring", rg, sub, body.inventory_mode)
+    logger.info("scan %s (monitoring) started rg=%s inv=%s", scan_id[:8], rg, body.inventory_mode)
     return {"status": "started", "scan_id": scan_id, "agent_type": "monitoring"}
 
 
@@ -1876,9 +1966,10 @@ async def trigger_deploy_scan(
     ``GET /api/scan/{scan_id}/status`` to retrieve results.
     """
     rg = body.resource_group or settings.default_resource_group or None
+    sub = body.subscription_id or settings.azure_subscription_id or None
     scan_id, _ = _make_scan_record("deploy", rg)
-    background_tasks.add_task(_run_agent_scan, scan_id, "deploy", rg)
-    logger.info("scan %s (deploy) started rg=%s", scan_id[:8], rg)
+    background_tasks.add_task(_run_agent_scan, scan_id, "deploy", rg, sub, body.inventory_mode)
+    logger.info("scan %s (deploy) started rg=%s inv=%s", scan_id[:8], rg, body.inventory_mode)
     return {"status": "started", "scan_id": scan_id, "agent_type": "deploy"}
 
 
@@ -1902,14 +1993,148 @@ async def trigger_all_scans(
         {"resource_group": "ruriskry-prod-rg"}
     """
     rg = body.resource_group or settings.default_resource_group or None
+    sub = body.subscription_id or settings.azure_subscription_id or None
     scan_ids: list[str] = []
     for agent_type in ("cost", "monitoring", "deploy"):
         scan_id, _ = _make_scan_record(agent_type, rg)
-        background_tasks.add_task(_run_agent_scan, scan_id, agent_type, rg)
+        background_tasks.add_task(_run_agent_scan, scan_id, agent_type, rg, sub, body.inventory_mode)
         scan_ids.append(scan_id)
-        logger.info("scan %s (%s) started via /scan/all rg=%s", scan_id[:8], agent_type, rg)
+        logger.info("scan %s (%s) started via /scan/all rg=%s inv=%s", scan_id[:8], agent_type, rg, body.inventory_mode)
 
     return {"status": "started", "scan_ids": scan_ids}
+
+
+# ---------------------------------------------------------------------------
+# Inventory endpoints (Phase 30)
+# ---------------------------------------------------------------------------
+
+
+async def _run_inventory_refresh(
+    refresh_id: str,
+    subscription_id: str,
+    resource_group: str | None,
+) -> None:
+    """Background coroutine: build inventory snapshot and persist to Cosmos."""
+    from src.infrastructure.inventory_builder import build_inventory  # noqa: PLC0415
+
+    try:
+        def _on_progress(msg: str) -> None:
+            _inventory_refreshes[refresh_id]["message"] = msg
+
+        inv_doc = await build_inventory(subscription_id, resource_group, on_progress=_on_progress)
+        _get_cosmos_inventory().upsert(inv_doc)
+        _get_cosmos_inventory().delete_old(subscription_id, keep=5)
+        _inventory_refreshes[refresh_id].update({
+            "status": "complete",
+            "resource_count": inv_doc.get("resource_count", 0),
+            "refreshed_at": inv_doc.get("refreshed_at"),
+            "type_summary": inv_doc.get("type_summary", {}),
+        })
+        logger.info(
+            "inventory refresh %s: complete — %d resources",
+            refresh_id[:8], inv_doc.get("resource_count", 0),
+        )
+    except Exception as exc:  # noqa: BLE001
+        _inventory_refreshes[refresh_id].update({"status": "failed", "error": str(exc)})
+        logger.exception("inventory refresh %s failed: %s", refresh_id[:8], exc)
+
+
+@app.post("/api/inventory/refresh")
+async def trigger_inventory_refresh(
+    background_tasks: BackgroundTasks,
+    body: InventoryRefreshRequest = Body(default=InventoryRefreshRequest()),
+) -> dict:
+    """Trigger a background resource inventory refresh.
+
+    Fetches ALL resources from Azure Resource Graph, enriches VM power states,
+    and persists the snapshot to Cosmos DB.
+
+    Returns immediately with a ``refresh_id`` for polling.
+    """
+    sub_id = body.subscription_id or settings.azure_subscription_id or ""
+    rg = body.resource_group or None
+    refresh_id = str(uuid.uuid4())
+    _inventory_refreshes[refresh_id] = {
+        "status": "running",
+        "subscription_id": sub_id,
+        "resource_group": rg,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "message": "Starting…",
+    }
+    background_tasks.add_task(_run_inventory_refresh, refresh_id, sub_id, rg)
+    logger.info("inventory refresh %s started sub=%s rg=%s", refresh_id[:8], sub_id[:8] if sub_id else "?", rg)
+    return {"status": "started", "refresh_id": refresh_id}
+
+
+@app.get("/api/inventory/refresh/{refresh_id}")
+async def get_inventory_refresh_status(refresh_id: str) -> dict:
+    """Poll the status of a background inventory refresh.
+
+    Returns:
+        ``{ status: "running"|"complete"|"failed", resource_count?, error?, message? }``
+    """
+    record = _inventory_refreshes.get(refresh_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"Refresh '{refresh_id}' not found.")
+    return record
+
+
+@app.get("/api/inventory")
+async def get_inventory(
+    subscription_id: str | None = Query(default=None),
+    summary_only: bool = Query(default=False),
+) -> dict:
+    """Return the latest resource inventory snapshot.
+
+    Query parameters:
+    - **subscription_id**: optional override (default: configured subscription)
+    - **summary_only**: if true, omit the ``resources`` array (lightweight)
+
+    Returns 404 if no inventory snapshot exists.
+    """
+    sub_id = subscription_id or settings.azure_subscription_id or ""
+    inv = _get_cosmos_inventory().get_latest(sub_id)
+    if inv is None:
+        raise HTTPException(status_code=404, detail="No inventory snapshot found.")
+    if summary_only:
+        inv = {k: v for k, v in inv.items() if k != "resources"}
+    return inv
+
+
+@app.get("/api/inventory/status")
+async def get_inventory_status(
+    subscription_id: str | None = Query(default=None),
+) -> dict:
+    """Return lightweight inventory metadata — no resource list.
+
+    Returns:
+        ``{ exists, refreshed_at, resource_count, type_summary, age_hours, stale }``
+    """
+    sub_id = subscription_id or settings.azure_subscription_id or ""
+    inv = _get_cosmos_inventory().get_latest(sub_id)
+    if inv is None:
+        return {"exists": False, "refreshed_at": None, "resource_count": 0,
+                "type_summary": {}, "age_hours": None, "stale": True}
+
+    refreshed_at = inv.get("refreshed_at")
+    age_hours: float | None = None
+    stale = True
+    if refreshed_at:
+        try:
+            ts = datetime.fromisoformat(refreshed_at.replace("Z", "+00:00"))
+            age_hours = (datetime.now(timezone.utc) - ts).total_seconds() / 3600
+            stale = age_hours > settings.inventory_stale_hours
+        except (ValueError, TypeError):
+            pass
+
+    return {
+        "exists": True,
+        "refreshed_at": refreshed_at,
+        "resource_count": inv.get("resource_count", 0),
+        "type_summary": inv.get("type_summary", {}),
+        "age_hours": round(age_hours, 1) if age_hours is not None else None,
+        "stale": stale,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -2542,6 +2767,8 @@ async def get_config() -> dict:
         "llm_concurrency_limit": settings.llm_concurrency_limit,
         "execution_gateway_enabled": settings.execution_gateway_enabled,
         "use_live_topology": settings.use_live_topology,
+        "azure_subscription_id": settings.azure_subscription_id,
+        "inventory_stale_hours": settings.inventory_stale_hours,
         "version": "1.0.0",
     }
 

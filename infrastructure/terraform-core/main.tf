@@ -419,6 +419,24 @@ resource "azurerm_cosmosdb_sql_container" "governance_executions" {
   }
 }
 
+resource "azurerm_cosmosdb_sql_container" "resource_inventory" {
+  name                = "resource-inventory"
+  resource_group_name = azurerm_resource_group.ruriskry.name
+  account_name        = azurerm_cosmosdb_account.ruriskry.name
+  database_name       = azurerm_cosmosdb_sql_database.ruriskry.name
+
+  partition_key_paths   = ["/subscription_id"]
+  partition_key_version = 2
+
+  indexing_policy {
+    indexing_mode = "consistent"
+
+    included_path {
+      path = "/*"
+    }
+  }
+}
+
 # =============================================================================
 # 7. Key Vault secrets (service credentials)
 # =============================================================================

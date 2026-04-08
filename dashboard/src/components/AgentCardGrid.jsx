@@ -11,7 +11,7 @@ import React, { useState, useEffect, useCallback } from 'react'
 import {
   DollarSign, Activity, Shield, Zap, Play, Square,
   ScrollText, Clock, MoreHorizontal, ClipboardList,
-  BarChart2, Info, X,
+  BarChart2, Info, X, AlertTriangle,
 } from 'lucide-react'
 import GlowCard from './magicui/GlowCard'
 import VerdictBadge from './magicui/VerdictBadge'
@@ -431,6 +431,95 @@ function AgentCard({ agent, agentType, scan, onStart, onStop, onViewLive, onView
 
 // ── AgentCardGrid ────────────────────────────────────────────────────────────
 
+// ── Scan Modal ────────────────────────────────────────────────────────────────
+
+function ScanModal({ agentType, inventoryStatus, onStart, onClose }) {
+  const hasInventory = inventoryStatus?.exists
+  const [mode, setMode] = useState(hasInventory ? 'existing' : 'refresh')
+  const stale = inventoryStatus?.stale
+  const ageHours = inventoryStatus?.age_hours
+  const resourceCount = inventoryStatus?.resource_count || 0
+  const meta = AGENT_META[agentType] || {}
+
+  function ageText() {
+    if (!ageHours) return ''
+    if (ageHours < 1) return `${Math.round(ageHours * 60)}m ago`
+    return `${Math.round(ageHours)}h ago`
+  }
+
+  return (
+    <>
+      <div className="fixed inset-0 bg-black/50 z-30" onClick={onClose} aria-hidden="true" />
+      <div className="fixed inset-0 z-40 flex items-center justify-center p-4">
+        <div className="bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl w-full max-w-md">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-slate-700">
+            <h3 className="text-sm font-semibold text-slate-200">
+              Start Scan — {meta.label || agentType}
+            </h3>
+            <button onClick={onClose} className="text-slate-500 hover:text-slate-200 transition-colors text-lg leading-none">✕</button>
+          </div>
+          <div className="px-5 py-4 space-y-4">
+            <div>
+              <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Resource Inventory</div>
+              <div className="rounded-lg overflow-hidden" style={{ border: '1px solid rgba(30,45,74,0.6)' }}>
+                <label className={`flex items-start gap-3 p-3 cursor-pointer transition-colors ${!hasInventory ? 'opacity-40 cursor-not-allowed' : 'hover:bg-slate-800/40'} ${mode === 'existing' ? 'bg-blue-500/06' : ''}`}
+                  style={mode === 'existing' ? { background: 'rgba(59,130,246,0.05)' } : {}}>
+                  <input type="radio" name={`inv-${agentType}`} value="existing" checked={mode === 'existing'}
+                    disabled={!hasInventory} onChange={() => setMode('existing')} className="mt-0.5" />
+                  <div>
+                    <div className="text-sm font-medium text-slate-200">Use existing inventory</div>
+                    {hasInventory
+                      ? <div className="text-xs text-slate-500 mt-0.5">Last updated: {ageText()} · {resourceCount} resources{stale && <span className="ml-2 text-amber-400">⚠ stale</span>}</div>
+                      : <div className="text-xs text-slate-600 mt-0.5">No inventory found</div>}
+                  </div>
+                </label>
+                <div style={{ borderTop: '1px solid rgba(30,45,74,0.4)' }} />
+                <label className={`flex items-start gap-3 p-3 cursor-pointer transition-colors hover:bg-slate-800/40 ${mode === 'refresh' ? 'bg-blue-500/06' : ''}`}
+                  style={mode === 'refresh' ? { background: 'rgba(59,130,246,0.05)' } : {}}>
+                  <input type="radio" name={`inv-${agentType}`} value="refresh" checked={mode === 'refresh'} onChange={() => setMode('refresh')} className="mt-0.5" />
+                  <div>
+                    <div className="text-sm font-medium text-slate-200">Refresh inventory first</div>
+                    <div className="text-xs text-slate-500 mt-0.5">Fetches latest from Azure (~10–30s)</div>
+                  </div>
+                </label>
+                <div style={{ borderTop: '1px solid rgba(30,45,74,0.4)' }} />
+                <label className={`flex items-start gap-3 p-3 cursor-pointer transition-colors hover:bg-slate-800/40 ${mode === 'skip' ? 'bg-blue-500/06' : ''}`}
+                  style={mode === 'skip' ? { background: 'rgba(59,130,246,0.05)' } : {}}>
+                  <input type="radio" name={`inv-${agentType}`} value="skip" checked={mode === 'skip'} onChange={() => setMode('skip')} className="mt-0.5" />
+                  <div>
+                    <div className="text-sm font-medium text-slate-200">Skip inventory</div>
+                    <div className="text-xs text-slate-500 mt-0.5">Agent discovers resources on its own
+                      <span className="text-amber-500/70"> (may produce inconsistent results)</span>
+                    </div>
+                  </div>
+                </label>
+              </div>
+            </div>
+            {stale && mode === 'existing' && hasInventory && (
+              <div className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs"
+                style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.2)', color: '#fcd34d' }}>
+                <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                Inventory is {ageHours ? `${Math.round(ageHours)}h` : ''} old — consider refreshing for accurate results.
+              </div>
+            )}
+            <div className="flex gap-3">
+              <button onClick={onClose}
+                className="flex-1 py-2 rounded-lg text-sm text-slate-400 border border-slate-700 hover:bg-slate-800 transition-colors">
+                Cancel
+              </button>
+              <button onClick={() => onStart(mode)}
+                className="flex-1 py-2 rounded-lg text-sm font-medium text-white transition-colors"
+                style={{ background: 'rgba(59,130,246,0.8)', border: '1px solid rgba(59,130,246,0.5)' }}>
+                Start Scan
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </>
+  )
+}
+
 export default function AgentCardGrid({
   agents,
   scanState,
@@ -443,7 +532,12 @@ export default function AgentCardGrid({
   onOpenHistoricalLog,
   resourceGroup,
   onResourceGroupChange,
+  inventoryStatus,
+  subscriptionId,
+  onSubscriptionIdChange,
 }) {
+  const [modalAgentType, setModalAgentType] = useState(null)
+
   const agentMap = {}
   agents.forEach(a => { agentMap[a.name] = a })
 
@@ -453,6 +547,16 @@ export default function AgentCardGrid({
     monitoring: 'monitoring-agent',
     deploy:     'deploy-agent',
   }
+
+  const handleStartWithModal = useCallback((agentType) => {
+    setModalAgentType(agentType)
+  }, [])
+
+  const handleModalStart = useCallback((mode) => {
+    const type = modalAgentType
+    setModalAgentType(null)
+    onStartScan(type, mode)
+  }, [modalAgentType, onStartScan])
 
   return (
     <div className="space-y-4">
@@ -467,6 +571,23 @@ export default function AgentCardGrid({
           </span>
         )}
       </div>
+
+      {/* Subscription ID input */}
+      {onSubscriptionIdChange && (
+        <div>
+          <label className="block text-xs text-slate-500 mb-1" htmlFor="sub-input">
+            Target Subscription <span className="text-slate-600">(defaults to configured subscription)</span>
+          </label>
+          <input
+            id="sub-input"
+            type="text"
+            value={subscriptionId || ''}
+            onChange={e => onSubscriptionIdChange(e.target.value)}
+            placeholder="e.g. e7e0ed80-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+            className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-blue-500 transition-colors font-mono"
+          />
+        </div>
+      )}
 
       {/* Resource group input */}
       <div>
@@ -503,7 +624,7 @@ export default function AgentCardGrid({
                 agent={agent}
                 agentType={type}
                 scan={scanState[type]}
-                onStart={onStartScan}
+                onStart={handleStartWithModal}
                 onStop={onStopScan}
                 onViewLive={onOpenLiveLog}
                 onViewHistory={onOpenHistoricalLog}
@@ -515,7 +636,7 @@ export default function AgentCardGrid({
 
       {/* Run All */}
       <button
-        onClick={onStartAll}
+        onClick={() => onStartAll('existing')}
         disabled={anyScanning}
         className={`
           w-full py-2.5 rounded-xl text-sm font-semibold transition-all border
@@ -536,6 +657,16 @@ export default function AgentCardGrid({
           </span>
         )}
       </button>
+
+      {/* Scan modal */}
+      {modalAgentType && (
+        <ScanModal
+          agentType={modalAgentType}
+          inventoryStatus={inventoryStatus}
+          onStart={handleModalStart}
+          onClose={() => setModalAgentType(null)}
+        />
+      )}
     </div>
   )
 }

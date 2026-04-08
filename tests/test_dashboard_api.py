@@ -417,7 +417,7 @@ class TestScanDurabilityAndStreaming:
         import src.operational_agents.cost_agent as cost_module
 
         class _FakeCostAgent:
-            async def scan(self, target_resource_group=None):
+            async def scan(self, target_resource_group=None, inventory=None):
                 return [
                     _make_action(
                         resource_id=(

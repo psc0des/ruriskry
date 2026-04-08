@@ -48,10 +48,15 @@ export async function fetchAgents() {
  * Trigger a single-agent background scan.
  * @param {'cost'|'monitoring'|'deploy'} type - which agent to run
  * @param {string|null} resourceGroup - optional Azure resource group to scope the scan
+ * @param {string|null} subscriptionId - optional override for the configured subscription
+ * @param {'existing'|'refresh'|'skip'} inventoryMode - how to handle inventory
  * @returns {{ status: string, scan_id: string, agent_type: string }}
  */
-export async function triggerScan(type, resourceGroup = null) {
-  const body = resourceGroup ? { resource_group: resourceGroup } : {}
+export async function triggerScan(type, resourceGroup = null, subscriptionId = null, inventoryMode = 'existing') {
+  const body = {}
+  if (resourceGroup) body.resource_group = resourceGroup
+  if (subscriptionId) body.subscription_id = subscriptionId
+  body.inventory_mode = inventoryMode
   const res = await fetch(`${BASE}/scan/${type}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -64,16 +69,80 @@ export async function triggerScan(type, resourceGroup = null) {
 /**
  * Trigger all three agent scans simultaneously.
  * @param {string|null} resourceGroup - optional Azure resource group
+ * @param {string|null} subscriptionId - optional override for the configured subscription
+ * @param {'existing'|'refresh'|'skip'} inventoryMode - how to handle inventory
  * @returns {{ status: string, scan_ids: string[] }}
  */
-export async function triggerAllScans(resourceGroup = null) {
-  const body = resourceGroup ? { resource_group: resourceGroup } : {}
+export async function triggerAllScans(resourceGroup = null, subscriptionId = null, inventoryMode = 'existing') {
+  const body = {}
+  if (resourceGroup) body.resource_group = resourceGroup
+  if (subscriptionId) body.subscription_id = subscriptionId
+  body.inventory_mode = inventoryMode
   const res = await fetch(`${BASE}/scan/all`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
   if (!res.ok) throw new Error(`API error ${res.status}: failed to start all scans`)
+  return res.json()
+}
+
+// ---------------------------------------------------------------------------
+// Inventory API
+// ---------------------------------------------------------------------------
+
+/**
+ * Trigger a background inventory refresh.
+ * @param {string|null} subscriptionId - Azure subscription to query
+ * @returns {{ status: string, refresh_id: string }}
+ */
+export async function refreshInventory(subscriptionId = null) {
+  const res = await fetch(`${BASE}/inventory/refresh`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ subscription_id: subscriptionId }),
+  })
+  if (!res.ok) throw new Error(`Inventory refresh failed: ${res.status}`)
+  return res.json()
+}
+
+/**
+ * Poll the status of a background inventory refresh.
+ * @param {string} refreshId - UUID returned by refreshInventory
+ * @returns {{ status: string, resource_count?: number, error?: string }}
+ */
+export async function fetchRefreshStatus(refreshId) {
+  const res = await fetch(`${BASE}/inventory/refresh/${refreshId}`)
+  if (!res.ok) throw new Error(`Refresh status failed: ${res.status}`)
+  return res.json()
+}
+
+/**
+ * Fetch the latest inventory snapshot.
+ * @param {string|null} subscriptionId
+ * @param {boolean} summaryOnly - if true, omit resources array
+ * @returns {object|null} inventory document, or null if not found
+ */
+export async function fetchInventory(subscriptionId = null, summaryOnly = false) {
+  const params = new URLSearchParams()
+  if (subscriptionId) params.set('subscription_id', subscriptionId)
+  if (summaryOnly) params.set('summary_only', 'true')
+  const res = await fetch(`${BASE}/inventory?${params}`)
+  if (res.status === 404) return null
+  if (!res.ok) throw new Error(`Fetch inventory failed: ${res.status}`)
+  return res.json()
+}
+
+/**
+ * Fetch lightweight inventory status (no resource list).
+ * @param {string|null} subscriptionId
+ * @returns {{ exists, refreshed_at, resource_count, type_summary, age_hours, stale }}
+ */
+export async function fetchInventoryStatus(subscriptionId = null) {
+  const params = new URLSearchParams()
+  if (subscriptionId) params.set('subscription_id', subscriptionId)
+  const res = await fetch(`${BASE}/inventory/status?${params}`)
+  if (!res.ok) throw new Error(`Inventory status failed: ${res.status}`)
   return res.json()
 }
 

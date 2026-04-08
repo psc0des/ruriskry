@@ -118,7 +118,7 @@ class TestCostAgentAgnostic:
             agent, "_scan_with_framework", new=AsyncMock(return_value=[])
         ) as mock_fw:
             asyncio.run(agent.scan(target_resource_group="totally-different-rg"))
-            mock_fw.assert_called_once_with("totally-different-rg")
+            mock_fw.assert_called_once_with("totally-different-rg", None)
 
     # ------------------------------------------------------------------
     # B3 — Live-mode failure returns [] (no seed data fallback)
@@ -214,7 +214,7 @@ class TestDeployAgentAgnostic:
             agent, "_scan_with_framework", new=AsyncMock(return_value=[])
         ) as mock_fw:
             asyncio.run(agent.scan(target_resource_group="my-custom-rg"))
-            mock_fw.assert_called_once_with("my-custom-rg")
+            mock_fw.assert_called_once_with("my-custom-rg", None)
 
     # ------------------------------------------------------------------
     # B3 — Live-mode failure returns []
@@ -290,7 +290,7 @@ class TestMonitoringAgentAgnostic:
             agent, "_scan_with_framework", new=AsyncMock(return_value=[])
         ) as mock_fw:
             asyncio.run(agent.scan(target_resource_group="any-org-rg"))
-            mock_fw.assert_called_once_with(None, "any-org-rg")
+            mock_fw.assert_called_once_with(None, "any-org-rg", None)
 
     # ------------------------------------------------------------------
     # B3 — Live-mode failure returns []
@@ -503,7 +503,7 @@ class TestScanAPIEndpoints:
         """POST /api/scan/cost with resource_group body passes it to the agent."""
         captured: list[tuple] = []
 
-        async def capture_scan(scan_id, agent_type, resource_group):
+        async def capture_scan(scan_id, agent_type, resource_group, subscription_id=None, inventory_mode="existing"):
             captured.append((scan_id, agent_type, resource_group))
 
         with patch(

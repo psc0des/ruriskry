@@ -58,7 +58,8 @@ export default function useScanManager({ onScanComplete } = {}) {
     scanEntries: null,
   })
 
-  const [resourceGroup, setResourceGroup] = useState('')
+  const [resourceGroup,  setResourceGroup]  = useState('')
+  const [subscriptionId, setSubscriptionId] = useState('')
 
   const pollRefs = useRef({ cost: null, monitoring: null, deploy: null })
 
@@ -156,15 +157,16 @@ export default function useScanManager({ onScanComplete } = {}) {
 
   // ── Actions ──────────────────────────────────────────────────────────────
 
-  const startScan = useCallback(async (agentType) => {
+  const startScan = useCallback(async (agentType, inventoryMode = 'existing') => {
     const rg = resourceGroup.trim() || null
+    const sub = subscriptionId.trim() || null
     const now = new Date().toISOString()
     setScanState(prev => ({
       ...prev,
       [agentType]: { status: 'running', scanId: null, startedAt: now },
     }))
     try {
-      const { scan_id } = await triggerScan(agentType, rg)
+      const { scan_id } = await triggerScan(agentType, rg, sub, inventoryMode)
       setScanState(prev => ({
         ...prev,
         [agentType]: { status: 'running', scanId: scan_id, startedAt: now },
@@ -177,10 +179,11 @@ export default function useScanManager({ onScanComplete } = {}) {
         [agentType]: { status: 'error', scanId: null, startedAt: null, error: err.message },
       }))
     }
-  }, [resourceGroup, startPolling])
+  }, [resourceGroup, subscriptionId, startPolling])
 
-  const startAllScans = useCallback(async () => {
+  const startAllScans = useCallback(async (inventoryMode = 'existing') => {
     const rg = resourceGroup.trim() || null
+    const sub = subscriptionId.trim() || null
     const now = new Date().toISOString()
     setScanState({
       cost:       { status: 'running', scanId: null, startedAt: now },
@@ -188,7 +191,7 @@ export default function useScanManager({ onScanComplete } = {}) {
       deploy:     { status: 'running', scanId: null, startedAt: now },
     })
     try {
-      const { scan_ids } = await triggerAllScans(rg)
+      const { scan_ids } = await triggerAllScans(rg, sub, inventoryMode)
       const entries = []
       AGENT_TYPES.forEach((t, i) => {
         const scanId = scan_ids[i]
@@ -206,7 +209,7 @@ export default function useScanManager({ onScanComplete } = {}) {
       const errState = { status: 'error', scanId: null, startedAt: null, error: err.message }
       setScanState({ cost: errState, monitoring: errState, deploy: errState })
     }
-  }, [resourceGroup, startPolling])
+  }, [resourceGroup, subscriptionId, startPolling])
 
   const stopScan = useCallback(async (agentType) => {
     const scanId = scanState[agentType]?.scanId
@@ -257,6 +260,8 @@ export default function useScanManager({ onScanComplete } = {}) {
     logViewer,
     resourceGroup,
     setResourceGroup,
+    subscriptionId,
+    setSubscriptionId,
     anyScanning,
     allScanning,
     startScan,

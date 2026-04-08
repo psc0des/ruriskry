@@ -500,6 +500,45 @@ GET /api/scan/{id}/stream                            ← SSE consumer
 
 ---
 
+## Resource Inventory — Deterministic Discovery (Phase 31)
+
+**Problem**: Operational agents sometimes return 0 verdicts because the LLM non-deterministically
+decides which `query_resource_graph` tool calls to make. On "bad" runs it simply doesn't query
+certain resource types and misses real issues.
+
+**Solution**: Separate discovery from reasoning.
+
+```
+POST /api/scan/cost  { inventory_mode: "refresh" }
+    ↓
+_run_agent_scan(scan_id, "cost", rg, sub, inventory_mode="refresh")
+    │
+    ├── build_inventory(subscription_id)              ← NEW: one KQL, all resources
+    │   ├── query_resource_graph_async("Resources | project ...")   ← no type filter
+    │   ├── group by type (dynamic, never hardcoded)
+    │   └── _enrich_vm_power_states()                ← asyncio.gather per VM
+    │       └── ComputeManagementClient.virtual_machines.instance_view()
+    │
+    ├── CosmosInventoryClient.upsert(snapshot)        ← persist for future "existing" runs
+    │
+    ├── format_inventory_for_prompt(snapshot)         ← text block: sections by type, scalar props
+    │
+    └── agent.scan(inventory=inventory)               ← LLM sees full resource list in prompt
+        └── LLM still decides what's an issue — it just can't miss resources
+```
+
+**Inventory modes** (set via `ScanRequest.inventory_mode`):
+- `existing` — use latest Cosmos snapshot (default; fast, no Azure calls)
+- `refresh` — rebuild inventory from Resource Graph then scan (slow but current)
+- `skip` — legacy: LLM discovers resources via tool calls (non-deterministic)
+
+**Staleness**: `GET /api/inventory/status` returns `stale=true` when `age_hours > inventory_stale_hours` (default 24h). The `Inventory.jsx` page shows an amber banner when stale.
+
+**Key design constraint**: The inventory is purely for DISCOVERY completeness. The LLM still
+makes all decisions — it cannot be overridden by the inventory data.
+
+---
+
 ## Execution Gateway & IaC-Safe Execution (Phase 21)
 
 RuriSkry evaluates. Terraform executes. Humans approve. The Execution Gateway sits

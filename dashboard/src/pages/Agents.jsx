@@ -20,13 +20,15 @@ import ScanHistoryTable from '../components/ScanHistoryTable'
 import ScanLogViewer from '../components/ScanLogViewer'
 
 export default function Agents() {
-  const { agents, fetchAll } = useOutletContext()
+  const { agents, inventoryStatus, fetchAll } = useOutletContext()
 
   const {
     scanState,
     logViewer,
     resourceGroup,
     setResourceGroup,
+    subscriptionId,
+    setSubscriptionId,
     anyScanning,
     allScanning,
     startScan,
@@ -61,6 +63,9 @@ export default function Agents() {
         onOpenHistoricalLog={openHistoricalLog}
         resourceGroup={resourceGroup}
         onResourceGroupChange={setResourceGroup}
+        inventoryStatus={inventoryStatus}
+        subscriptionId={subscriptionId}
+        onSubscriptionIdChange={setSubscriptionId}
       />
 
       {/* Cosmos-backed scan history */}

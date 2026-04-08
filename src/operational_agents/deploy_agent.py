@@ -223,12 +223,16 @@ class DeployAgent:
     async def scan(
         self,
         target_resource_group: str | None = None,
+        inventory: list[dict] | None = None,
     ) -> list[ProposedAction]:
         """Investigate the Azure environment and return configuration proposals.
 
         Args:
             target_resource_group: Optional resource group to scope the scan.
                 When ``None`` the agent scans across the subscription.
+            inventory: Optional pre-fetched resource list.  When provided,
+                injected into the LLM prompt so the agent can review all
+                resources without relying on non-deterministic discovery.
 
         Returns:
             List of :class:`~src.core.models.ProposedAction` objects.
@@ -249,7 +253,7 @@ class DeployAgent:
 
         self.scan_error = None
         try:
-            return await self._scan_with_framework(target_resource_group)
+            return await self._scan_with_framework(target_resource_group, inventory)
         except Exception as exc:  # noqa: BLE001
             self.scan_error = str(exc)
             logger.warning(
@@ -264,7 +268,7 @@ class DeployAgent:
     # ------------------------------------------------------------------
 
     async def _scan_with_framework(
-        self, target_resource_group: str | None
+        self, target_resource_group: str | None, inventory: list[dict] | None = None
     ) -> list[ProposedAction]:
         """Run GPT-4.1 with security investigation tools."""
         from openai import AsyncAzureOpenAI
@@ -711,22 +715,50 @@ class DeployAgent:
             if target_resource_group
             else "across the Azure environment"
         )
+
+        # Build prompt — inject inventory if provided
+        if inventory is not None:
+            from src.infrastructure.inventory_formatter import format_inventory_for_prompt  # noqa: PLC0415
+            inventory_text = format_inventory_for_prompt({
+                "resources": inventory,
+                "resource_count": len(inventory),
+                "refreshed_at": "pre-fetched",
+            })
+            scan_prompt = (
+                f"{inventory_text}\n\n"
+                f"Conduct a full 9-domain security and configuration compliance audit {rg_scope}. "
+                "The complete resource inventory is above — review EVERY resource listed. "
+                "Follow ALL steps in your instructions: "
+                "(1) The inventory above replaces Step 1 resource discovery — use it as your resource list. "
+                "You may still call query_resource_graph for custom KQL if needed. "
+                "(2) Audit NSG rules for internet-exposed management ports and missing deny-all. "
+                "(3) Review storage account security settings (public blob access, HTTPS, TLS, network ACLs). "
+                "(4) Check database and Key Vault configuration (publicNetworkAccess, purge protection, soft delete). "
+                "(5) Assess VM security posture (disk encryption, auth type, public IP with no NSG). "
+                "(6) Query activity logs for suspicious or failed changes in the last 48h. "
+                "(7) Flag resources with zero tags. "
+                "(8) Call list_defender_assessments to get Defender for Cloud findings for full-service coverage. "
+                "(9) Call list_policy_violations to surface Azure Policy non-compliance (CIS, NIST, PCI-DSS). "
+                "Propose an action for EVERY finding you discover."
+            )
+        else:
+            scan_prompt = (
+                f"Conduct a full 9-domain security and configuration compliance audit {rg_scope}. "
+                "Follow ALL steps in your instructions: "
+                "(1) Discover ALL resource types — NSGs, VMs, storage accounts, databases, Key Vaults, public IPs. "
+                "(2) Audit NSG rules for internet-exposed management ports and missing deny-all. "
+                "(3) Review storage account security settings (public blob access, HTTPS, TLS, network ACLs). "
+                "(4) Check database and Key Vault configuration (publicNetworkAccess, purge protection, soft delete). "
+                "(5) Assess VM security posture (disk encryption, auth type, public IP with no NSG). "
+                "(6) Query activity logs for suspicious or failed changes in the last 48h. "
+                "(7) Flag resources with zero tags. "
+                "(8) Call list_defender_assessments to get Defender for Cloud findings for full-service coverage. "
+                "(9) Call list_policy_violations to surface Azure Policy non-compliance (CIS, NIST, PCI-DSS). "
+                "Propose an action for EVERY finding you discover."
+            )
+
         from src.infrastructure.llm_throttle import run_with_throttle
-        await run_with_throttle(
-            agent.run,
-            f"Conduct a full 9-domain security and configuration compliance audit {rg_scope}. "
-            "Follow ALL steps in your instructions: "
-            "(1) Discover ALL resource types — NSGs, VMs, storage accounts, databases, Key Vaults, public IPs. "
-            "(2) Audit NSG rules for internet-exposed management ports and missing deny-all. "
-            "(3) Review storage account security settings (public blob access, HTTPS, TLS, network ACLs). "
-            "(4) Check database and Key Vault configuration (publicNetworkAccess, purge protection, soft delete). "
-            "(5) Assess VM security posture (disk encryption, auth type, public IP with no NSG). "
-            "(6) Query activity logs for suspicious or failed changes in the last 48h. "
-            "(7) Flag resources with zero tags. "
-            "(8) Call list_defender_assessments to get Defender for Cloud findings for full-service coverage. "
-            "(9) Call list_policy_violations to surface Azure Policy non-compliance (CIS, NIST, PCI-DSS). "
-            "Propose an action for EVERY finding you discover.",
-        )
+        await run_with_throttle(agent.run, scan_prompt)
 
         # Expose tool-call notes for the dashboard live log.
         self.scan_notes: list[str] = scan_notes

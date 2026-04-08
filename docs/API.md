@@ -171,6 +171,10 @@ All endpoints are `async def` (FastAPI manages the event loop).
 | GET | `/api/execution/{execution_id}/terraform` | Generate Terraform HCL fix for a `manual_required` or `pr_created` execution record |
 | GET | `/api/config` | Safe system configuration — mode, timeouts, feature flags (no secrets) |
 | POST | `/api/admin/reset` | ⚠ Dev/test only — wipe all local JSON data and reset in-memory state |
+| POST | `/api/inventory/refresh` | Start a background resource inventory refresh (KQL + VM powerState enrichment). Body: `{subscription_id?, resource_group?}`. Returns `{status, refresh_id}`. |
+| GET | `/api/inventory/refresh/{refresh_id}` | Poll background refresh status: `{status, resource_count?}` where status ∈ running/complete/error. |
+| GET | `/api/inventory` | Get the latest inventory snapshot. Query params: `subscription_id`, `summary_only`. Returns `404` if no snapshot exists. |
+| GET | `/api/inventory/status` | Staleness check — `{exists, refreshed_at, resource_count, type_summary, age_hours, stale}`. `stale=true` when age > `inventory_stale_hours` (default 24). |
 
 ### Query parameters for `GET /api/evaluations`
 

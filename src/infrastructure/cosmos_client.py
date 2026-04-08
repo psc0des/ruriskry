@@ -19,6 +19,12 @@ Usage::
     client = CosmosDecisionClient()
     client.upsert({"id": "abc-123", "resource_id": "vm-23", "decision": "denied"})
     recent = client.get_recent(limit=5)
+
+    from src.infrastructure.cosmos_client import CosmosInventoryClient
+
+    inv = CosmosInventoryClient()
+    inv.upsert({"id": "inv-abc123-20260408", "subscription_id": "abc123", ...})
+    latest = inv.get_latest("abc123-...")
 """
 
 import json
@@ -291,4 +297,145 @@ class CosmosExecutionClient:
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "CosmosExecutionClient: delete %s failed — %s", execution_id, exc
+                )
+
+
+_DEFAULT_INVENTORY_DIR = (
+    Path(__file__).parent.parent.parent / "data" / "inventory"
+)
+
+
+class CosmosInventoryClient:
+    """Read/write resource inventory snapshots from Cosmos DB or local JSON files.
+
+    Mirrors the CosmosExecutionClient pattern — local JSON in mock mode,
+    Cosmos DB ``resource-inventory`` container in live mode.
+
+    Partition key: ``/subscription_id``
+    Document ID:   ``inv-<sub_short>-<timestamp>``
+    """
+
+    def __init__(self, cfg=None, inventory_dir: Path | None = None) -> None:
+        self._cfg = cfg or _default_settings
+        self._inventory_dir: Path = inventory_dir or _DEFAULT_INVENTORY_DIR
+        self._secrets = KeyVaultSecretResolver(self._cfg)
+        self._cosmos_key = self._secrets.resolve(
+            direct_value=self._cfg.cosmos_key,
+            secret_name=getattr(self._cfg, "cosmos_key_secret_name", ""),
+            setting_name="COSMOS_KEY",
+        )
+
+        self._is_mock: bool = (
+            self._cfg.use_local_mocks
+            or not self._cfg.cosmos_endpoint
+            or not self._cosmos_key
+        )
+
+        if self._is_mock:
+            logger.info(
+                "CosmosInventoryClient: LOCAL MOCK mode (JSON files at %s).",
+                self._inventory_dir,
+            )
+            self._inventory_dir.mkdir(parents=True, exist_ok=True)
+            self._container = None
+        else:
+            from azure.cosmos import CosmosClient  # type: ignore[import]
+
+            client = CosmosClient(
+                url=self._cfg.cosmos_endpoint,
+                credential=self._cosmos_key,
+            )
+            db = client.get_database_client(self._cfg.cosmos_database)
+            self._container = db.get_container_client(
+                self._cfg.cosmos_container_inventory
+            )
+            logger.info(
+                "CosmosInventoryClient: connected to %s / %s",
+                self._cfg.cosmos_database,
+                self._cfg.cosmos_container_inventory,
+            )
+
+    @property
+    def is_mock(self) -> bool:
+        return self._is_mock
+
+    def upsert(self, record: dict) -> None:
+        """Insert or update one inventory snapshot.
+
+        The record must have ``id`` and ``subscription_id`` fields.
+        """
+        if self._is_mock:
+            # In mock mode write a single ``latest.json`` so get_latest() finds it.
+            path = self._inventory_dir / "latest.json"
+            path.write_text(json.dumps(record, indent=2), encoding="utf-8")
+            logger.debug("CosmosInventoryClient(mock): wrote %s", path.name)
+        else:
+            self._container.upsert_item(record)
+            logger.debug("CosmosInventoryClient: upserted %s", record.get("id"))
+
+    def get_latest(self, subscription_id: str) -> dict | None:
+        """Return the most recent inventory snapshot for a subscription.
+
+        Args:
+            subscription_id: Azure subscription ID (full UUID).
+
+        Returns:
+            Inventory document dict, or ``None`` if no snapshot exists.
+        """
+        if self._is_mock:
+            path = self._inventory_dir / "latest.json"
+            if not path.exists():
+                return None
+            try:
+                record = json.loads(path.read_text(encoding="utf-8"))
+                # Filter by subscription if the file stores one
+                if subscription_id and record.get("subscription_id"):
+                    if not record["subscription_id"].startswith(subscription_id[:8]):
+                        return None
+                return record
+            except (json.JSONDecodeError, OSError) as exc:
+                logger.warning("CosmosInventoryClient(mock): could not read %s — %s", path, exc)
+                return None
+
+        query = (
+            "SELECT TOP 1 * FROM c "
+            "WHERE c.subscription_id = @sub "
+            "ORDER BY c.refreshed_at DESC"
+        )
+        params = [{"name": "@sub", "value": subscription_id}]
+        results = list(
+            self._container.query_items(
+                query, parameters=params, partition_key=subscription_id
+            )
+        )
+        return results[0] if results else None
+
+    def delete_old(self, subscription_id: str, keep: int = 5) -> None:
+        """Delete old inventory snapshots, retaining only the N most recent.
+
+        Args:
+            subscription_id: Azure subscription ID.
+            keep: Number of most-recent snapshots to retain.
+        """
+        if self._is_mock:
+            return  # mock mode keeps one file — nothing to prune
+
+        query = (
+            "SELECT c.id FROM c "
+            "WHERE c.subscription_id = @sub "
+            "ORDER BY c.refreshed_at DESC "
+            f"OFFSET {keep} LIMIT 1000"
+        )
+        params = [{"name": "@sub", "value": subscription_id}]
+        old_ids = [
+            r["id"] for r in self._container.query_items(
+                query, parameters=params, partition_key=subscription_id
+            )
+        ]
+        for doc_id in old_ids:
+            try:
+                self._container.delete_item(item=doc_id, partition_key=subscription_id)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "CosmosInventoryClient: delete %s failed — %s", doc_id, exc
                 )

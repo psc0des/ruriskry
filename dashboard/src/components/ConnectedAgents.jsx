@@ -22,7 +22,7 @@ import {
   triggerScan,
 } from '../api'
 import LiveLogPanel from './LiveLogPanel'
-import { Play, Square, ClipboardList, BarChart2, ScrollText, Info } from 'lucide-react'
+import { Play, Square, ClipboardList, BarChart2, ScrollText, Info, AlertTriangle } from 'lucide-react'
 import GlowCard from './magicui/GlowCard'
 import VerdictBadge from './magicui/VerdictBadge'
 
@@ -370,11 +370,142 @@ function AgentCard({ agent, menuOpen, onMenuToggle, onMenuAction, scanning, hasS
 
 // ── ConnectedAgents (section) ──────────────────────────────────────────────
 
-export default function ConnectedAgents({ agents }) {
+// ── Scan Modal ─────────────────────────────────────────────────────────────
+
+function ScanModal({ agentName, agentType, inventoryStatus, onStart, onClose }) {
+  const [mode, setMode] = useState(
+    inventoryStatus?.exists ? 'existing' : 'refresh'
+  )
+
+  const stale = inventoryStatus?.stale
+  const ageHours = inventoryStatus?.age_hours
+  const resourceCount = inventoryStatus?.resource_count || 0
+
+  function ageText() {
+    if (!ageHours) return ''
+    if (ageHours < 1) return `${Math.round(ageHours * 60)}m ago`
+    return `${Math.round(ageHours)}h ago`
+  }
+
+  return (
+    <Modal title={`Start Scan — ${agentType || agentName}`} onClose={onClose}>
+      <div className="space-y-4">
+        <div>
+          <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
+            Resource Inventory
+          </div>
+          <div
+            className="rounded-lg overflow-hidden"
+            style={{ border: '1px solid rgba(30,45,74,0.6)' }}
+          >
+            {/* Option: Use existing */}
+            <label
+              className={`flex items-start gap-3 p-3 cursor-pointer transition-colors ${
+                !inventoryStatus?.exists ? 'opacity-40 cursor-not-allowed' : 'hover:bg-slate-800/40'
+              } ${mode === 'existing' ? 'bg-blue-500/08' : ''}`}
+              style={mode === 'existing' ? { background: 'rgba(59,130,246,0.06)' } : {}}
+            >
+              <input
+                type="radio" name="inv-mode" value="existing"
+                checked={mode === 'existing'}
+                disabled={!inventoryStatus?.exists}
+                onChange={() => setMode('existing')}
+                className="mt-0.5"
+              />
+              <div>
+                <div className="text-sm font-medium text-slate-200">Use existing inventory</div>
+                {inventoryStatus?.exists ? (
+                  <div className="text-xs text-slate-500 mt-0.5">
+                    Last updated: {ageText()} · {resourceCount} resources
+                    {stale && (
+                      <span className="ml-2 text-amber-400">⚠ stale</span>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-xs text-slate-600 mt-0.5">No inventory found</div>
+                )}
+              </div>
+            </label>
+            <div style={{ borderTop: '1px solid rgba(30,45,74,0.4)' }} />
+
+            {/* Option: Refresh first */}
+            <label
+              className={`flex items-start gap-3 p-3 cursor-pointer transition-colors hover:bg-slate-800/40 ${mode === 'refresh' ? 'bg-blue-500/08' : ''}`}
+              style={mode === 'refresh' ? { background: 'rgba(59,130,246,0.06)' } : {}}
+            >
+              <input
+                type="radio" name="inv-mode" value="refresh"
+                checked={mode === 'refresh'}
+                onChange={() => setMode('refresh')}
+                className="mt-0.5"
+              />
+              <div>
+                <div className="text-sm font-medium text-slate-200">Refresh inventory first</div>
+                <div className="text-xs text-slate-500 mt-0.5">Fetches latest from Azure (~10–30s)</div>
+              </div>
+            </label>
+            <div style={{ borderTop: '1px solid rgba(30,45,74,0.4)' }} />
+
+            {/* Option: Skip */}
+            <label
+              className={`flex items-start gap-3 p-3 cursor-pointer transition-colors hover:bg-slate-800/40 ${mode === 'skip' ? 'bg-blue-500/08' : ''}`}
+              style={mode === 'skip' ? { background: 'rgba(59,130,246,0.06)' } : {}}
+            >
+              <input
+                type="radio" name="inv-mode" value="skip"
+                checked={mode === 'skip'}
+                onChange={() => setMode('skip')}
+                className="mt-0.5"
+              />
+              <div>
+                <div className="text-sm font-medium text-slate-200">Skip inventory</div>
+                <div className="text-xs text-slate-500 mt-0.5">
+                  Agent discovers resources on its own
+                  <span className="text-amber-500/70"> (may produce inconsistent results)</span>
+                </div>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        {/* Stale warning */}
+        {stale && mode === 'existing' && inventoryStatus?.exists && (
+          <div
+            className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs"
+            style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.2)', color: '#fcd34d' }}
+          >
+            <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+            Inventory is {ageHours ? `${Math.round(ageHours)}h` : ''} old — consider refreshing for accurate results.
+          </div>
+        )}
+
+        <div className="flex gap-3 pt-1">
+          <button
+            onClick={onClose}
+            className="flex-1 py-2 rounded-lg text-sm text-slate-400 border border-slate-700 hover:bg-slate-800 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => onStart(mode)}
+            className="flex-1 py-2 rounded-lg text-sm font-medium text-white transition-colors"
+            style={{ background: 'rgba(59,130,246,0.8)', border: '1px solid rgba(59,130,246,0.5)' }}
+          >
+            Start Scan
+          </button>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
+export default function ConnectedAgents({ agents, inventoryStatus }) {
   const [menus, setMenus] = useState({})  // { agentName: bool }
   const [scanState, setScan] = useState({})  // { agentName: { scanning, scanId } }
   const [panels, setPanels] = useState({})  // { agentName: panel type string | null }
   const [panelData, setData] = useState({})  // { agentName: fetched data }
+  const [scanModal, setScanModal] = useState(null)  // agentName | null
+  const [subscriptionId, setSubscriptionId] = useState('')
 
   const pollRefs = useRef({})
 
@@ -415,15 +546,8 @@ export default function ConnectedAgents({ agents }) {
     switch (action) {
       case 'scan': {
         if (!agentType) return
-        setScan(prev => ({ ...prev, [agentName]: { scanning: true, scanId: null } }))
-        try {
-          const { scan_id } = await triggerScan(agentType, null)
-          setScan(prev => ({ ...prev, [agentName]: { scanning: true, scanId: scan_id } }))
-          setPanels(prev => ({ ...prev, [agentName]: 'log' }))
-          startScanPolling(scan_id, agentName)
-        } catch {
-          setScan(prev => ({ ...prev, [agentName]: { scanning: false, scanId: null } }))
-        }
+        // Open modal to choose inventory mode
+        setScanModal(agentName)
         break
       }
 
@@ -478,6 +602,22 @@ export default function ConnectedAgents({ agents }) {
     }
   }, [scanState, startScanPolling])
 
+  const handleScanStart = useCallback(async (agentName, inventoryMode) => {
+    setScanModal(null)
+    const agentType = AGENT_TYPE[agentName]
+    if (!agentType) return
+    setScan(prev => ({ ...prev, [agentName]: { scanning: true, scanId: null } }))
+    try {
+      const sub = subscriptionId.trim() || null
+      const { scan_id } = await triggerScan(agentType, null, sub, inventoryMode)
+      setScan(prev => ({ ...prev, [agentName]: { scanning: true, scanId: scan_id } }))
+      setPanels(prev => ({ ...prev, [agentName]: 'log' }))
+      startScanPolling(scan_id, agentName)
+    } catch {
+      setScan(prev => ({ ...prev, [agentName]: { scanning: false, scanId: null } }))
+    }
+  }, [subscriptionId, startScanPolling])
+
   return (
     <div>
       {/* Section header */}
@@ -491,6 +631,31 @@ export default function ConnectedAgents({ agents }) {
           </span>
         )}
       </div>
+
+      {/* Subscription field */}
+      <div className="mb-4">
+        <label className="block text-xs text-slate-500 mb-1">
+          Target Subscription <span className="text-slate-600">(defaults to configured subscription)</span>
+        </label>
+        <input
+          type="text"
+          placeholder="e.g. e7e0ed80-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+          value={subscriptionId}
+          onChange={e => setSubscriptionId(e.target.value)}
+          className="w-full px-3 py-2 rounded-lg text-sm bg-slate-800/60 border border-slate-700 text-slate-300 placeholder-slate-600 focus:outline-none focus:border-blue-500/50 font-mono"
+        />
+      </div>
+
+      {/* Scan modal */}
+      {scanModal && (
+        <ScanModal
+          agentName={scanModal}
+          agentType={AGENT_TYPE[scanModal]}
+          inventoryStatus={inventoryStatus}
+          onStart={(mode) => handleScanStart(scanModal, mode)}
+          onClose={() => setScanModal(null)}
+        />
+      )}
 
       {agents.length === 0 ? (
         <div className="bg-slate-800 rounded-xl border border-slate-700 p-6 text-center">

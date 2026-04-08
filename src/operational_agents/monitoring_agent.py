@@ -204,6 +204,85 @@ The governance engine handles deduplication. The human operator decides whether
 to act or dismiss. That is not your decision to make.
 """
 
+# Variant of _SCAN_INSTRUCTIONS used when a pre-fetched inventory is available.
+# Step 1 is replaced with "Review the inventory" — Steps 2-6 are unchanged.
+_SCAN_INSTRUCTIONS_WITH_INVENTORY = """\
+You are a Senior SRE conducting an enterprise-grade proactive infrastructure
+reliability review. Your findings drive automated governance — every proposal
+you submit is reviewed before any change is executed.
+
+━━━ STEP 1: REVIEW THE RESOURCE INVENTORY ━━━
+A complete resource inventory has been pre-fetched and is included in the prompt
+above. It contains EVERY resource in the target scope with their current
+properties, tags, and configuration.
+
+For Virtual Machines: the live power state has been pre-fetched from the Azure
+Compute API. "VM deallocated" or "VM stopped" means the VM is confirmed DOWN.
+
+Review EVERY resource in the inventory. Do not skip any resource or type.
+You may call query_resource_graph for custom KQL queries if you need deeper
+investigation beyond what the inventory provides.
+
+━━━ STEP 2: VM AVAILABILITY — CHECK EVERY VM IN THE INVENTORY, NO EXCEPTIONS ━━━
+For each VM in the inventory, read its pre-fetched power state.
+
+STOPPED / DEALLOCATED VM (powerState != "VM running"):
+  - HIGH urgency — a stopped VM is an availability incident.
+  - A stopped VM returns NO metrics. No metrics = confirmation it is down.
+  - Call query_activity_log to determine: stopped manually, by automation,
+    or by an unexpected event. Include findings in the reason.
+  - Propose restart_service. Exception: VMs named or tagged as DR/standby
+    (name contains 'dr', 'standby', 'backup', or tag role=dr) → flag MEDIUM.
+
+RUNNING VM — check performance:
+  Call query_metrics: ["Percentage CPU", "Available Memory Bytes",
+  "Disk Read Bytes", "Disk Write Bytes"] over P7D.
+  - CPU avg > 70% → propose scale_up (HIGH urgency).
+  - CPU avg 50–70% with memory > 75% → propose scale_up (MEDIUM urgency).
+
+━━━ STEP 3: DATABASE & DATA SERVICE HEALTH ━━━
+For each Cosmos DB account or SQL database listed above, call get_resource_details:
+  - No failover policy / single-region only → propose update_config (MEDIUM).
+  - publicNetworkAccess = Enabled → flag (MEDIUM urgency).
+  - No backup policy configured → flag (MEDIUM urgency).
+
+━━━ STEP 4: CONTAINER APPS & APP SERVICES LISTED ABOVE ━━━
+Call get_resource_details for each Container App and App Service:
+  - Replica count < 2 in a non-dev environment → propose update_config (MEDIUM).
+  - No custom domain / HTTPS not enforced on public-facing app → flag (LOW).
+  Call query_metrics for "Requests", "Http5xx" where available.
+  - Http5xx error rate > 1% → propose update_config (MEDIUM urgency).
+
+━━━ STEP 5: MONITORING & OBSERVABILITY GAPS ━━━
+For each VM, check get_resource_details for AMA extension presence:
+  (look for AzureMonitorLinuxAgent or AzureMonitorWindowsAgent in extensions)
+  - VM without AMA installed → propose update_config (MEDIUM urgency).
+Resources with no owner, environment, or criticality tags → propose
+  update_config (LOW urgency) for tag hygiene.
+
+━━━ STEP 6: ORPHANED & WASTEFUL RESOURCES ━━━
+  - Disks with diskState = Unattached → propose delete_resource (LOW/MEDIUM).
+  - Public IPs with no associated NIC/LB/Gateway → propose delete_resource (LOW).
+
+━━━ URGENCY SCALE ━━━
+  HIGH:   VM not running, CPU > 70%, service completely unavailable.
+  MEDIUM: Single-region DB, no monitoring agent, Container App with 1 replica,
+          public network access on data services.
+  LOW:    Missing tags, orphaned resources, configuration hygiene gaps.
+
+CRITICAL: Never assume a resource is healthy because metrics are absent.
+Always confirm VM health via the pre-fetched powerState in the inventory.
+If uncertain about a finding, include it with your reasoning.
+
+━━━ YOUR ROLE AND BOUNDARIES ━━━
+Your ONLY job is to inspect every resource and report what you find.
+You are a detection tool, not a decision-maker about what is "new" or "already known".
+
+NEVER skip or suppress a finding because you think it was flagged before.
+The governance engine handles deduplication. The human operator decides whether
+to act or dismiss. That is not your decision to make.
+"""
+
 
 # ---------------------------------------------------------------------------
 # Agent
@@ -259,6 +338,7 @@ class MonitoringAgent:
         self,
         alert_payload: dict[str, Any] | None = None,
         target_resource_group: str | None = None,
+        inventory: list[dict] | None = None,
     ) -> list[ProposedAction]:
         """Investigate the environment and return remediation proposals.
 
@@ -270,6 +350,10 @@ class MonitoringAgent:
                 ``resource_id``).
             target_resource_group: Optional resource group to scope a
                 proactive scan.  Ignored when ``alert_payload`` is provided.
+            inventory: Optional pre-fetched resource list from the Resource
+                Inventory feature.  When provided, injected into the LLM
+                prompt so the agent reviews ALL resources without relying
+                on non-deterministic tool-call discovery.
 
         Returns:
             List of :class:`~src.core.models.ProposedAction` objects.
@@ -290,7 +374,7 @@ class MonitoringAgent:
 
         self.scan_error = None
         try:
-            return await self._scan_with_framework(alert_payload, target_resource_group)
+            return await self._scan_with_framework(alert_payload, target_resource_group, inventory)
         except Exception as exc:  # noqa: BLE001
             self.scan_error = str(exc)
             logger.warning(
@@ -308,6 +392,7 @@ class MonitoringAgent:
         self,
         alert_payload: dict[str, Any] | None,
         target_resource_group: str | None,
+        inventory: list[dict] | None = None,
     ) -> list[ProposedAction]:
         """Run GPT-4.1 with Azure investigation tools."""
         from openai import AsyncAzureOpenAI
@@ -538,6 +623,34 @@ class MonitoringAgent:
                 "(3) Call query_metrics or query_activity_log based on alert type. "
                 "(4) Call propose_action with confirmed evidence — include power state, "
                 "metric values, and activity log findings in the reason."
+            )
+        elif inventory is not None:
+            # Inventory-assisted scan — inject formatted resource list into prompt.
+            from src.infrastructure.inventory_formatter import format_inventory_for_prompt  # noqa: PLC0415
+            inventory_text = format_inventory_for_prompt({
+                "resources": inventory,
+                "resource_count": len(inventory),
+                "refreshed_at": "pre-fetched",
+            })
+            instructions = _SCAN_INSTRUCTIONS_WITH_INVENTORY
+            rg_scope = (
+                f"in resource group '{target_resource_group}'"
+                if target_resource_group
+                else "across the Azure subscription"
+            )
+            prompt = (
+                f"{inventory_text}\n\n"
+                f"Conduct a full reliability scan {rg_scope}. "
+                "The complete resource inventory is above. "
+                "Review EVERY resource and assess for operational and reliability issues. "
+                "For each VM: check the pre-fetched power state — deallocated/stopped = DOWN. "
+                "For running VMs: call query_metrics for CPU/memory/disk over P7D. "
+                "For databases: check failover, publicNetworkAccess, backup config. "
+                "For App Services/Container Apps: check replica count, HTTPS, error rates. "
+                "For all resources: check for missing tags, orphaned state, monitoring gaps. "
+                "Use query_metrics, query_activity_log, get_resource_health, and "
+                "list_advisor_recommendations for deeper investigation. "
+                "Propose remediation for EVERY reliability risk found."
             )
         else:
             instructions = _SCAN_INSTRUCTIONS

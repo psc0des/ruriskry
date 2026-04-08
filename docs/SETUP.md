@@ -32,7 +32,7 @@ Terraform in `infrastructure/terraform-core/` deploys (two providers: `hashicorp
 3. Foundry model deployment (`azurerm_cognitive_deployment`, default `gpt-4.1-mini` version `2025-04-14`, Standard, 150K TPM)
 4. **Foundry project** — fully Terraform-managed via AzAPI (`azapi_update_resource` to enable `allowProjectManagement`, `azapi_resource` to create the project). Set `create_foundry_project = true` in `terraform.tfvars`.
 5. Azure AI Search
-6. Azure Cosmos DB (SQL API) — five containers, all Terraform-managed (`azurerm_cosmosdb_sql_container`): `governance-decisions` (partition `/resource_id`), `governance-agents` (partition `/name`), `governance-scan-runs` (partition `/agent_type`), `governance-alerts` (partition `/severity`), `governance-executions` (partition `/resource_id`). Managed Identity auth; no connection string stored in tfstate.
+6. Azure Cosmos DB (SQL API) — six containers, all Terraform-managed (`azurerm_cosmosdb_sql_container`): `governance-decisions` (partition `/resource_id`), `governance-agents` (partition `/name`), `governance-scan-runs` (partition `/agent_type`), `governance-alerts` (partition `/severity`), `governance-executions` (partition `/resource_id`), `resource-inventory` (partition `/subscription_id`). Managed Identity auth; no connection string stored in tfstate.
 7. Azure Key Vault — purge protection enabled, 90-day soft-delete retention
 8. Azure Log Analytics
 9. Azure Container Registry (ACR) — admin disabled; Container App pulls via Managed Identity (`AcrPull` role)
@@ -244,7 +244,7 @@ pip install -r requirements.txt
 
 # 2. Run tests — no Azure credentials needed (mock mode)
 pytest tests/ -v
-# Expected: 793 passed, 0 failed
+# Expected: 816 passed, 0 failed
 
 # 3a. Mock mode (no Azure needed) — set in .env
 echo "USE_LOCAL_MOCKS=true" > .env
@@ -646,6 +646,9 @@ throughput, the governance agent calls can be extracted to worker replicas behin
 | `COSMOS_CONTAINER_SCAN_RUNS` | Live only | `governance-scan-runs` | Container for scan-run records (Terraform-managed) |
 | `COSMOS_CONTAINER_ALERTS` | Live only | `governance-alerts` | Container for alert investigation records (Terraform-managed) |
 | `COSMOS_CONTAINER_EXECUTIONS` | Live only | `governance-executions` | Container for HITL execution records — survives deployments (Terraform-managed) |
+| `COSMOS_CONTAINER_INVENTORY` | Live only | `resource-inventory` | Container for resource inventory snapshots — partition key `/subscription_id` (Terraform-managed) |
+| `INVENTORY_STALE_HOURS` | No | `24` | Hours after which an inventory snapshot is considered stale. Dashboard shows an amber warning and recommends refreshing before scans. |
+| `AZURE_SUBSCRIPTION_ID_DISPLAY` | No | `""` | Optional human-friendly label shown next to the subscription ID in the Inventory page header. |
 | `DEMO_MODE` | No | `false` | `true` = ops agents return hardcoded sample proposals (no Azure OpenAI needed). Full governance pipeline still runs. |
 | `SLACK_WEBHOOK_URL` | No | `""` | Slack Incoming Webhook URL. Empty = notifications disabled (zero-config default). |
 | `SLACK_NOTIFICATIONS_ENABLED` | No | `true` | Master on/off switch for Slack notifications. Has no effect if `SLACK_WEBHOOK_URL` is empty. |

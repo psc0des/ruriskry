@@ -25,15 +25,17 @@ import {
   fetchNotificationStatus,
   fetchScanHistory,
   fetchAlerts,
+  fetchInventoryStatus,
   testSlackNotification,
 } from './api'
-import Sidebar from './components/Sidebar'
+import Sidebar   from './components/Sidebar'
 import Overview  from './pages/Overview'
 import Agents    from './pages/Agents'
 import Decisions from './pages/Decisions'
 import AuditLog  from './pages/AuditLog'
 import Alerts    from './pages/Alerts'
 import Admin     from './pages/Admin'
+import Inventory from './pages/Inventory'
 import { RefreshCw, Bell } from 'lucide-react'
 
 // ── Loading / Error screens ────────────────────────────────────────────────
@@ -76,16 +78,17 @@ function ErrorScreen({ message, onRetry }) {
 // ── App Shell (layout + data fetching) ───────────────────────────────────
 
 function AppShell() {
-  const [evaluations,    setEvaluations]    = useState([])
-  const [scans,          setScans]          = useState([])
-  const [alerts,         setAlerts]         = useState([])
-  const [metrics,        setMetrics]        = useState(null)
-  const [agents,         setAgents]         = useState([])
-  const [pendingReviews, setPendingReviews] = useState([])
-  const [loading,        setLoading]        = useState(true)
-  const [error,          setError]          = useState(null)
-  const [slackStatus,    setSlackStatus]    = useState(null)
-  const [slackBtnLabel,  setSlackBtnLabel]  = useState('Slack Connected')
+  const [evaluations,     setEvaluations]     = useState([])
+  const [scans,           setScans]           = useState([])
+  const [alerts,          setAlerts]          = useState([])
+  const [metrics,         setMetrics]         = useState(null)
+  const [agents,          setAgents]          = useState([])
+  const [pendingReviews,  setPendingReviews]  = useState([])
+  const [inventoryStatus, setInventoryStatus] = useState(null)
+  const [loading,         setLoading]         = useState(true)
+  const [error,           setError]           = useState(null)
+  const [slackStatus,     setSlackStatus]     = useState(null)
+  const [slackBtnLabel,   setSlackBtnLabel]   = useState('Slack Connected')
 
   /**
    * fetchAll — fetch all shared data in parallel.
@@ -93,13 +96,14 @@ function AppShell() {
    * pendingReviews silently falls back to [] if the gateway is disabled.
    */
   const fetchAll = useCallback(async () => {
-    const [evalsData, metricsData, agentsData, reviewsData, scansData, alertsData] = await Promise.all([
+    const [evalsData, metricsData, agentsData, reviewsData, scansData, alertsData, invStatus] = await Promise.all([
       fetchEvaluations(200),
       fetchMetrics(),
       fetchAgents(),
       fetchPendingReviews().catch(() => ({ pending_reviews: [] })),
       fetchScanHistory(200).catch(() => ({ scans: [] })),
       fetchAlerts(200).catch(() => ({ alerts: [] })),
+      fetchInventoryStatus().catch(() => null),
     ])
     setEvaluations(evalsData.evaluations ?? [])
     setMetrics(metricsData)
@@ -107,6 +111,7 @@ function AppShell() {
     setPendingReviews(reviewsData.pending_reviews ?? [])
     setScans(scansData.scans ?? [])
     setAlerts(alertsData.alerts ?? [])
+    setInventoryStatus(invStatus)
   }, [])
 
   const load = useCallback(async () => {
@@ -152,7 +157,7 @@ function AppShell() {
   if (error)   return <ErrorScreen message={error} onRetry={load} />
 
   const alertCount = alerts.filter(a => a.status === 'firing' || a.status === 'investigating').length
-  const context = { evaluations, scans, alerts, metrics, agents, pendingReviews, fetchAll }
+  const context = { evaluations, scans, alerts, metrics, agents, pendingReviews, inventoryStatus, fetchAll }
 
   return (
     <div className="min-h-screen text-slate-100 flex font-sans" style={{ background: 'var(--bg-base)', fontFamily: 'var(--font-ui)' }}>
@@ -233,6 +238,7 @@ export default function App() {
           <Route path="overview"    element={<Overview />} />
           <Route path="scans"       element={<Navigate to="/agents" replace />} />
           <Route path="agents"      element={<Agents />} />
+          <Route path="inventory"   element={<Inventory />} />
           <Route path="decisions"   element={<Decisions />} />
           <Route path="decisions/:id" element={<Decisions />} />
           <Route path="alerts"      element={<Alerts />} />

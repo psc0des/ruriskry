@@ -11,7 +11,7 @@
 
 RuriSkry intercepts, simulates, and scores every AI agent action **before** it touches your infrastructure. It sits between operational AI agents (Monitoring bots, cost optimizers, deployment agents) and Azure cloud resources, acting as a production-grade supervisory intelligence layer.
 
-Born at the Microsoft AI Dev Days Hackathon 2026, RuriSkry has evolved into a fully async, enterprise-ready governance engine with live Azure topology analysis, durable audit trails (Cosmos DB), Slack alerting, explainable AI verdicts with counterfactual analysis, and 793 automated tests.
+Born at the Microsoft AI Dev Days Hackathon 2026, RuriSkry has evolved into a fully async, enterprise-ready governance engine with live Azure topology analysis, durable audit trails (Cosmos DB), Slack alerting, explainable AI verdicts with counterfactual analysis, and 816 automated tests.
 
 ---
 
@@ -196,7 +196,7 @@ Two-phase execution with human review in between:
 2. **Human reviews** — dashboard shows the plan as a steps table before any write operation
 3. **Execute phase** — LLM calls Azure SDK write tools exactly as planned (`start_vm`, `resize_vm`, `delete_nsg_rule`, etc.); fails safe if any step fails
 
-This replaces a hardcoded switch of 5 action types with LLM reasoning over **any** approved action — the same pattern that makes operational agents intelligent now applies to execution. Works in mock mode (793 tests pass, no Azure/OpenAI required) and live mode.
+This replaces a hardcoded switch of 5 action types with LLM reasoning over **any** approved action — the same pattern that makes operational agents intelligent now applies to execution. Works in mock mode (816 tests pass, no Azure/OpenAI required) and live mode.
 
 <p align="center">
   <img src="docs/screenshots/execution-status.png" alt="Execution Status — LLM-Driven Fix with Live Terminal" width="100%">
@@ -207,6 +207,15 @@ This replaces a hardcoded switch of 5 action types with LLM reasoning over **any
 ### One-Click Rollback
 
 After a fix is applied by the agent, an amber **↩ Rollback** button appears next to the Applied badge. Clicking it shows a confirm dialog with the exact inverse operation (`rollback_hint` from the stored execution plan), then calls `ExecutionAgent.rollback()` which inverts each step: `RESTART_SERVICE` → deallocate VM, `SCALE_UP/DOWN` → resize back to original SKU, `MODIFY_NSG` → restore rule. The `rolled_back` status and `rollback_log` are stored for the audit trail.
+
+### Resource Inventory — Deterministic Discovery
+Operational agents historically produced inconsistent results (0 verdicts on some runs, 6 on others) because the LLM non-deterministically chose which `query_resource_graph` tool calls to make. The **Resource Inventory** feature eliminates this class of failures:
+
+- **One KQL query, no type filter** — `build_inventory()` fetches every resource in the subscription via a single Resource Graph query. No resource type is excluded.
+- **VM power state enrichment** — `ComputeManagementClient.instance_view()` is called in parallel for all VMs; `powerState` (Running / Deallocated / Stopped) is injected into each VM dict before the agent runs.
+- **Injected into every agent prompt** — the formatted inventory is prepended to the LLM's context. The agent reviews *every* resource by name — it can't skip what's in front of it.
+- **LLM still decides** — the inventory is purely for discovery completeness. The LLM still decides what's a risk, what to propose, and at what urgency.
+- **Cosmos-backed, scan-to-scan** — snapshots persist across deployments. Choose `existing` (fast), `refresh` (accurate), or `skip` (legacy LLM discovery) per scan.
 
 ### Post-Execution Verification
 After the Execute phase completes, the engine runs a **verification pass**: read-only Azure tools re-check the resource to confirm the fix actually took effect. The result (`{confirmed, message, checked_at}`) is stored on the `ExecutionRecord` and shown in the dashboard as a ✓ Verified / ⚠ Unconfirmed banner with the per-step execution log.
@@ -261,6 +270,10 @@ A 6-page React governance UI with real-time SSE streaming, custom design tokens,
 </p>
 
 > Azure Monitor alerts flow in via webhook and land in a **Pending** queue. Click **Investigate** in the table row or inside the alert drilldown panel to manually trigger the Monitoring Agent. While investigating, the panel shows a **live terminal-style investigation log** (real-time event stream via polling) — reasoning steps, discoveries, verdicts, and execution status — all without needing the SSE stream. Governance verdicts and action buttons appear once investigation completes.
+
+### Resource Inventory Browser
+
+> Full Azure resource inventory: summary cards (total resources, VMs, App Services, types), stale-age warning, refresh button with live progress, type filter + name search, expandable resource rows with per-resource detail, VM power-state dot (green=running, red=deallocated, gray=unknown). Scan modal lets you choose inventory mode (existing / refresh / skip) before each scan.
 
 ### Admin Panel
 <p align="center">
@@ -364,7 +377,7 @@ python demo_live.py                # two-layer intelligence demo
 ### Run Tests
 
 ```bash
-# Expected: 793 passed, 0 failed
+# Expected: 816 passed, 0 failed
 # Tests use mock mode by default — no Azure credentials needed.
 pytest tests/ -v
 ```
@@ -481,7 +494,7 @@ challenge track: *Automate and Optimize Software Delivery — Leverage Agentic D
 Since its hackathon origins, the project has matured into a production-grade governance engine
 with fully async internals, live Azure topology analysis (Resource Graph + Retail Prices API),
 durable Cosmos DB audit trails, Slack alerting, explainable AI with counterfactual
-drilldowns, and a comprehensive 793-test suite.
+drilldowns, and a comprehensive 816-test suite.
 
 ---
 

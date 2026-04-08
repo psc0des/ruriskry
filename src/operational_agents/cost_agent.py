@@ -220,6 +220,7 @@ class CostOptimizationAgent:
     async def scan(
         self,
         target_resource_group: str | None = None,
+        inventory: list[dict] | None = None,
     ) -> list[ProposedAction]:
         """Investigate the Azure environment and return cost-saving proposals.
 
@@ -227,6 +228,9 @@ class CostOptimizationAgent:
             target_resource_group: Optional resource group name to scope the
                 investigation.  When ``None`` the agent scans the entire
                 subscription visible to its credentials.
+            inventory: Optional pre-fetched resource list.  When provided,
+                injected into the LLM prompt so the agent can review all
+                resources without relying on non-deterministic discovery.
 
         Returns:
             List of :class:`~src.core.models.ProposedAction` objects.
@@ -247,7 +251,7 @@ class CostOptimizationAgent:
 
         self.scan_error = None
         try:
-            return await self._scan_with_framework(target_resource_group)
+            return await self._scan_with_framework(target_resource_group, inventory)
         except Exception as exc:  # noqa: BLE001
             self.scan_error = str(exc)
             logger.warning(
@@ -262,7 +266,7 @@ class CostOptimizationAgent:
     # ------------------------------------------------------------------
 
     async def _scan_with_framework(
-        self, target_resource_group: str | None
+        self, target_resource_group: str | None, inventory: list[dict] | None = None
     ) -> list[ProposedAction]:
         """Run GPT-4.1 with investigation tools to produce evidence-backed proposals."""
         from openai import AsyncAzureOpenAI
@@ -487,29 +491,63 @@ class CostOptimizationAgent:
             if target_resource_group
             else "across the Azure environment"
         )
+
+        # Build prompt — inject inventory if provided
+        if inventory is not None:
+            from src.infrastructure.inventory_formatter import format_inventory_for_prompt  # noqa: PLC0415
+            inventory_text = format_inventory_for_prompt({
+                "resources": inventory,
+                "resource_count": len(inventory),
+                "refreshed_at": "pre-fetched",
+            })
+            scan_prompt = (
+                f"{inventory_text}\n\n"
+                f"Conduct a full 8-step cost optimisation audit {rg_scope}. "
+                "The complete resource inventory is above — review EVERY resource. "
+                "Follow ALL steps in your instructions: "
+                "(1) The inventory above replaces Step 1 resource discovery. "
+                "You may still call query_resource_graph for additional KQL if needed. "
+                "(2) For every VM: read its pre-fetched powerState — "
+                "deallocated VMs still pay for disk storage (flag as MEDIUM delete_resource or scale_down). "
+                "(3) For every disk in the inventory: check diskState — if Unattached, flag as MEDIUM delete_resource. "
+                "(4) For every public IP: check if it is associated with a NIC or load balancer — "
+                "if not attached, flag as LOW delete_resource. "
+                "(5) For running VMs: check CPU utilisation via query_metrics over P7D — "
+                "if avg CPU < 5%, propose scale_down (MEDIUM). If avg CPU < 20%, propose scale_down (LOW). "
+                "(6) For AKS clusters: query_metrics for node CPU — avg < 40% over P7D means overprovisioned. "
+                "For App Service plans: CpuPercentage < 10% → scale_down. "
+                "For SQL databases: dtu_consumption_percent < 20% → scale_down. "
+                "For Cosmos DB: compare provisioned RU/s against TotalRequests metric. "
+                "(7) For storage accounts: check for Standard_LRS on production workloads, "
+                "large accounts with no recent access. "
+                "(8) Call list_advisor_recommendations(category=Cost) to surface pre-computed savings. "
+                "Propose an action for EVERY waste item found. Include projected_savings_monthly where possible."
+            )
+        else:
+            scan_prompt = (
+                f"Conduct a full 8-step cost optimisation audit {rg_scope}. "
+                "Follow ALL steps in your instructions: "
+                "(1) Query Resource Graph to discover VMs, disks, public IPs, storage accounts, "
+                "databases, Redis, AKS clusters, and App Service plans. "
+                "(2) For every VM: call get_resource_details to check powerState first — "
+                "deallocated VMs still pay for disk storage (flag as MEDIUM delete_resource or scale_down). "
+                "(3) For every disk: check diskState — if Unattached, flag as MEDIUM delete_resource. "
+                "(4) For every public IP: check if it is associated with a NIC or load balancer — "
+                "if not attached, flag as LOW delete_resource. "
+                "(5) For running VMs: check CPU utilisation via query_metrics over P7D — "
+                "if avg CPU < 5%, propose scale_down (MEDIUM). If avg CPU < 20%, propose scale_down (LOW). "
+                "(6) For AKS clusters: query_metrics for node CPU — avg < 40% over P7D means overprovisioned. "
+                "For App Service plans: CpuPercentage < 10% → scale_down. "
+                "For SQL databases: dtu_consumption_percent < 20% → scale_down. "
+                "For Cosmos DB: compare provisioned RU/s against TotalRequests metric. "
+                "(7) For storage accounts: check for Standard_LRS on production workloads, "
+                "large accounts with no recent access. "
+                "(8) Call list_advisor_recommendations(category=Cost) to surface pre-computed savings. "
+                "Propose an action for EVERY waste item found. Include projected_savings_monthly where possible."
+            )
+
         from src.infrastructure.llm_throttle import run_with_throttle
-        await run_with_throttle(
-            agent.run,
-            f"Conduct a full 8-step cost optimisation audit {rg_scope}. "
-            "Follow ALL steps in your instructions: "
-            "(1) Query Resource Graph to discover VMs, disks, public IPs, storage accounts, "
-            "databases, Redis, AKS clusters, and App Service plans. "
-            "(2) For every VM: call get_resource_details to check powerState first — "
-            "deallocated VMs still pay for disk storage (flag as MEDIUM delete_resource or scale_down). "
-            "(3) For every disk: check diskState — if Unattached, flag as MEDIUM delete_resource. "
-            "(4) For every public IP: check if it is associated with a NIC or load balancer — "
-            "if not attached, flag as LOW delete_resource. "
-            "(5) For running VMs: check CPU utilisation via query_metrics over P7D — "
-            "if avg CPU < 5%, propose scale_down (MEDIUM). If avg CPU < 20%, propose scale_down (LOW). "
-            "(6) For AKS clusters: query_metrics for node CPU — avg < 40% over P7D means overprovisioned. "
-            "For App Service plans: CpuPercentage < 10% → scale_down. "
-            "For SQL databases: dtu_consumption_percent < 20% → scale_down. "
-            "For Cosmos DB: compare provisioned RU/s against TotalRequests metric. "
-            "(7) For storage accounts: check for Standard_LRS on production workloads, "
-            "large accounts with no recent access. "
-            "(8) Call list_advisor_recommendations(category=Cost) to surface pre-computed savings. "
-            "Propose an action for EVERY waste item found. Include projected_savings_monthly where possible.",
-        )
+        await run_with_throttle(agent.run, scan_prompt)
 
         # Empty proposals means GPT found no waste — that is a valid outcome.
         # Falling back to seed-data rules would produce false positives in any
