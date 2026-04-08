@@ -733,113 +733,66 @@ else
 fi
 
 # =============================================================================
-# 9. Wire existing alert rules to RuriSkry Action Group
+# 9. Wire existing alert action groups to RuriSkry webhook
 # =============================================================================
-# Alert rules live in the TARGET subscription (the workload being scanned),
-# NOT the subscription where RuriSkry itself is deployed.
-# We sweep target_subscription_id (falls back to subscription_id if not set),
-# find all metric + activity-log alert rules, and offer to add the RuriSkry
-# action group to each one — cross-subscription by full ARM resource ID.
+# Strategy: find action groups named "ag-ruriskry-*" in the TARGET subscription
+# and inject/update a webhook receiver pointing at the backend.
+# This is the correct approach for cross-subscription setups — metric alerts
+# already reference these action groups via Terraform-prod; we just need the
+# webhook URL to be current.
 #
-# This is idempotent — Azure deduplicates action group references.
-step "Wiring existing alert rules to RuriSkry"
+# Why not "az monitor metrics alert update --add-action <ARM-ID>"?
+# That CLI command does not accept cross-subscription ARM IDs and will always
+# fail with "Value of --add-action is invalid" when the action group lives in a
+# different subscription from the alert rule.
+step "Wiring existing alert action groups to RuriSkry backend"
 
-ACTION_GROUP_ID=$(terraform -chdir="$TF_DIR" output -raw alert_action_group_id 2>/dev/null || true)
-
-# Alert rules are in the TARGET subscription, not the RuriSkry infra subscription
+# Alert rules + action groups are in the TARGET subscription
 TARGET_SUB=$(grep -E '^target_subscription_id\s*=' "$TF_DIR/terraform.tfvars" 2>/dev/null \
   | sed 's/.*=\s*"\([^"]*\)".*/\1/' | tr -d '[:space:]')
-# Fall back to same subscription if cross-sub scanning is not configured
 ALERT_SUB="${TARGET_SUB:-$SUBSCRIPTION_ID}"
 
-if [[ -z "$ACTION_GROUP_ID" ]]; then
-  warn "Could not read alert_action_group_id from Terraform state — skipping alert wiring."
+log "Scanning for RuriSkry action groups in subscription: $ALERT_SUB"
+if [[ "$ALERT_SUB" != "$SUBSCRIPTION_ID" ]]; then
+  log "(This is your target/workload subscription, separate from the RuriSkry infra subscription)"
+fi
+
+# Find all action groups whose name contains "ruriskry" in the target sub
+RURISKRY_AGs=$(az monitor action-group list \
+  --subscription "$ALERT_SUB" \
+  --query "[?contains(name, 'ruriskry')].{name:name, rg:resourceGroup}" \
+  -o tsv 2>/dev/null || true)
+
+if [[ -z "$RURISKRY_AGs" ]]; then
+  warn "No RuriSkry action groups found in subscription $ALERT_SUB."
+  warn "Deploy infrastructure/terraform-prod in the target subscription first,"
+  warn "or manually create an action group and re-run: bash scripts/deploy.sh --stage2"
 else
-  log "Scanning for alert rules in subscription: $ALERT_SUB"
-  if [[ "$ALERT_SUB" != "$SUBSCRIPTION_ID" ]]; then
-    log "(This is your target/workload subscription, separate from the RuriSkry infra subscription)"
-  fi
+  WIRED=0
+  FAILED=0
 
-  # Collect all metric alert rules in the TARGET subscription
-  METRIC_RULES=$(az monitor metrics alert list \
-    --subscription "$ALERT_SUB" \
-    --query "[].{name:name,rg:resourceGroup}" \
-    -o tsv 2>/dev/null || true)
+  while IFS=$'\t' read -r ag_name ag_rg; do
+    [[ -z "$ag_name" ]] && continue
+    log "Wiring webhook on action group: $ag_name (rg: $ag_rg)"
 
-  # Collect all activity-log alert rules in the TARGET subscription
-  ACTIVITY_RULES=$(az monitor activity-log alert list \
-    --subscription "$ALERT_SUB" \
-    --query "[].{name:name,rg:resourceGroup}" \
-    -o tsv 2>/dev/null || true)
-
-  if [[ -z "$METRIC_RULES" && -z "$ACTIVITY_RULES" ]]; then
-    ok "No existing alert rules found in subscription $ALERT_SUB — skipping."
-    echo ""
-    echo "  To test the Alerts tab, set up the demo environment:"
-    echo "    cd infrastructure/terraform-demo"
-    echo "    cp terraform.tfvars.example terraform.tfvars  # fill in values"
-    echo "    terraform init && terraform apply"
-  else
-    echo ""
-    echo "  Found alert rules in subscription $ALERT_SUB:"
-    if [[ -n "$METRIC_RULES" ]]; then
-      while IFS=$'\t' read -r name rg; do
-        [[ -n "$name" ]] && echo "    [metric]       $name  (rg: $rg)"
-      done <<< "$METRIC_RULES"
+    # Inject/update a webhook receiver pointing at the RuriSkry alert endpoint.
+    # --add-action with 'webhook NAME URI' is idempotent — if the receiver name
+    # already exists Azure replaces it; if not it creates it.
+    if az monitor action-group update \
+         --name "$ag_name" \
+         --resource-group "$ag_rg" \
+         --subscription "$ALERT_SUB" \
+         --add-action webhook ruriskry-webhook "${BACKEND_URL}/api/alert-trigger" \
+         --output none 2>/dev/null; then
+      ok "Wired: $ag_name → ${BACKEND_URL}/api/alert-trigger"
+      (( WIRED++ )) || true
+    else
+      warn "Failed to wire webhook on: $ag_name (rg: $ag_rg)"
+      (( FAILED++ )) || true
     fi
-    if [[ -n "$ACTIVITY_RULES" ]]; then
-      while IFS=$'\t' read -r name rg; do
-        [[ -n "$name" ]] && echo "    [activity-log] $name  (rg: $rg)"
-      done <<< "$ACTIVITY_RULES"
-    fi
-    echo ""
-    echo -e "  Add RuriSkry action group to all of the above so alerts flow into the dashboard?"
-    echo -e "  Press ${BOLD}Enter${NC} to wire them all, or ${BOLD}Ctrl+C${NC} to skip."
-    read -r _
+  done <<< "$RURISKRY_AGs"
 
-    WIRED=0
-    FAILED=0
-
-    if [[ -n "$METRIC_RULES" ]]; then
-      while IFS=$'\t' read -r name rg; do
-        [[ -z "$name" ]] && continue
-        log "Wiring metric alert: $name (rg: $rg)"
-        if az monitor metrics alert update \
-             --name "$name" \
-             --resource-group "$rg" \
-             --subscription "$ALERT_SUB" \
-             --add-action "$ACTION_GROUP_ID" \
-             --output none 2>/dev/null; then
-          ok "Wired: $name"
-          (( WIRED++ )) || true
-        else
-          warn "Failed to wire: $name — may require Owner/Contributor on rg: $rg in sub: $ALERT_SUB"
-          (( FAILED++ )) || true
-        fi
-      done <<< "$METRIC_RULES"
-    fi
-
-    if [[ -n "$ACTIVITY_RULES" ]]; then
-      while IFS=$'\t' read -r name rg; do
-        [[ -z "$name" ]] && continue
-        log "Wiring activity-log alert: $name (rg: $rg)"
-        if az monitor activity-log alert update \
-             --name "$name" \
-             --resource-group "$rg" \
-             --subscription "$ALERT_SUB" \
-             --add-action "$ACTION_GROUP_ID" \
-             --output none 2>/dev/null; then
-          ok "Wired: $name"
-          (( WIRED++ )) || true
-        else
-          warn "Failed to wire: $name — may require Owner/Contributor on rg: $rg in sub: $ALERT_SUB"
-          (( FAILED++ )) || true
-        fi
-      done <<< "$ACTIVITY_RULES"
-    fi
-
-    echo ""
-    ok "$WIRED alert rule(s) wired to RuriSkry. Alerts will now appear in the dashboard."
-    [[ "$FAILED" -gt 0 ]] && warn "$FAILED rule(s) could not be wired — check permissions on those resource groups."
-  fi
+  echo ""
+  ok "$WIRED action group(s) wired to RuriSkry. Alerts will now POST to the dashboard."
+  [[ "$FAILED" -gt 0 ]] && warn "$FAILED action group(s) could not be updated — check permissions."
 fi

@@ -1370,8 +1370,20 @@ async def _run_alert_investigation(alert_id: str, alert_payload: dict) -> None:
             message=f"Agent found {len(proposals)} actionable finding(s).",
         )
 
-        # Evaluate each proposal through the governance pipeline
-        pipeline = RuriSkryPipeline()
+        # Evaluate each proposal through the governance pipeline.
+        # Load inventory from Cosmos so tag-based policies (POL-DR-001 etc.)
+        # can fire on real Azure resources — same fix as _run_agent_scan.
+        alert_inventory: list[dict] | None = None
+        try:
+            sub_id = settings.azure_subscription_id or ""
+            if sub_id:
+                inv_doc = _get_cosmos_inventory().get_latest(sub_id)
+                if inv_doc:
+                    alert_inventory = inv_doc.get("resources", [])
+        except Exception:
+            pass  # inventory unavailable — pipeline falls back to seed topology
+
+        pipeline = RuriSkryPipeline(inventory=alert_inventory)
         tracker = _get_tracker()
         verdicts: list[dict] = []
         approved = escalated = denied = 0
