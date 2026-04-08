@@ -150,10 +150,15 @@ POST https://<your-backend>/api/alert-trigger
 
 Any Azure subscription can send alerts to this endpoint — not just `terraform-demo`. Choose the method that matches how your workload infrastructure is managed:
 
-#### Option A — terraform-demo (test/demo environment)
+#### Option A — deploy.sh automatic wiring (recommended)
 
-`deploy.sh` handles this automatically if `terraform-demo` is already deployed.
-To wire it manually:
+`deploy.sh` Step 9 handles alert wiring automatically after the backend is deployed. It finds all `ag-ruriskry-*` action groups in the target subscription and injects a `ruriskry-webhook` receiver pointing at `BACKEND_URL/api/alert-trigger`. Idempotent — skips if already correctly wired, removes stale receivers if the URL changed. Re-run `bash scripts/deploy.sh --stage2` any time to re-wire.
+
+> If no `ag-ruriskry-*` action group exists yet (fresh deploy before `terraform-demo` or manual rules), Step 9 warns and exits gracefully — re-run after creating the action group.
+
+#### Option B — terraform-demo (test/demo environment)
+
+To wire `terraform-demo` manually:
 
 ```bash
 BACKEND_URL=$(terraform -chdir=infrastructure/terraform-core output -raw backend_url)

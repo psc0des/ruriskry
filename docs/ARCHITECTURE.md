@@ -532,10 +532,12 @@ _run_agent_scan(scan_id, "cost", rg, sub, inventory_mode="refresh")
 - `refresh` — rebuild inventory from Resource Graph then scan (slow but current)
 - `skip` — legacy: LLM discovers resources via tool calls (non-deterministic)
 
-**Staleness**: `GET /api/inventory/status` returns `stale=true` when `age_hours > inventory_stale_hours` (default 24h). The `Inventory.jsx` page shows an amber banner when stale.
+**Staleness**: `GET /api/inventory/status` returns `stale=true` when `age_hours > inventory_stale_hours` (default 24h). The `Inventory.jsx` page shows an amber banner when stale. A Resource Group dropdown filter is available alongside the type filter — populated dynamically from all RGs present in the snapshot.
 
 **Key design constraint**: The inventory is purely for DISCOVERY completeness. The LLM still
 makes all decisions — it cannot be overridden by the inventory data.
+
+**Inventory also powers tag-based policy evaluation** — `RuriSkryPipeline.__init__(inventory=...)` merges the live ARM ID list (both original-case and lowercase) into `_resources` alongside the static seed topology. `_find_resource()` performs case-insensitive ARM ID lookup. Without this merge, tag-based policies (POL-DR-001, POL-CRIT-001, POL-PROD-001) silently fail on live resources because the seed topology contains no live ARM IDs — `tags={}` reaches the PolicyComplianceAgent. Both `_run_agent_scan` and `_run_alert_investigation` pass the same Cosmos snapshot to `RuriSkryPipeline(inventory=...)`, so tag-based policies fire in BOTH scan-triggered and alert-triggered governance evaluation paths.
 
 ---
 

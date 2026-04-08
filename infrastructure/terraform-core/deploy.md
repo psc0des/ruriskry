@@ -64,7 +64,7 @@ Deploy order matters:
 1. `terraform-core` first (creates Container App — gives you the backend URL)
 2. `terraform-demo` second (put the backend URL into `alert_webhook_url` in its tfvars)
 
-Both use the same tfstate storage account (`ruriskrytfstate<suffix>`) with different state keys:
+Both use the same tfstate storage account (`ruriskrytf<suffix>`) with different state keys:
 - `terraform-core.tfstate` → core infrastructure
 - `terraform-demo.tfstate` → prod demo environment
 
@@ -91,15 +91,15 @@ Terraform stores state in Azure Blob Storage. Run once in **PowerShell** (Git Ba
 
 ```powershell
 az group create --name ruriskry-tfstate-rg --location eastus2
-az storage account create --name ruriskrytfstate<suffix> --resource-group ruriskry-tfstate-rg --location eastus2 --sku Standard_LRS --allow-blob-public-access false
-az storage container create --name tfstate --account-name ruriskrytfstate<suffix>
+az storage account create --name ruriskrytf<suffix> --resource-group ruriskry-tfstate-rg --location eastus2 --sku Standard_LRS --allow-blob-public-access false
+az storage container create --name tfstate --account-name ruriskrytf<suffix>
 ```
 
 Then lock the storage account and enable blob versioning so every state write is recoverable:
 
 ```powershell
 az lock create --name ruriskry-tfstate-lock --resource-group ruriskry-tfstate-rg --lock-type CanNotDelete --notes "Protects Terraform state from accidental deletion"
-az storage account blob-service-properties update --account-name ruriskrytfstate<suffix> --enable-versioning true
+az storage account blob-service-properties update --account-name ruriskrytf<suffix> --enable-versioning true
 ```
 
 > Skip this step if the storage account already exists — the tfstate storage account is
@@ -115,7 +115,7 @@ Create it locally (it is already in `.gitignore`):
 ```bash
 cat > infrastructure/terraform-core/backend.hcl <<EOF
 resource_group_name  = "ruriskry-tfstate-rg"
-storage_account_name = "ruriskrytfstate<suffix>"
+storage_account_name = "ruriskrytf<suffix>"
 container_name       = "tfstate"
 key                  = "terraform-core.tfstate"
 EOF
@@ -245,7 +245,19 @@ Notifications fire for DENIED/ESCALATED verdicts and Azure Monitor alerts.
 
 ### Wire alert rules to the RuriSkry backend
 
-**If you use `infrastructure/terraform-demo`** (the recommended path):
+**Automatic (deploy.sh Step 9)** — the recommended path:
+
+`deploy.sh` Step 9 handles this automatically after the backend is deployed. It:
+1. Finds all action groups named `ag-ruriskry-*` in the target subscription
+2. Checks if a `ruriskry-webhook` receiver already points at `BACKEND_URL/api/alert-trigger` — skips if already correct
+3. Removes any stale receiver (different URL) then calls `az monitor action-group update --add-action webhook ruriskry-webhook <BACKEND_URL>/api/alert-trigger`
+4. Handles `DuplicateWebhookServiceUri` gracefully
+
+This is idempotent — re-running `deploy.sh --stage2` is safe.
+
+> **Cross-subscription note**: Step 9 uses `TARGET_SUBSCRIPTION` (set via `target_subscription_id` in tfvars). If omitted, it defaults to the same subscription as `terraform-core`. The `az monitor action-group update --add-action` CLI pattern works correctly cross-subscription; the old `--add-action <ARM-ID>` approach failed with "Value of --add-action is invalid".
+
+**If you use `infrastructure/terraform-demo`** (manual / CI path):
 
 1. Get the backend URL from `terraform-core`:
    ```bash
@@ -264,14 +276,14 @@ Notifications fire for DENIED/ESCALATED verdicts and Azure Monitor alerts.
    terraform apply -target=azurerm_monitor_action_group.prod
    ```
 
-> This is the correct approach. Every alert rule in `terraform-demo` references `azurerm_monitor_action_group.prod`, so setting `alert_webhook_url` once wires all of them — no per-rule steps.
+> Every alert rule in `terraform-demo` references `azurerm_monitor_action_group.prod`, so setting `alert_webhook_url` once wires all of them — no per-rule steps.
 
 **If you have alert rules outside `terraform-demo`** (manually created rules or rules in other RGs):
 
-Attach them to `ag-ruriskry-prod` — Action Groups are subscription-scoped, so they work cross-RG:
+Attach them to the `ag-ruriskry-*` action group — Action Groups are subscription-scoped, so they work cross-RG:
 
 ```bash
-# Portal: Monitor → Alerts → Alert rules → Edit rule → Actions tab → Add action group → ag-ruriskry-prod
+# Portal: Monitor → Alerts → Alert rules → Edit rule → Actions tab → Add action group → ag-ruriskry-*
 ```
 
 The `alert_webhook_url` output from `terraform-core` shows the exact URL being used:
