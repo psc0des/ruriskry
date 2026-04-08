@@ -145,6 +145,7 @@ export default function Inventory() {
   const [refreshMsg,      setRefreshMsg]      = useState('')
   const [filter,          setFilter]          = useState('')
   const [typeFilter,      setTypeFilter]      = useState('')
+  const [rgFilter,        setRgFilter]        = useState('')
   const [expandedRows,    setExpandedRows]    = useState(new Set())
   const [loading,         setLoading]         = useState(true)
 
@@ -212,13 +213,15 @@ export default function Inventory() {
   // Derived data
   const resources = inventory?.resources || []
   const allTypes = [...new Set(resources.map(r => (r.type || '').toLowerCase()))].sort()
+  const allRGs = [...new Set(resources.map(r => r.resourceGroup || '').filter(Boolean))].sort()
 
   const filtered = resources.filter(r => {
     const matchType = !typeFilter || (r.type || '').toLowerCase() === typeFilter
+    const matchRg   = !rgFilter   || (r.resourceGroup || '').toLowerCase() === rgFilter.toLowerCase()
     const matchSearch = !filter
       || (r.name || '').toLowerCase().includes(filter.toLowerCase())
       || (r.resourceGroup || '').toLowerCase().includes(filter.toLowerCase())
-    return matchType && matchSearch
+    return matchType && matchRg && matchSearch
   })
 
   const vmCount = resources.filter(r => (r.type || '').toLowerCase() === 'microsoft.compute/virtualmachines').length
@@ -336,6 +339,16 @@ export default function Inventory() {
             <option value="">All types ({allTypes.length})</option>
             {allTypes.map(t => (
               <option key={t} value={t}>{shortType(t)} ({(invStatus?.type_summary?.[t] || resources.filter(r => (r.type || '').toLowerCase() === t).length)})</option>
+            ))}
+          </select>
+          <select
+            value={rgFilter}
+            onChange={e => setRgFilter(e.target.value)}
+            className="px-3 py-2 rounded-lg text-sm bg-slate-800/60 border border-slate-700 text-slate-300 focus:outline-none focus:border-blue-500/50"
+          >
+            <option value="">All resource groups ({allRGs.length})</option>
+            {allRGs.map(rg => (
+              <option key={rg} value={rg}>{rg}</option>
             ))}
           </select>
           <input

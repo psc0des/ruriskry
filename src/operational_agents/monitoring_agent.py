@@ -139,11 +139,13 @@ For each VM, call get_resource_details to read power state.
 
 STOPPED / DEALLOCATED VM (powerState != "running"):
   - HIGH urgency — a stopped VM is an availability incident.
-  - A stopped VM returns NO metrics. No metrics = confirmation it is down.
-  - Call query_activity_log to determine: stopped manually, by automation,
-    or by an unexpected event. Include findings in the reason.
-  - Propose restart_service. Exception: VMs named or tagged as DR/standby
-    (name contains 'dr', 'standby', 'backup', or tag role=dr) → flag MEDIUM.
+  - IMMEDIATELY call propose_action with action_type=restart_service, urgency=HIGH.
+    Do NOT wait for activity log data before proposing — the stopped state IS the incident.
+  - After proposing, call query_activity_log to enrich the reason (optional, not a prerequisite):
+    * If entries found: add whether stopped manually/by automation/by unexpected event.
+    * If empty or unavailable: state "No recent activity log entries found."
+  - Exception: VMs named or tagged as DR/standby (name contains 'dr', 'standby', 'backup',
+    or tag role=dr) → still call propose_action at MEDIUM urgency. Do NOT skip. Note DR risk.
 
 RUNNING VM — check performance:
   Call query_metrics: ["Percentage CPU", "Available Memory Bytes",
@@ -228,11 +230,14 @@ For each VM in the inventory, read its pre-fetched power state.
 
 STOPPED / DEALLOCATED VM (powerState != "VM running"):
   - HIGH urgency — a stopped VM is an availability incident.
-  - A stopped VM returns NO metrics. No metrics = confirmation it is down.
-  - Call query_activity_log to determine: stopped manually, by automation,
-    or by an unexpected event. Include findings in the reason.
-  - Propose restart_service. Exception: VMs named or tagged as DR/standby
-    (name contains 'dr', 'standby', 'backup', or tag role=dr) → flag MEDIUM.
+  - IMMEDIATELY call propose_action with action_type=restart_service, urgency=HIGH.
+    Do NOT wait for activity log data before proposing — the stopped state IS the incident.
+    "VM deallocated" or "VM stopped" in the inventory = confirmed DOWN.
+  - After proposing, call query_activity_log to enrich the reason (optional, not a prerequisite):
+    * If entries found: add whether stopped manually/by automation/by unexpected event.
+    * If empty or unavailable: state "No recent activity log entries found."
+  - Exception: VMs named or tagged as DR/standby (name contains 'dr', 'standby', 'backup',
+    or tag role=dr) → still call propose_action at MEDIUM urgency. Do NOT skip. Note DR risk.
 
 RUNNING VM — check performance:
   Call query_metrics: ["Percentage CPU", "Available Memory Bytes",
