@@ -216,15 +216,23 @@ output "next_steps" {
       See infrastructure/terraform-core/deploy.md § Manual Deploy
       for the Docker build/push and dashboard deploy commands.
 
-    ── Wiring alert rules to the Action Group ─────────────────────
-      After apply, attach existing alert rules to the Action Group:
-        az monitor metrics alert update \
-          --name <your-alert-rule> \
-          --resource-group <rg> \
-          --add-action $(terraform output -raw alert_action_group_id)
+    ── Alert wiring (done automatically by deploy.sh) ────────────
+      deploy.sh step 9 creates one Alert Processing Rule in your target
+      subscription that routes ALL current and future alert rules to
+      the RuriSkry action group — no per-rule wiring needed.
 
-      Or set the Action Group in the Azure Portal:
-        Monitor → Alerts → Alert rules → Edit rule → Actions tab
+      To wire manually (requires alertsmanagement CLI extension):
+        az extension add --name alertsmanagement
+        az monitor alert-processing-rule create \
+          --name apr-ruriskry-governance-fanout \
+          --resource-group <rg-in-target-sub> \
+          --subscription <target_subscription_id> \
+          --rule-type AddActionGroups \
+          --scopes /subscriptions/<target_subscription_id> \
+          --action-groups $(terraform output -raw alert_action_group_id)
+
+      Action Group ID (for reference):
+        $(terraform output -raw alert_action_group_id)
 
   EOT
 }
