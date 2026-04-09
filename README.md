@@ -93,7 +93,7 @@ RuriSkry is a **governance engine** that acts as the **Change Advisory Board for
 | Secret Management | Azure Key Vault + `DefaultAzureCredential` | Runtime secret resolution |
 | Dashboard | React + Vite + FastAPI | 6-page governance UI with SSE real-time streaming, custom design system, animated components |
 | Slack Notifications | Slack Incoming Webhook (Block Kit attachments) | Real-time alerts for DENIED/ESCALATED verdicts + Azure Monitor alerts |
-| Azure Monitor → RuriSkry | `azurerm_monitor_action_group.ruriskry` (`terraform-core`) | CPU/heartbeat/custom alerts POST to `/api/alert-trigger` → `pending` record created → user clicks **Investigate** → `MonitoringAgent` → governance verdict → Alerts tab |
+| Azure Monitor → RuriSkry | Alert Processing Rule (APR) scoped to target subscription + `azurerm_monitor_action_group.ruriskry` (`terraform-core`) | One APR routes ALL current and future alert rules automatically — no per-rule wiring. Alerts POST to `/api/alert-trigger` → `pending` record → **Investigate** → `MonitoringAgent` → governance verdict → Alerts tab |
 | Decision Explanation Engine | `DecisionExplainer` — LLM summary + counterfactual analysis | Click any verdict row → 6-section drilldown with "what would change this?" analysis |
 
 ---

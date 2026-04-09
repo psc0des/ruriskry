@@ -152,9 +152,21 @@ Any Azure subscription can send alerts to this endpoint — not just `terraform-
 
 #### Option A — deploy.sh automatic wiring (recommended)
 
-`deploy.sh` Step 9 handles alert wiring automatically after the backend is deployed. It finds all `ag-ruriskry-*` action groups in the target subscription and injects a `ruriskry-webhook` receiver pointing at `BACKEND_URL/api/alert-trigger`. Idempotent — skips if already correctly wired, removes stale receivers if the URL changed. Re-run `bash scripts/deploy.sh --stage2` any time to re-wire.
+`deploy.sh` Step 9 creates one **Alert Processing Rule (APR)** scoped to the entire target subscription. The APR routes every current and future alert rule to the RuriSkry action group — no per-rule or per-action-group wiring is needed. New alert rules created by any team automatically flow to RuriSkry without any re-run.
 
-> If no `ag-ruriskry-*` action group exists yet (fresh deploy before `terraform-demo` or manual rules), Step 9 warns and exits gracefully — re-run after creating the action group.
+```
+All alert rules in target subscription
+    └── Alert Processing Rule "apr-ruriskry-governance-fanout"
+            └── Action Group "ag-ruriskry-*-alert-handler-*"  (in infra sub)
+                    └── Webhook → POST /api/alert-trigger
+```
+
+Re-run at any time to recreate the APR if deleted:
+```bash
+bash scripts/deploy.sh --stage2
+```
+
+> **Requires:** `Monitoring Contributor` role on the target subscription. If not available, Step 9 falls back to injecting the webhook into any existing `ruriskry-*` action groups in the target sub via ARM PUT (covers existing alert rules only — new rules will not auto-route).
 
 #### Option B — terraform-demo (test/demo environment)
 
