@@ -260,9 +260,9 @@ Notifications fire for DENIED/ESCALATED verdicts and Azure Monitor alerts.
 
 ### Wire alert rules to the RuriSkry backend
 
-**Automatic (deploy.sh Step 9)** — the recommended path:
+**Automatic (Terraform)** — the recommended path:
 
-`deploy.sh` Step 9 creates one **Alert Processing Rule (APR)** scoped to the entire target subscription:
+`terraform apply` creates `azurerm_monitor_alert_processing_rule_action_group.ruriskry` — one APR scoped to the entire target subscription:
 
 ```
 All alert rules in target subscription
@@ -273,12 +273,14 @@ All alert rules in target subscription
 
 - **Non-invasive** — does not modify any existing alert rules or action groups
 - **Future-proof** — new alert rules created by any team auto-route to RuriSkry without any re-run
-- **Idempotent** — re-running `deploy.sh --stage2` is safe; skips if APR already correct
-- **Requires** `Monitoring Contributor` on the target subscription
+- **Identity-free** — owned by Terraform state, tied to no personal account; survives staff changes
+- **Requires** `Monitoring Contributor` on the target subscription at `terraform apply` time only
 
-> **Fallback**: If APR creation fails (insufficient permissions), Step 9 falls back to ARM PUT injection into existing `ruriskry-*` action groups. This covers existing rules only — new rules will not auto-route. Grant `Monitoring Contributor` and re-run to upgrade to full APR coverage.
->
-> **Why not `az monitor action-group update --add-action webhook`?** That CLI shorthand triggers a URL blocklist check that rejects Container Apps FQDNs with `WebhookServiceUriBlocked`. Step 9 uses `az rest --method put` (the same ARM path Terraform uses) to bypass this.
+`deploy.sh` Step 9 reports APR status (present / missing). If missing after deploy:
+```bash
+terraform apply -chdir=infrastructure/terraform-core \
+  -target=azurerm_monitor_alert_processing_rule_action_group.ruriskry
+```
 
 **If you use `infrastructure/terraform-demo`** (manual / CI path):
 
