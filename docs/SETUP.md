@@ -150,6 +150,13 @@ on the Container App's filesystem. Sessions expire after 8 hours.
 > To avoid this, mount an Azure File Share to `/app/data` via the Container App volume mount
 > feature, or store the admin record in Cosmos DB (future improvement).
 
+**Forgot the admin password?** Use the `--reset-admin` flag to delete `admin_auth.json`
+from the running Container App, which forces the setup screen to reappear:
+```bash
+bash scripts/deploy.sh --reset-admin
+```
+Then visit the dashboard URL and create a new admin account.
+
 No additional environment variables are needed for auth — it is always enabled once an
 admin account has been created.
 
@@ -169,9 +176,9 @@ POST https://<your-backend>/api/alert-trigger
 
 Any Azure subscription can send alerts to this endpoint — not just `terraform-demo`. Choose the method that matches how your workload infrastructure is managed:
 
-#### Option A — deploy.sh automatic wiring (recommended)
+#### Option A — Terraform (recommended, automatic)
 
-`deploy.sh` Step 9 creates one **Alert Processing Rule (APR)** scoped to the entire target subscription. The APR routes every current and future alert rule to the RuriSkry action group — no per-rule or per-action-group wiring is needed. New alert rules created by any team automatically flow to RuriSkry without any re-run.
+`terraform apply` creates `azurerm_monitor_alert_processing_rule_action_group.ruriskry` — one APR scoped to the entire target subscription. The APR routes every current and future alert rule to the RuriSkry action group automatically. No per-rule or per-action-group wiring needed. The APR is owned by Terraform state and is tied to no personal identity — it survives staff changes and subscription ownership transfers.
 
 ```
 All alert rules in target subscription
@@ -180,12 +187,13 @@ All alert rules in target subscription
                     └── Webhook → POST /api/alert-trigger
 ```
 
-Re-run at any time to recreate the APR if deleted:
+If `terraform apply` fails at the APR resource (`AuthorizationFailed`), the deploying identity lacks `Monitoring Contributor` on the target subscription. Grant it once and re-apply:
 ```bash
-bash scripts/deploy.sh --stage2
+terraform apply -chdir=infrastructure/terraform-core \
+  -target=azurerm_monitor_alert_processing_rule_action_group.ruriskry
 ```
 
-> **Requires:** `Monitoring Contributor` role on the target subscription. If not available, Step 9 falls back to injecting the webhook into any existing `ruriskry-*` action groups in the target sub via ARM PUT (covers existing alert rules only — new rules will not auto-route).
+`deploy.sh` Step 9 reports APR status (present / missing) — it no longer creates it.
 
 #### Option B — terraform-demo (test/demo environment)
 
@@ -480,18 +488,11 @@ so any infrastructure event (VM stops, CPU spikes, disk fills) creates a
 **pending alert** in the dashboard for manual investigation.  Click
 **Investigate** on any pending alert row to trigger the Monitoring Agent.
 
-**`deploy.sh` automates this** (Step 9): after provisioning it sweeps your
-`target_subscription_id` for all existing metric and activity-log alert rules
-and offers to add the RuriSkry Action Group to each one. This is idempotent —
-safe to accept even if some rules are already wired. If you skipped this step
-during deploy, run the commands manually:
+**Terraform automates this**: `azurerm_monitor_alert_processing_rule_action_group.ruriskry` in `terraform-core` creates one APR scoped to the entire target subscription — all current and future alert rules route to RuriSkry automatically. `deploy.sh` Step 9 reports whether the APR is in place. If it is missing, re-apply the target:
 
 ```bash
-ACTION_GROUP_ID=$(cd infrastructure/terraform-core && terraform output -raw alert_action_group_id)
-az monitor metrics alert update \
-  --name "<rule-name>" --resource-group "<rg>" \
-  --subscription "<target-subscription-id>" \
-  --add-action "$ACTION_GROUP_ID"
+terraform apply -chdir=infrastructure/terraform-core \
+  -target=azurerm_monitor_alert_processing_rule_action_group.ruriskry
 ```
 
 See [`docs/alert-wiring.md`](alert-wiring.md) for:
