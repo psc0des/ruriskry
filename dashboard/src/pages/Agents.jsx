@@ -34,6 +34,7 @@ export default function Agents() {
     startScan,
     startAllScans,
     stopScan,
+    stopAllScans,
     openLiveLog,
     openHistoricalLog,
     closeLogs,
@@ -58,6 +59,7 @@ export default function Agents() {
         allScanning={allScanning}
         onStartScan={startScan}
         onStartAll={startAllScans}
+        onStopAll={stopAllScans}
         onStopScan={stopScan}
         onOpenLiveLog={openLiveLog}
         onOpenHistoricalLog={openHistoricalLog}

@@ -226,6 +226,14 @@ export default function useScanManager({ onScanComplete } = {}) {
     }))
   }, [scanState])
 
+  const stopAllScans = useCallback(async () => {
+    await Promise.allSettled(
+      AGENT_TYPES
+        .filter(t => scanState[t]?.status === 'running')
+        .map(t => stopScan(t))
+    )
+  }, [scanState, stopScan])
+
   // ── Log viewer controls ──────────────────────────────────────────────────
 
   const openLiveLog = useCallback((agentType) => {
@@ -267,6 +275,7 @@ export default function useScanManager({ onScanComplete } = {}) {
     startScan,
     startAllScans,
     stopScan,
+    stopAllScans,
     openLiveLog,
     openHistoricalLog,
     closeLogs,

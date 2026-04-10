@@ -528,6 +528,7 @@ export default function AgentCardGrid({
   onStartScan,
   onStartAll,
   onStopScan,
+  onStopAll,
   onOpenLiveLog,
   onOpenHistoricalLog,
   resourceGroup,
@@ -634,29 +635,31 @@ export default function AgentCardGrid({
         </div>
       )}
 
-      {/* Run All */}
-      <button
-        onClick={() => onStartAll('existing')}
-        disabled={anyScanning}
-        className={`
-          w-full py-2.5 rounded-xl text-sm font-semibold transition-all border
-          ${anyScanning
-            ? 'border-slate-600 bg-slate-700/40 text-slate-500 cursor-not-allowed'
-            : 'border-blue-500/60 bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 hover:text-blue-200 cursor-pointer'
-          }
-        `}
-      >
-        {anyScanning ? (
-          <span className="flex items-center justify-center gap-2">
+      {/* Run All / Stop All */}
+      {anyScanning ? (
+        <div className="flex gap-2">
+          <div className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold border border-slate-600 bg-slate-700/40 text-slate-400">
             <Spinner />
             {allScanning ? 'Running all agents…' : 'Scan in progress…'}
-          </span>
-        ) : (
+          </div>
+          <button
+            onClick={onStopAll}
+            className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-semibold border border-rose-500/50 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 transition-all cursor-pointer"
+            title="Stop all running scans"
+          >
+            <Square className="w-3.5 h-3.5" /> Stop All
+          </button>
+        </div>
+      ) : (
+        <button
+          onClick={() => onStartAll('existing')}
+          className="w-full py-2.5 rounded-xl text-sm font-semibold transition-all border border-blue-500/60 bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 hover:text-blue-200 cursor-pointer"
+        >
           <span className="flex items-center justify-center gap-2">
             <Zap className="w-3.5 h-3.5" /> Run All Agents
           </span>
-        )}
-      </button>
+        </button>
+      )}
 
       {/* Scan modal */}
       {modalAgentType && (

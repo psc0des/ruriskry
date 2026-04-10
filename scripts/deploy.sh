@@ -829,30 +829,44 @@ else
     fi
   fi
 
-  # ── Ensure this identity has Monitoring Contributor on the target sub ────────
-  # Required to create the Alert Processing Rule. Idempotent — safe to re-run.
-  CURRENT_USER=$(az account show --query user.name -o tsv 2>/dev/null || true)
-  if [[ -n "$CURRENT_USER" ]]; then
+  # ── Ensure the deploying identity has Monitoring Contributor on the target sub ─
+  # Supports both Service Principal (CI/CD) and interactive user (local dev).
+  # Idempotent — safe to re-run.
+  #
+  # SP path  : set AZURE_CLIENT_ID before running (az login --service-principal)
+  # User path: falls back to az account show (interactive login)
+  if [[ -n "${AZURE_CLIENT_ID:-}" ]]; then
+    ASSIGNEE="$AZURE_CLIENT_ID"
+    ASSIGNEE_TYPE="ServicePrincipal"
+    log "Using Service Principal $ASSIGNEE for role assignment"
+  else
+    ASSIGNEE=$(az account show --query user.name -o tsv 2>/dev/null || true)
+    ASSIGNEE_TYPE="User"
+  fi
+
+  if [[ -n "$ASSIGNEE" ]]; then
     ALREADY_MC=$(az role assignment list \
-      --assignee "$CURRENT_USER" \
+      --assignee "$ASSIGNEE" \
       --role "Monitoring Contributor" \
       --scope "/subscriptions/${ALERT_SUB}" \
       --query "length(@)" -o tsv 2>/dev/null || echo "0")
     if [[ "${ALREADY_MC:-0}" -eq 0 ]]; then
-      log "Granting Monitoring Contributor on sub $ALERT_SUB to $CURRENT_USER..."
+      log "Granting Monitoring Contributor on sub $ALERT_SUB to $ASSIGNEE..."
       if az role assignment create \
-           --assignee "$CURRENT_USER" \
+           --assignee "$ASSIGNEE" \
+           --assignee-object-type "$ASSIGNEE_TYPE" \
            --role "Monitoring Contributor" \
            --scope "/subscriptions/${ALERT_SUB}" \
            --output none 2>/dev/null; then
         ok "Monitoring Contributor granted — proceeding with APR creation"
       else
-        warn "Could not grant Monitoring Contributor (may need Owner/UAA on $ALERT_SUB)."
-        warn "Ask a subscription Owner to run:"
-        warn "  az role assignment create --assignee \"$CURRENT_USER\" --role \"Monitoring Contributor\" --scope \"/subscriptions/${ALERT_SUB}\""
+        warn "Could not grant Monitoring Contributor on $ALERT_SUB."
+        warn "For SP-based deploys: ensure the SP has Owner or User Access Administrator on $ALERT_SUB"
+        warn "For local dev: run manually as a subscription Owner:"
+        warn "  az role assignment create --assignee \"$ASSIGNEE\" --role \"Monitoring Contributor\" --scope \"/subscriptions/${ALERT_SUB}\""
       fi
     else
-      log "Monitoring Contributor already assigned on $ALERT_SUB — skipping role assignment"
+      log "Monitoring Contributor already assigned on $ALERT_SUB — skipping"
     fi
   fi
 
