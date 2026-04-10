@@ -767,220 +767,35 @@ else
 fi
 
 # =============================================================================
-# 9. Wire Azure Monitor alerts to RuriSkry via Alert Processing Rule
+# 9. Alert Processing Rule — owned by Terraform, no manual wiring needed
 # =============================================================================
-# PRIMARY APPROACH — Alert Processing Rule (APR):
-#   One APR resource scoped to the entire target subscription routes ALL current
-#   and future alert rules to the RuriSkry action group automatically. No per-
-#   rule or per-action-group wiring is needed. New alert rules created by any
-#   team next month flow to RuriSkry without any script re-run. The APR is non-
-#   invasive — it does not modify existing action groups or alert rules.
+# The APR (azurerm_monitor_alert_processing_rule_action_group) is created by
+# Terraform in Stage 1. It is tied to no personal identity — it is an Azure
+# resource owned by Terraform state. Staff changes, subscription ownership
+# transfers, and re-deploys do not affect it.
 #
-#   Requires: Monitoring Contributor role on the target subscription.
-#
-# FALLBACK — az rest PUT on existing action groups:
-#   If APR creation fails (insufficient permissions), we fall back to finding
-#   any action groups already named "ruriskry-*" in the target sub and injecting
-#   the webhook receiver via ARM PUT. This mirrors what Terraform's
-#   webhook_receiver block does (useCommonAlertSchema=false) and bypasses the
-#   WebhookServiceUriBlocked error that `--add-action webhook` triggers on
-#   Container Apps FQDNs.
-step "Wiring alert processing rule → RuriSkry governance engine"
+# If terraform apply failed at the APR resource (AuthorizationFailed), the
+# deploying identity lacked Monitoring Contributor on the target subscription.
+# Grant it once and re-run: terraform apply -target=azurerm_monitor_alert_processing_rule_action_group.ruriskry
+step "Checking alert processing rule status"
 
-# Read the action group ID from terraform-core output (created in infra sub)
-ACTION_GROUP_ID=$(terraform -chdir="$TF_DIR" output -raw alert_action_group_id 2>/dev/null || true)
-
-# Main infra location (for creating monitoring RG in target sub if needed)
-INFRA_LOCATION=$(grep -E '^location\s*=' "$TF_DIR/terraform.tfvars" 2>/dev/null \
-  | sed 's/.*=\s*"\([^"]*\)".*/\1/' | tr -d '[:space:]')
-INFRA_LOCATION=${INFRA_LOCATION:-${FOUNDRY_LOCATION:-eastus2}}
-
-# Alert rules live in the TARGET subscription
+APR_NAME="apr-ruriskry-governance-fanout"
+APR_RG=$(terraform -chdir="$TF_DIR" output -raw resource_group_name 2>/dev/null || true)
 TARGET_SUB=$(grep -E '^target_subscription_id\s*=' "$TF_DIR/terraform.tfvars" 2>/dev/null \
   | sed 's/.*=\s*"\([^"]*\)".*/\1/' | tr -d '[:space:]')
 ALERT_SUB="${TARGET_SUB:-$SUBSCRIPTION_ID}"
 
-if [[ "$ALERT_SUB" != "$SUBSCRIPTION_ID" ]]; then
-  log "Target subscription: $ALERT_SUB (workload sub, separate from infra)"
+APR_STATE=$(az monitor alert-processing-rule show \
+  --name "$APR_NAME" \
+  --resource-group "$APR_RG" \
+  --subscription "$ALERT_SUB" \
+  --query "name" -o tsv 2>/dev/null || true)
+
+if [[ -n "$APR_STATE" ]]; then
+  ok "Alert Processing Rule in place: $APR_NAME"
+  ok "All alerts in sub $ALERT_SUB route to RuriSkry automatically (managed by Terraform)."
 else
-  log "Target subscription: $ALERT_SUB (same as infra sub)"
-fi
-
-if [[ -z "$ACTION_GROUP_ID" ]]; then
-  warn "Could not read alert_action_group_id from Terraform outputs — Terraform may not have run yet."
-  warn "Re-run after Stage 1 completes: bash scripts/deploy.sh --stage2"
-else
-  APR_NAME="apr-ruriskry-governance-fanout"
-
-  # APR resource group: use infra RG for same-sub, create dedicated RG for cross-sub
-  if [[ "$ALERT_SUB" == "$SUBSCRIPTION_ID" ]]; then
-    APR_RG=$(terraform -chdir="$TF_DIR" output -raw resource_group_name 2>/dev/null \
-      || echo "ruriskry-${ENV_VAL}-engine-rg")
-  else
-    APR_RG="ruriskry-monitoring-rg"
-    if ! az group show --name "$APR_RG" --subscription "$ALERT_SUB" &>/dev/null; then
-      log "Creating dedicated monitoring resource group in target sub: $APR_RG"
-      az group create \
-        --name "$APR_RG" \
-        --location "$INFRA_LOCATION" \
-        --subscription "$ALERT_SUB" \
-        --output none 2>/dev/null \
-      || warn "Could not create $APR_RG in $ALERT_SUB — will attempt APR anyway with existing RG"
-    fi
-  fi
-
-  # ── Ensure the deploying identity has Monitoring Contributor on the target sub ─
-  # Supports both Service Principal (CI/CD) and interactive user (local dev).
-  # Idempotent — safe to re-run.
-  #
-  # SP path  : set AZURE_CLIENT_ID before running (az login --service-principal)
-  # User path: falls back to az account show (interactive login)
-  if [[ -n "${AZURE_CLIENT_ID:-}" ]]; then
-    ASSIGNEE="$AZURE_CLIENT_ID"
-    ASSIGNEE_TYPE="ServicePrincipal"
-    log "Using Service Principal $ASSIGNEE for role assignment"
-  else
-    ASSIGNEE=$(az account show --query user.name -o tsv 2>/dev/null || true)
-    ASSIGNEE_TYPE="User"
-  fi
-
-  if [[ -n "$ASSIGNEE" ]]; then
-    ALREADY_MC=$(az role assignment list \
-      --assignee "$ASSIGNEE" \
-      --role "Monitoring Contributor" \
-      --scope "/subscriptions/${ALERT_SUB}" \
-      --query "length(@)" -o tsv 2>/dev/null || echo "0")
-    if [[ "${ALREADY_MC:-0}" -eq 0 ]]; then
-      log "Granting Monitoring Contributor on sub $ALERT_SUB to $ASSIGNEE..."
-      if az role assignment create \
-           --assignee "$ASSIGNEE" \
-           --assignee-object-type "$ASSIGNEE_TYPE" \
-           --role "Monitoring Contributor" \
-           --scope "/subscriptions/${ALERT_SUB}" \
-           --output none 2>/dev/null; then
-        ok "Monitoring Contributor granted — proceeding with APR creation"
-      else
-        warn "Could not grant Monitoring Contributor on $ALERT_SUB."
-        warn "For SP-based deploys: ensure the SP has Owner or User Access Administrator on $ALERT_SUB"
-        warn "For local dev: run manually as a subscription Owner:"
-        warn "  az role assignment create --assignee \"$ASSIGNEE\" --role \"Monitoring Contributor\" --scope \"/subscriptions/${ALERT_SUB}\""
-      fi
-    else
-      log "Monitoring Contributor already assigned on $ALERT_SUB — skipping"
-    fi
-  fi
-
-  # Idempotent check: APR already exists and points at our action group?
-  EXISTING_APR_AG=$(az monitor alert-processing-rule show \
-    --name "$APR_NAME" \
-    --resource-group "$APR_RG" \
-    --subscription "$ALERT_SUB" \
-    --query "properties.actions[0].actionGroupIds[0]" \
-    -o tsv 2>/dev/null || true)
-
-  if [[ "${EXISTING_APR_AG,,}" == "${ACTION_GROUP_ID,,}" ]]; then
-    ok "Alert Processing Rule already in place: $APR_NAME"
-    ok "All alerts in sub $ALERT_SUB route to RuriSkry automatically — no per-rule wiring needed."
-  else
-    log "Creating Alert Processing Rule: $APR_NAME (scope: entire sub $ALERT_SUB)"
-    if az monitor alert-processing-rule create \
-         --name "$APR_NAME" \
-         --resource-group "$APR_RG" \
-         --subscription "$ALERT_SUB" \
-         --rule-type AddActionGroups \
-         --scopes "/subscriptions/${ALERT_SUB}" \
-         --action-groups "$ACTION_GROUP_ID" \
-         --description "Routes all Azure Monitor alerts to the RuriSkry AI governance engine." \
-         --output none 2>/dev/null; then
-      ok "Alert Processing Rule created: $APR_NAME"
-      ok "All current AND future alert rules in sub $ALERT_SUB now route to RuriSkry automatically."
-      echo ""
-      log "To disable alert routing: az monitor alert-processing-rule delete -n $APR_NAME -g $APR_RG --subscription $ALERT_SUB -y"
-    else
-      warn "Alert Processing Rule creation failed (need Monitoring Contributor on sub $ALERT_SUB)."
-      warn "Falling back: injecting webhook into existing ruriskry-named action groups..."
-      echo ""
-
-      # ── Fallback: az rest PUT on existing ruriskry action groups ─────────────
-      # Finds any action group named *ruriskry* in the target sub and updates its
-      # webhookReceivers array via ARM PUT (useCommonAlertSchema=false).
-      # This mirrors Terraform's webhook_receiver block and avoids WebhookServiceUriBlocked.
-      RURISKRY_AGs=$(az monitor action-group list \
-        --subscription "$ALERT_SUB" \
-        --query "[?contains(name, 'ruriskry')].{name:name, rg:resourceGroup}" \
-        -o tsv 2>/dev/null || true)
-
-      if [[ -z "$RURISKRY_AGs" ]]; then
-        warn "No ruriskry action groups found in $ALERT_SUB either."
-        warn "Deploy infrastructure/terraform-demo in the target subscription,"
-        warn "or grant Monitoring Contributor on sub $ALERT_SUB and re-run deploy.sh --stage2"
-      else
-        WIRED=0
-        FAILED=0
-        WEBHOOK_TARGET="${BACKEND_URL}/api/alert-trigger"
-        AG_API_VERSION="2023-01-01"
-        AG_TMP_FILE="$(mktemp -t ag-XXXXXX.json)"
-        trap 'rm -f "$AG_TMP_FILE"' EXIT
-
-        while IFS=$'\t' read -r ag_name ag_rg; do
-          [[ -z "$ag_name" ]] && continue
-          log "Injecting webhook into action group: $ag_name (rg: $ag_rg)"
-
-          AG_ARM_ID="/subscriptions/${ALERT_SUB}/resourceGroups/${ag_rg}/providers/Microsoft.Insights/actionGroups/${ag_name}"
-          AG_URL="https://management.azure.com${AG_ARM_ID}?api-version=${AG_API_VERSION}"
-
-          CURRENT=$(az rest --method get --url "$AG_URL" -o json 2>/dev/null || true)
-          if [[ -z "$CURRENT" ]]; then
-            warn "Could not fetch action group: $ag_name"; (( FAILED++ )) || true; continue
-          fi
-
-          # Skip if already wired to current URL
-          ALREADY=$(printf '%s' "$CURRENT" | python -c "
-import json, sys
-ag = json.load(sys.stdin)
-for r in (ag.get('properties') or {}).get('webhookReceivers') or []:
-    if r.get('name') == 'ruriskry-webhook' and r.get('serviceUri') == '${WEBHOOK_TARGET}':
-        print('yes'); break
-" 2>/dev/null || true)
-          if [[ "$ALREADY" == "yes" ]]; then
-            ok "Already wired: $ag_name → ${WEBHOOK_TARGET}"; (( WIRED++ )) || true; continue
-          fi
-
-          # Merge webhook receiver and write to scratch file
-          if ! printf '%s' "$CURRENT" | \
-               RURISKRY_WEBHOOK_TARGET="$WEBHOOK_TARGET" \
-               RURISKRY_AG_TMP_FILE="$AG_TMP_FILE" \
-               python -c "
-import json, os, sys
-ag = json.load(sys.stdin)
-props = ag.setdefault('properties', {})
-rcv = [r for r in (props.get('webhookReceivers') or []) if r.get('name') != 'ruriskry-webhook']
-rcv.append({'name': 'ruriskry-webhook', 'serviceUri': os.environ['RURISKRY_WEBHOOK_TARGET'],
-            'useCommonAlertSchema': False, 'useAadAuth': False})
-props['webhookReceivers'] = rcv
-ag.pop('systemData', None)
-with open(os.environ['RURISKRY_AG_TMP_FILE'], 'w', encoding='utf-8') as f: json.dump(ag, f)
-" 2>/dev/null; then
-            warn "Failed to build request body for: $ag_name"; (( FAILED++ )) || true; continue
-          fi
-
-          if az rest --method put --url "$AG_URL" \
-               --headers "Content-Type=application/json" \
-               --body "@${AG_TMP_FILE}" \
-               --output none 2>/dev/null; then
-            ok "Wired (fallback): $ag_name → ${WEBHOOK_TARGET}"; (( WIRED++ )) || true
-          else
-            warn "Failed to wire: $ag_name (rg: $ag_rg)"; (( FAILED++ )) || true
-          fi
-        done <<< "$RURISKRY_AGs"
-
-        echo ""
-        ok "$WIRED action group(s) wired to RuriSkry (fallback mode)."
-        [[ "$FAILED" -gt 0 ]] && warn "$FAILED action group(s) could not be updated — check permissions."
-        warn "Note: fallback wiring covers existing action groups only."
-        warn "New alert rules will NOT automatically route to RuriSkry."
-        warn "Grant Monitoring Contributor on sub $ALERT_SUB and re-run deploy.sh --stage2 for full APR coverage."
-      fi
-    fi
-  fi
+  warn "Alert Processing Rule not found — Terraform may have lacked Monitoring Contributor on $ALERT_SUB."
+  warn "Grant it to the deploying identity and re-run:"
+  warn "  terraform apply -chdir=$TF_DIR -target=azurerm_monitor_alert_processing_rule_action_group.ruriskry"
 fi

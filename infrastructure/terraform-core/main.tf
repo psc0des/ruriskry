@@ -926,6 +926,48 @@ resource "azurerm_monitor_action_group" "ruriskry" {
 }
 
 # =============================================================================
+# 12b. Monitoring Contributor — required to create Alert Processing Rules
+# =============================================================================
+# The Alert Processing Rule (APR) below is created by Terraform (not deploy.sh)
+# so no personal identity is involved. The deploying identity (whoever runs
+# terraform apply) needs Monitoring Contributor on the target subscription to
+# create APR resources. This is a deploy-time permission only — the APR itself
+# runs independently of any personal account.
+#
+# NOTE: If terraform apply fails here with "AuthorizationFailed", the deploying
+# identity lacks Monitoring Contributor on the target sub. Grant it once:
+#   az role assignment create \
+#     --assignee <your-object-id> \
+#     --role "Monitoring Contributor" \
+#     --scope "/subscriptions/<target_subscription_id>"
+# =============================================================================
+
+# =============================================================================
+# 12c. Alert Processing Rule — route ALL alerts in target sub to RuriSkry
+# =============================================================================
+# An APR is subscription-scoped and catches every alert rule, including ones
+# created after deployment. It adds the RuriSkry action group to every firing
+# alert automatically — no per-rule wiring needed.
+#
+# This resource is tied to no personal identity. It is owned by Terraform state
+# and survives staff changes, re-deploys, and subscription ownership transfers.
+#
+# Scope: entire target subscription (scan_subscription_id).
+# If you want narrower scope (e.g. one resource group), change scopes to:
+#   "/subscriptions/<id>/resourceGroups/<rg>"
+resource "azurerm_monitor_alert_processing_rule_action_group" "ruriskry" {
+  name                = "apr-ruriskry-governance-fanout"
+  resource_group_name = azurerm_resource_group.ruriskry.name
+  scopes              = ["/subscriptions/${local.scan_subscription_id}"]
+  description         = "Routes all Azure Monitor alerts to the RuriSkry AI governance engine. Managed by Terraform — do not edit manually."
+  tags                = local.common_tags
+
+  add_action_group_ids = [azurerm_monitor_action_group.ruriskry.id]
+
+  depends_on = [azurerm_monitor_action_group.ruriskry]
+}
+
+# =============================================================================
 # 13. Security hardening — tfstate storage lock (SEC-08)
 # =============================================================================
 # The tfstate storage account holds Terraform state which contains sensitive
