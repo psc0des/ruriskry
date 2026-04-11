@@ -16,7 +16,7 @@ Scenarios
 
 Run from the project root:
 
-    python demo.py
+    python examples/demo.py
 """
 
 import asyncio

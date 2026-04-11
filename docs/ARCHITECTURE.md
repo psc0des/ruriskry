@@ -65,7 +65,7 @@ and receive streaming `GovernanceVerdict` results via SSE.
 
 - **Entry point:** `src/a2a/ruriskry_a2a_server.py`
 - **Start:** `uvicorn src.a2a.ruriskry_a2a_server:app --host 0.0.0.0 --port 8000`
-- **Demo (local dev):** `python demo_a2a.py` — in a live deployment agents self-register on first scan; no manual connection needed
+- **Demo (local dev):** `python examples/demo_a2a.py` — in a live deployment agents self-register on first scan; no manual connection needed
 
 ### 2. MCP (stdio) — Developer / IDE Pattern
 AI tools on the same machine (Claude Desktop, GitHub Copilot, any MCP host) call
@@ -77,16 +77,16 @@ pipes — no network, no port, no deployment required.
 
 ### 3. Direct Python — Local / Test Pattern
 Code in the same codebase calls the pipeline directly. No network, no process
-boundary — minimal overhead. Used by `demo.py` and all unit tests.
+boundary — minimal overhead. Used by `examples/demo.py` and all unit tests.
 
 - **Entry point:** `src/core/pipeline.py`
-- **Demo:** `python demo.py`
+- **Demo:** `python examples/demo.py`
 
 | | A2A (HTTP) | MCP (stdio) | Direct Python |
 |---|---|---|---|
 | **Transport** | HTTP + SSE | stdin/stdout pipes | In-process call |
 | **Discovery** | Agent Card `/.well-known/agent-card.json` | MCP host config | Python import |
-| **Used by** | External agents (separate services) | Claude Desktop, Copilot | demo.py, tests |
+| **Used by** | External agents (separate services) | Claude Desktop, Copilot | examples/demo.py, tests |
 | **Pattern** | Enterprise / microservices | Developer / IDE | Local / testing |
 | **Streaming** | Yes — SSE progress updates | No | No |
 

@@ -20,10 +20,10 @@ Each scenario shows:
 
 Run
 ---
-    python demo_live.py
+    python examples/demo_live.py
 
 For mock mode (no Azure credentials needed):
-    USE_LOCAL_MOCKS=true python demo_live.py
+    USE_LOCAL_MOCKS=true python examples/demo_live.py
 """
 
 import argparse

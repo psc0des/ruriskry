@@ -316,10 +316,10 @@ python -m src.mcp_server.server
 uvicorn src.a2a.ruriskry_a2a_server:app --host 0.0.0.0 --port 8000
 
 # 8. Optional: demo scripts
-python demo.py        # direct Python pipeline — 3 governance scenarios
-python demo_a2a.py    # A2A protocol demo — server + 3 agent clients
-python demo_live.py   # live Azure scan (requires USE_LOCAL_MOCKS=false + Azure creds)
-python demo_live.py --resource-group ruriskry-prod-rg  # scope to a specific RG
+python examples/examples/demo.py        # direct Python pipeline — 3 governance scenarios
+python examples/examples/demo_a2a.py    # A2A protocol demo — server + 3 agent clients
+python examples/examples/demo_live.py   # live Azure scan (requires USE_LOCAL_MOCKS=false + Azure creds)
+python examples/examples/demo_live.py --resource-group ruriskry-prod-rg  # scope to a specific RG
 ```
 
 ## Optional: Deploy Mini Production Environment

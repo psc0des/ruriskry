@@ -39,7 +39,7 @@ Operational agents (governed subjects)
 ---------------------------------------
 The pipeline exposes ``scan_operational_agents()`` which runs all three
 operational agents and returns their raw proposals — before governance
-evaluation.  Callers (e.g., demo.py) then pass each proposal through
+evaluation.  Callers (e.g., examples/demo.py) then pass each proposal through
 ``evaluate()`` to get the governance verdict.
 
 Why parallel?

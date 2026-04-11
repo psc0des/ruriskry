@@ -22,7 +22,7 @@ How it works
 
 Run
 ---
-    python demo_a2a.py
+    python examples/demo_a2a.py
 """
 
 import asyncio

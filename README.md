@@ -380,9 +380,9 @@ cd dashboard && npm install && npm run dev
 
 # Other entry points:
 python -m src.mcp_server.server    # MCP stdio server (for Claude Desktop)
-python demo.py                     # direct pipeline demo (3 scenarios)
-python demo_a2a.py                 # A2A protocol demo (local dev only)
-python demo_live.py                # two-layer intelligence demo
+python examples/demo.py                     # direct pipeline demo (3 scenarios)
+python examples/demo_a2a.py                 # A2A protocol demo (local dev only)
+python examples/demo_live.py                # two-layer intelligence demo
 ```
 
 ### Run Tests
@@ -461,9 +461,9 @@ ruriskry/
 │   ├── seed_incidents.json
 │   ├── seed_resources.json
 │   └── policies.json                # Governance policy rules (JSON — edit to add rules)
-├── demo.py                     # Direct pipeline demo (3 scenarios)
-├── demo_a2a.py                 # A2A protocol demo
-├── demo_live.py                # Two-layer intelligence demo
+├── examples/demo.py                     # Direct pipeline demo (3 scenarios)
+├── examples/demo_a2a.py                 # A2A protocol demo
+├── examples/demo_live.py                # Two-layer intelligence demo
 ├── tests/
 ├── docs/
 │   ├── ARCHITECTURE.md              # System design, agent descriptions, data flow
@@ -485,7 +485,7 @@ ruriskry/
 
 ## Demo Scenarios
 
-Run `python demo.py` (direct pipeline) or `python demo_a2a.py` (A2A protocol, local dev only).
+Run `python examples/demo.py` (direct pipeline) or `python examples/demo_a2a.py` (A2A protocol, local dev only).
 
 ### Scenario 1: Dangerous Action → DENIED
 **Cost Agent** proposes deleting `vm-23` (disaster-recovery VM, $847/mo).

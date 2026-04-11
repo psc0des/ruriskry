@@ -72,7 +72,7 @@ runs — they are not separate processes that need to be started manually. Go to
 **Scans** tab and trigger any scan. After it completes, the Connected Agents page will
 show all three agents.
 
-`python demo_a2a.py` is a local development script — it is not needed or relevant in a
+`python examples/demo_a2a.py` is a local development script — it is not needed or relevant in a
 live cloud deployment.
 
 ---
