@@ -2957,15 +2957,22 @@ async def list_github_repos() -> dict:
         from github import Github, GithubException  # noqa: PLC0415
         gh = Github(token)
         user = gh.get_user()
+        # Omit `type` — passing type="all" raises 422 for fine-grained PATs.
+        # Default behaviour already returns all accessible repos.
         repos = sorted(
-            [r.full_name for r in user.get_repos(type="all", sort="updated", per_page=100)],
+            [r.full_name for r in user.get_repos(sort="updated", per_page=100)],
             key=str.lower,
         )
         return {"repos": repos}
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(
-            status_code=502, detail=f"GitHub API error: {exc}"
-        ) from exc
+        msg = str(exc)
+        if "401" in msg or "Bad credentials" in msg:
+            detail = "GitHub token is invalid or expired — regenerate GITHUB_TOKEN"
+        elif "403" in msg:
+            detail = "GitHub token lacks repo access — add 'Contents' + 'Pull requests' permissions"
+        else:
+            detail = f"GitHub API error: {msg}"
+        raise HTTPException(status_code=502, detail=detail) from exc
 
 
 @app.post("/api/execution/{execution_id}/create-pr")

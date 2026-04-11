@@ -887,7 +887,7 @@ List GitHub repositories accessible via the configured `GITHUB_TOKEN`. Used by t
 { "repos": ["org/infra-repo", "user/another-repo", ...] }
 ```
 
-Returns `503` if `GITHUB_TOKEN` is not set. Returns `502` on GitHub API error (bad token, network error).
+Returns `503` if `GITHUB_TOKEN` is not set. Returns `502` on GitHub API error with an actionable message: invalid/expired token (401), insufficient permissions (403), or other GitHub API failure. Compatible with both classic PATs and fine-grained PATs (fine-grained PATs must omit the `type` filter — the endpoint handles this automatically).
 
 ---
 

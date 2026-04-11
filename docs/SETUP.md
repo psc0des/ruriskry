@@ -702,7 +702,7 @@ throughput, the governance agent calls can be extracted to worker replicas behin
 | `DASHBOARD_URL` | No | `http://localhost:5173` | URL embedded in the "View in Dashboard" button on Slack Block Kit messages. In production this is set automatically from Terraform output. |
 | `AZURE_KEYVAULT_URL` | Live only | — | Key Vault URL for secret resolution |
 | `DEFAULT_RESOURCE_GROUP` | No | `""` | Default Azure resource group for dashboard scan endpoints. Empty = scan whole subscription. Body `resource_group` overrides this. |
-| `GITHUB_TOKEN` | Phase 21 | `""` | GitHub PAT with repo write access (Contents + Pull requests). Required for Terraform PR generation. |
+| `GITHUB_TOKEN` | Phase 21 | `""` | GitHub PAT with repo write access (Contents + Pull requests). Required for Terraform PR generation. Both classic PATs and fine-grained PATs are supported. For fine-grained PATs, grant **Contents** (read/write) + **Pull requests** (read/write) on the IaC repo — Metadata is implicitly included. |
 | `IAC_GITHUB_REPO` | Phase 21 | `""` | GitHub repo for IaC PRs (e.g. `your-org/ruriskry`). |
 | `IAC_TERRAFORM_PATH` | Phase 21 | `infrastructure/terraform-demo` | Path within the repo to the Terraform config directory. |
 | `EXECUTION_GATEWAY_ENABLED` | No | `false` | Enable the Execution Gateway. When `false`, verdicts are informational only (no PRs created). |
