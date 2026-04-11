@@ -697,19 +697,43 @@ class ExecutionGateway:
     def _detect_iac_management(
         self, resource_tags: dict[str, str]
     ) -> tuple[bool, str, str, str]:
-        """Check if a resource is IaC-managed via its Azure tags.
+        """Determine whether a resource is IaC-managed and resolve repo/path.
+
+        Priority order (highest → lowest):
+          1. Resource tags  — ``managed_by``, ``iac_repo``, ``iac_path``
+          2. Global settings — ``iac_github_repo``, ``iac_terraform_path``
+
+        If the gateway is enabled and ``iac_github_repo`` is configured,
+        every APPROVED verdict gets the "Create Terraform PR" button — even
+        resources with no tags.  Tags only override individual values when
+        present; they never silently win over a misconfigured value.
 
         Returns:
             (is_managed, iac_tool, iac_repo, iac_path)
         """
         managed_by = resource_tags.get("managed_by", "").lower()
+        tag_iac_repo = resource_tags.get("iac_repo", "")
+        tag_iac_path = resource_tags.get("iac_path", "")
+
+        # Settings-level fallbacks
+        settings_repo = settings.iac_github_repo or ""
+        settings_path = settings.iac_terraform_path or ""
+        gateway_configured = settings.execution_gateway_enabled and bool(settings_repo)
+
         if managed_by in ("terraform", "bicep", "pulumi"):
+            # Tagged resource — tags win for tool; settings fill any missing values
             return (
                 True,
                 managed_by,
-                resource_tags.get("iac_repo", ""),
-                resource_tags.get("iac_path", ""),
+                tag_iac_repo or settings_repo,
+                tag_iac_path or settings_path,
             )
+
+        if gateway_configured:
+            # No managed_by tag but gateway is globally configured — treat as
+            # IaC-managed using settings values so the PR button is always available.
+            return (True, "terraform", settings_repo, settings_path)
+
         return (False, "", "", "")
 
     async def _create_terraform_pr(

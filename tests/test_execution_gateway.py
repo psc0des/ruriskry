@@ -105,20 +105,66 @@ class TestIaCDetection:
         assert tool == "pulumi"
 
     def test_no_managed_by_tag_not_managed(self, gateway):
-        managed, *_ = gateway._detect_iac_management({})
+        with patch("src.core.execution_gateway.settings") as s:
+            s.execution_gateway_enabled = False
+            s.iac_github_repo = ""
+            managed, *_ = gateway._detect_iac_management({})
         assert managed is False
 
     def test_unknown_managed_by_value_not_managed(self, gateway):
-        managed, *_ = gateway._detect_iac_management({"managed_by": "ansible"})
+        with patch("src.core.execution_gateway.settings") as s:
+            s.execution_gateway_enabled = False
+            s.iac_github_repo = ""
+            managed, *_ = gateway._detect_iac_management({"managed_by": "ansible"})
         assert managed is False
 
-    def test_tags_without_repo_still_detected(self, gateway):
+    def test_tags_without_repo_falls_back_to_settings(self, gateway):
+        """managed_by tag present but no iac_repo tag → falls back to settings."""
         tags = {"managed_by": "terraform"}
-        managed, tool, repo, path = gateway._detect_iac_management(tags)
+        with patch("src.core.execution_gateway.settings") as s:
+            s.execution_gateway_enabled = True
+            s.iac_github_repo = "org/fallback-repo"
+            s.iac_terraform_path = "infrastructure/terraform-demo"
+            managed, tool, repo, path = gateway._detect_iac_management(tags)
         assert managed is True
         assert tool == "terraform"
-        assert repo == ""
-        assert path == ""
+        assert repo == "org/fallback-repo"
+        assert path == "infrastructure/terraform-demo"
+
+    def test_tag_iac_path_beats_settings(self, gateway):
+        """Tag iac_path takes priority over settings — prevents wrong-path bugs."""
+        tags = {
+            "managed_by": "terraform",
+            "iac_repo": "org/repo",
+            "iac_path": "infrastructure/terraform-demo",
+        }
+        with patch("src.core.execution_gateway.settings") as s:
+            s.execution_gateway_enabled = True
+            s.iac_github_repo = "org/repo"
+            s.iac_terraform_path = "infrastructure/terraform-prod"  # wrong — tag wins
+            managed, tool, repo, path = gateway._detect_iac_management(tags)
+        assert path == "infrastructure/terraform-demo"  # tag value, not settings
+
+    def test_no_tags_gateway_configured_uses_settings(self, gateway):
+        """No tags at all, but gateway configured → settings values used."""
+        with patch("src.core.execution_gateway.settings") as s:
+            s.execution_gateway_enabled = True
+            s.iac_github_repo = "psc0des/ruriskry-iac-test"
+            s.iac_terraform_path = "infrastructure/terraform-demo"
+            managed, tool, repo, path = gateway._detect_iac_management({})
+        assert managed is True
+        assert tool == "terraform"
+        assert repo == "psc0des/ruriskry-iac-test"
+        assert path == "infrastructure/terraform-demo"
+
+    def test_no_tags_gateway_disabled_not_managed(self, gateway):
+        """No tags + gateway disabled → not IaC-managed regardless of repo setting."""
+        with patch("src.core.execution_gateway.settings") as s:
+            s.execution_gateway_enabled = False
+            s.iac_github_repo = "org/repo"
+            s.iac_terraform_path = "infra/tf"
+            managed, *_ = gateway._detect_iac_management({})
+        assert managed is False
 
 
 # ---------------------------------------------------------------------------
@@ -143,20 +189,43 @@ class TestVerdictRouting:
         assert record.verdict == SRIVerdict.ESCALATED
 
     @pytest.mark.asyncio
-    async def test_approved_no_tags_becomes_manual_required(self, gateway):
+    async def test_approved_no_tags_no_repo_not_iac_managed(self, gateway):
+        """No tags AND no settings repo → iac_managed=False (can't create PR)."""
         with patch("src.core.execution_gateway.settings") as mock_settings:
             mock_settings.execution_gateway_enabled = True
+            mock_settings.iac_github_repo = ""
+            mock_settings.iac_terraform_path = ""
             verdict = _make_verdict(SRIVerdict.APPROVED)
             record = await gateway.process_verdict(verdict, {})
         assert record.status == ExecutionStatus.manual_required
         assert record.iac_managed is False
 
     @pytest.mark.asyncio
-    async def test_approved_no_repo_becomes_manual_required(self, gateway):
-        """IaC tool detected but no repo configured → manual_required."""
+    async def test_approved_no_tags_but_settings_repo_is_iac_managed(self, gateway):
+        """No tags but gateway configured with repo → iac_managed=True.
+
+        Settings act as global fallback — 'Create Terraform PR' button is
+        available even for untagged resources when the gateway is configured.
+        """
         with patch("src.core.execution_gateway.settings") as mock_settings:
             mock_settings.execution_gateway_enabled = True
-            tags = {"managed_by": "terraform"}  # no iac_repo
+            mock_settings.iac_github_repo = "psc0des/ruriskry-iac-test"
+            mock_settings.iac_terraform_path = "infrastructure/terraform-demo"
+            verdict = _make_verdict(SRIVerdict.APPROVED)
+            record = await gateway.process_verdict(verdict, {})
+        assert record.status == ExecutionStatus.manual_required
+        assert record.iac_managed is True
+        assert record.iac_repo == "psc0des/ruriskry-iac-test"
+        assert record.iac_path == "infrastructure/terraform-demo"
+
+    @pytest.mark.asyncio
+    async def test_approved_no_repo_becomes_manual_required(self, gateway):
+        """IaC tool detected via tag but no repo anywhere → manual_required."""
+        with patch("src.core.execution_gateway.settings") as mock_settings:
+            mock_settings.execution_gateway_enabled = True
+            mock_settings.iac_github_repo = ""
+            mock_settings.iac_terraform_path = ""
+            tags = {"managed_by": "terraform"}  # no iac_repo tag, no settings repo
             verdict = _make_verdict(SRIVerdict.APPROVED)
             record = await gateway.process_verdict(verdict, tags)
         assert record.status == ExecutionStatus.manual_required
