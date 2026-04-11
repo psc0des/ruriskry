@@ -175,12 +175,15 @@ routes verdicts to IaC-safe paths:
 
 - **DENIED** → blocked, logged, Slack alert
 - **ESCALATED** → human review required (Approve/Dismiss buttons in dashboard drilldown)
-- **APPROVED + IaC-managed** → auto-generate a **Terraform PR** against the IaC repo;
+- **APPROVED + IaC-managed** → user clicks **Create Terraform PR** (opens a confirmation
+  overlay to verify/override the detected repo + path) → PR opened against the IaC repo;
   human reviews and merges; CI/CD runs `terraform apply`
 - **APPROVED + not IaC-managed** → marked for manual execution
 
 IaC detection reads `managed_by=terraform` from Azure resource tags — queried live via
 `ResourceGraphClient` in live mode; falls back to `seed_resources.json` in mock mode.
+The **PR overlay** shows the auto-detected repo/path and lets the user search all repos
+accessible via their GitHub PAT if the tags are wrong or missing.
 The governance engine evaluates; Terraform executes; humans approve. IaC state never drifts.
 
 ### LLM-Driven Execution Agent

@@ -183,7 +183,8 @@ All endpoints are `async def` (FastAPI manages the event loop).
 | GET | `/api/execution/{execution_id}/record` | Full execution record by execution_id — used to sync frontend state after redeployment |
 | POST | `/api/execution/{execution_id}/approve` | Human approves an escalated verdict |
 | POST | `/api/execution/{execution_id}/dismiss` | Human dismisses a verdict |
-| POST | `/api/execution/{execution_id}/create-pr` | Create Terraform PR from a `manual_required` record |
+| GET | `/api/github/repos` | List GitHub repos accessible via `GITHUB_TOKEN` — used by the PR overlay dropdown |
+| POST | `/api/execution/{execution_id}/create-pr` | Create Terraform PR from a `manual_required` record (body: `reviewed_by`, optional `iac_repo`, `iac_path` overrides) |
 | GET | `/api/execution/{execution_id}/agent-fix-preview` | Generate LLM-driven execution plan (steps, summary, impact, rollback, backward-compat `commands`) |
 | POST | `/api/execution/{execution_id}/agent-fix-execute` | Execute fix via Azure Python SDK (`azure.mgmt.network/compute/resource`) using `DefaultAzureCredential` |
 | POST | `/api/execution/{execution_id}/rollback` | Roll back an agent-applied fix (status must be `applied`); sets status → `rolled_back` on success, keeps `applied` on failure; stores `rollback_log` (may be empty if LLM timed out); dashboard shows failure banner even with empty log |
@@ -877,14 +878,35 @@ Human dismisses a verdict — no execution will happen.
 
 ---
 
+### `GET /api/github/repos`
+
+List GitHub repositories accessible via the configured `GITHUB_TOKEN`. Used by the "Create Terraform PR" overlay dropdown to populate the repo search box. Returns up to 100 repos (GitHub API page limit), sorted alphabetically.
+
+**Response:**
+```json
+{ "repos": ["org/infra-repo", "user/another-repo", ...] }
+```
+
+Returns `503` if `GITHUB_TOKEN` is not set. Returns `502` on GitHub API error (bad token, network error).
+
+---
+
 ### `POST /api/execution/{execution_id}/create-pr`
 
 Create a Terraform PR from a `manual_required` execution record. Reuses the `TerraformPRGenerator` flow. If GitHub is not configured, the record stays `manual_required` with an explanatory note.
 
+The dashboard opens a confirmation overlay before calling this endpoint — the overlay shows the auto-detected repo/path from resource tags and allows the user to search for and select a different repo from their GitHub PAT's accessible repos.
+
 **Request body:**
 ```json
-{ "reviewed_by": "admin@example.com" }
+{
+  "reviewed_by": "admin@example.com",
+  "iac_repo": "owner/repo",      // optional — override detected repo
+  "iac_path": "infra/terraform"  // optional — override detected Terraform path
+}
 ```
+
+`iac_repo` and `iac_path` take precedence over resource tags and global settings. When `iac_repo` is supplied, `iac_managed` is set to `true` on the record automatically (enables PR creation even for resources with no `managed_by` tag).
 
 **Response:** Updated `ExecutionRecord` JSON. Status transitions to `pr_created` on success.
 

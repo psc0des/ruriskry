@@ -63,7 +63,9 @@ class TerraformPRGenerator:
             record.notes = "GITHUB_TOKEN not configured — manual execution required"
             return record
 
-        if not self._repo_name:
+        # record.iac_repo wins over the global setting (user may override via overlay)
+        effective_repo = record.iac_repo or self._repo_name
+        if not effective_repo:
             logger.warning(
                 "TerraformPRGenerator: IAC_GITHUB_REPO not set — cannot create PR"
             )
@@ -91,7 +93,9 @@ class TerraformPRGenerator:
 
         try:
             gh = Github(self._token)
-            repo = gh.get_repo(self._repo_name)
+            # record.iac_repo beats the global setting (supports user override via overlay)
+            effective_repo = record.iac_repo or self._repo_name
+            repo = gh.get_repo(effective_repo)
 
             # Build branch name: <pr_branch_prefix>/{resource}-{short-action-id}
             branch_name = (

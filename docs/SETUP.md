@@ -553,9 +553,9 @@ fully computed regardless of mode.
 The Execution Gateway routes APPROVED verdicts to IaC-safe paths — generating Terraform PRs
 instead of directly modifying Azure resources. This prevents IaC state drift.
 
-**Step 1 — Add IaC tags to your Terraform resources:**
+**Step 1 — Add IaC tags to your Terraform resources (recommended):**
 
-All resources in `infrastructure/terraform-demo/main.tf` need:
+All resources in `infrastructure/terraform-demo/main.tf` benefit from:
 ```hcl
 tags = {
   managed_by = "terraform"
@@ -564,11 +564,12 @@ tags = {
 }
 ```
 
-Run `terraform apply` to push the tags to Azure.
+Run `terraform apply` to push the tags to Azure. Tags are **optional** — the PR overlay
+lets you select the correct repo at click-time even if tags are missing or wrong.
 
 **Step 2 — Create a GitHub Personal Access Token:**
 1. GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens
-2. Repository access: select your `ruriskry` repo
+2. Repository access: select your IaC repo (or all repos you want searchable in the overlay)
 3. Permissions: Contents (Read & Write), Pull requests (Read & Write)
 4. Copy the token
 
@@ -588,8 +589,13 @@ EXECUTION_GATEWAY_ENABLED=true
 ```
 
 **Step 4 — Test it:**
-Run a scan from the dashboard. When an APPROVED verdict is issued for an IaC-managed
-resource, the gateway will create a PR in your repo with the proposed Terraform change.
+Run a scan from the dashboard. When an APPROVED verdict is issued, click
+**Create Terraform PR** in the drilldown panel. A confirmation overlay opens:
+- Shows the auto-detected repo and path (from resource tags or `IAC_GITHUB_REPO` setting)
+- Lets you search all repos accessible via your PAT to select a different one
+- Lets you edit the Terraform path before confirming
+
+After confirming, a PR is opened in the selected repo with the proposed Terraform change.
 Check the drilldown panel for execution status and a link to the PR.
 
 See `infrastructure/terraform-core/deploy.md` for full implementation guide.

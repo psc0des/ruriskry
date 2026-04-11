@@ -33,7 +33,8 @@ GET  /api/execution/by-action/{action_id}        Execution status for a governan
 GET  /api/execution/{execution_id}/record        Fetch a single execution record by execution_id.
 POST /api/execution/{execution_id}/approve       Human approves an escalated verdict.
 POST /api/execution/{execution_id}/dismiss       Human dismisses a verdict.
-POST /api/execution/{execution_id}/create-pr     Create Terraform PR from manual_required record.
+GET  /api/github/repos                           List GitHub repos accessible via GITHUB_TOKEN (for PR overlay).
+POST /api/execution/{execution_id}/create-pr     Create Terraform PR from manual_required record (body: iac_repo, iac_path optional).
 GET  /api/execution/{execution_id}/agent-fix-preview  Preview az CLI fix commands.
 POST /api/execution/{execution_id}/agent-fix-execute  Execute az CLI fix commands.
 POST /api/execution/{execution_id}/rollback           Reverse a previously applied agent fix.
@@ -2936,6 +2937,37 @@ async def dismiss_execution(execution_id: str, body: dict = Body(default={})) ->
 # ---------------------------------------------------------------------------
 
 
+@app.get("/api/github/repos")
+async def list_github_repos() -> dict:
+    """Return GitHub repos accessible via the configured GITHUB_TOKEN.
+
+    Used by the "Create Terraform PR" overlay to populate the repo dropdown.
+    Returns at most 100 repos (GitHub API page limit), sorted alphabetically.
+
+    Returns 503 if GitHub token is not configured.
+    Returns 502 on GitHub API error.
+    """
+    token = settings.github_token
+    if not token:
+        raise HTTPException(
+            status_code=503,
+            detail="GITHUB_TOKEN is not configured — cannot list repos",
+        )
+    try:
+        from github import Github, GithubException  # noqa: PLC0415
+        gh = Github(token)
+        user = gh.get_user()
+        repos = sorted(
+            [r.full_name for r in user.get_repos(type="all", sort="updated", per_page=100)],
+            key=str.lower,
+        )
+        return {"repos": repos}
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=502, detail=f"GitHub API error: {exc}"
+        ) from exc
+
+
 @app.post("/api/execution/{execution_id}/create-pr")
 async def create_pr_from_manual(
     execution_id: str, body: dict = Body(default={})
@@ -2947,15 +2979,24 @@ async def create_pr_from_manual(
 
     Request body (optional)::
 
-        {"reviewed_by": "alice@example.com"}
+        {
+            "reviewed_by": "alice@example.com",
+            "iac_repo": "owner/repo",     // override detected repo
+            "iac_path": "infra/terraform" // override detected path
+        }
 
     Returns 404 if execution_id is unknown.
     Returns 400 if the record is not ``manual_required`` or snapshot is missing.
     """
     gateway = _get_execution_gateway()
     reviewed_by = _validate_reviewed_by(body.get("reviewed_by", ""))
+    iac_repo = (body.get("iac_repo") or "").strip()
+    iac_path = (body.get("iac_path") or "").strip()
     try:
-        record = await gateway.create_pr_from_manual(execution_id, reviewed_by)
+        record = await gateway.create_pr_from_manual(
+            execution_id, reviewed_by,
+            iac_repo=iac_repo, iac_path=iac_path,
+        )
         return record.model_dump(mode="json")
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

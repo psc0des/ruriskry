@@ -395,16 +395,37 @@ export async function dismissExecution(executionId, reviewedBy = 'dashboard-user
  * Create a Terraform PR from a manual_required execution record.
  * @param {string} executionId - UUID of the ExecutionRecord
  * @param {string} reviewedBy - name/email of the person creating the PR
+ * @param {string} [iacRepo] - override detected repo (e.g. "owner/repo")
+ * @param {string} [iacPath] - override detected Terraform path
  * @returns {Promise<object>} Updated ExecutionRecord
  */
-export async function createPRFromManual(executionId, reviewedBy = 'dashboard-user') {
+export async function createPRFromManual(executionId, reviewedBy = 'dashboard-user', iacRepo = '', iacPath = '') {
   const res = await apiFetch(`${BASE}/execution/${encodeURIComponent(executionId)}/create-pr`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ reviewed_by: reviewedBy }),
+    body: JSON.stringify({
+      reviewed_by: reviewedBy,
+      ...(iacRepo ? { iac_repo: iacRepo } : {}),
+      ...(iacPath ? { iac_path: iacPath } : {}),
+    }),
   })
   if (!res.ok) {
     let detail = `API error ${res.status}: failed to create PR`
+    try { const body = await res.json(); if (body?.detail) detail = body.detail } catch { /* ignore */ }
+    throw new Error(detail)
+  }
+  return res.json()
+}
+
+/**
+ * List GitHub repos accessible via the configured GITHUB_TOKEN.
+ * Used by the Terraform PR overlay repo dropdown.
+ * @returns {Promise<{ repos: string[] }>}
+ */
+export async function fetchGithubRepos() {
+  const res = await apiFetch(`${BASE}/github/repos`)
+  if (!res.ok) {
+    let detail = `API error ${res.status}: failed to list GitHub repos`
     try { const body = await res.json(); if (body?.detail) detail = body.detail } catch { /* ignore */ }
     throw new Error(detail)
   }

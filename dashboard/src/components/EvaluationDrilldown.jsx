@@ -16,6 +16,7 @@
 
 import React, { useEffect, useRef, useState } from 'react'
 import { approveExecution, createPRFromManual, dismissExecution, executeAgentFix, fetchAgentFixPreview, fetchExecutionStatus, fetchExplanation, fetchTerraformStub, rollbackAgentFix } from '../api'
+import TerraformPROverlay from './TerraformPROverlay'
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -237,6 +238,7 @@ export default function EvaluationDrilldown({ evaluation, onBack, reviewedBy }) 
     const [terminalLines, setTerminalLines] = useState([])
     const [createPrLoading, setCreatePrLoading] = useState(false)
     const [createPrError, setCreatePrError] = useState(null)
+    const [showPROverlay, setShowPROverlay] = useState(false)
     const [rollbackExecuting, setRollbackExecuting] = useState(false)
     const [rollbackResult, setRollbackResult] = useState(null)
 
@@ -313,17 +315,24 @@ export default function EvaluationDrilldown({ evaluation, onBack, reviewedBy }) 
         }
     }
 
-    async function handleCreatePR(executionId) {
+    async function handleCreatePR(executionId, iacRepo = '', iacPath = '') {
         setCreatePrLoading(true)
         setCreatePrError(null)
         try {
-            const updated = await createPRFromManual(executionId, reviewedBy || 'dashboard-user')
+            const updated = await createPRFromManual(executionId, reviewedBy || 'dashboard-user', iacRepo, iacPath)
             setExecutionStatus(updated)
+            setShowPROverlay(false)
         } catch (err) {
             setCreatePrError(err.message)
+            // Keep overlay open so user can correct the repo/path
         } finally {
             setCreatePrLoading(false)
         }
+    }
+
+    function handleOpenPROverlay() {
+        setCreatePrError(null)
+        setShowPROverlay(true)
     }
 
     async function handleAgentFixPreview(executionId) {
@@ -910,7 +919,7 @@ export default function EvaluationDrilldown({ evaluation, onBack, reviewedBy }) 
                                 {/* Four action buttons */}
                                 <div className="flex flex-wrap gap-2">
                                     <button
-                                        onClick={() => handleCreatePR(executionStatus.execution_id)}
+                                        onClick={handleOpenPROverlay}
                                         disabled={createPrLoading}
                                         className="flex items-center gap-1.5 px-4 py-2 bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/40 text-blue-300 hover:text-blue-200 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
                                     >
@@ -1018,6 +1027,17 @@ export default function EvaluationDrilldown({ evaluation, onBack, reviewedBy }) 
                     </div>
                 )}
             </div>
+
+            {/* Terraform PR overlay — rendered at fixed position, outside scroll flow */}
+            {showPROverlay && executionStatus && (
+                <TerraformPROverlay
+                    detectedRepo={executionStatus.iac_repo ?? ''}
+                    detectedPath={executionStatus.iac_path ?? ''}
+                    loading={createPrLoading}
+                    onConfirm={(repo, path) => handleCreatePR(executionStatus.execution_id, repo, path)}
+                    onCancel={() => { setShowPROverlay(false); setCreatePrError(null) }}
+                />
+            )}
         </div>
     )
 }

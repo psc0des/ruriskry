@@ -395,13 +395,24 @@ class ExecutionGateway:
     # ------------------------------------------------------------------
 
     async def create_pr_from_manual(
-        self, execution_id: str, reviewed_by: str
+        self,
+        execution_id: str,
+        reviewed_by: str,
+        iac_repo: str = "",
+        iac_path: str = "",
     ) -> ExecutionRecord:
         """Create a Terraform PR from a manual_required execution record.
 
         Re-uses the existing ``_create_terraform_pr`` path so there is no
         code duplication.  If GitHub is not configured, the status stays
         ``manual_required`` with an explanatory note (same as approve flow).
+
+        Args:
+            execution_id: UUID of the ExecutionRecord.
+            reviewed_by: Name/email of the person creating the PR.
+            iac_repo: Optional override for the GitHub repo (e.g. "owner/repo").
+                      Wins over the record's stored iac_repo and global settings.
+            iac_path: Optional override for the Terraform path within the repo.
 
         Raises:
             KeyError: If execution_id is unknown.
@@ -456,6 +467,14 @@ class ExecutionGateway:
 
         record.reviewed_by = reviewed_by
         record.updated_at = datetime.now(timezone.utc)
+
+        # Apply user-supplied overrides from the overlay (win over stored tags + settings)
+        if iac_repo:
+            record.iac_repo = iac_repo
+            record.iac_managed = True
+            record.iac_tool = record.iac_tool or "terraform"
+        if iac_path:
+            record.iac_path = iac_path
 
         try:
             record = await self._create_terraform_pr(record, verdict)

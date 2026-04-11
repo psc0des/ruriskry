@@ -588,6 +588,14 @@ the dashboard drilldown. The human chooses how to act — nothing executes autom
 **IaC tag metadata** is stored on the `ExecutionRecord` at routing time (from `managed_by`,
 `iac_repo`, `iac_path` tags) so "Create Terraform PR" works even if the resource's tags change later.
 
+**PR overlay** — clicking "Create Terraform PR" opens a confirmation modal (`TerraformPROverlay.jsx`)
+before calling the API. The overlay shows the auto-detected repo/path and lets the user search their
+GitHub PAT's accessible repos via a searchable combobox (populated by `GET /api/github/repos`). If
+the user selects a different repo or path, those values are passed as `iac_repo`/`iac_path` in the
+`POST /api/execution/{id}/create-pr` body and applied to the record before PR creation —
+overriding tags and global settings. This means correct tags are best-practice but no longer
+required: any resource can have a PR created against the right repo at click-time.
+
 **Sub-resource tag lookup** — `_get_resource_tags()` strips sub-resource path segments
 (`/securityRules/`, `/subnets/`, etc.) from ARM IDs before querying Azure, because individual
 security rules and subnets carry no tags of their own — tags live on the parent resource.
@@ -617,7 +625,8 @@ Tag lookup in `dashboard_api._get_resource_tags()` is **environment-aware**:
 **Endpoints:** `GET /api/execution/pending-reviews`, `GET /api/execution/by-action/{action_id}`,
 `POST /api/execution/{id}/approve`, `POST /api/execution/{id}/dismiss`,
 `POST /api/execution/{id}/create-pr`, `GET /api/execution/{id}/agent-fix-preview`,
-`POST /api/execution/{id}/agent-fix-execute`, `POST /api/execution/{id}/rollback`, `GET /api/config`
+`POST /api/execution/{id}/agent-fix-execute`, `POST /api/execution/{id}/rollback`,
+`GET /api/github/repos`, `GET /api/config`
 **Env vars:** `GITHUB_TOKEN`, `IAC_GITHUB_REPO`, `IAC_TERRAFORM_PATH`, `EXECUTION_GATEWAY_ENABLED`
 **Implementation guide:** `Adding-Terraform-Feature.md`
 
