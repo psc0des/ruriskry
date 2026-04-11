@@ -107,7 +107,7 @@ llm_concurrency_limit = 6
 # Then set use_github_pat = true and re-run terraform apply.
 use_github_pat  = false
 iac_github_repo = "owner/repo"           # your IaC GitHub repo for Execution Gateway PRs
-iac_terraform_path        = "infrastructure/terraform-prod"
+iac_terraform_path        = "infrastructure/terraform-demo"
 execution_gateway_enabled = true
 
 # Org context (risk triage)
