@@ -254,16 +254,6 @@ resource "azapi_resource" "foundry_project" {
     }
   }
 
-  # Retry on 409 "provisioning state is not terminal" — happens on re-apply when
-  # the project was recently created and Azure hasn't reached terminal state yet.
-  # Also handles the case where the project already exists (idempotent PUT).
-  retry {
-    interval_seconds     = 30
-    max_interval_seconds = 180
-    multiplier           = 1.5
-    error_message_regex  = ["provisioning state is not terminal", "RequestConflict"]
-  }
-
   timeouts {
     create = "15m"
     update = "15m"

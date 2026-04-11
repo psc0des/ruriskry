@@ -510,6 +510,35 @@ fi
 # =============================================================================
 step "Stage 2 — Provisioning remaining infrastructure"
 
+# Wait for Foundry project to reach terminal state before terraform apply.
+# On re-apply, the project may still be in Creating/Updating from a prior run.
+# terraform apply would fail with 409 "provisioning state is not terminal".
+FOUNDRY_ACCOUNT=$(grep -E '^foundry_account_name\s*=' "$TF_DIR/terraform.tfvars" 2>/dev/null \
+  | sed 's/.*=\s*"\([^"]*\)".*/\1/' | tr -d '[:space:]')
+FOUNDRY_PROJECT=$(grep -E '^foundry_project_name\s*=' "$TF_DIR/terraform.tfvars" 2>/dev/null \
+  | sed 's/.*=\s*"\([^"]*\)".*/\1/' | tr -d '[:space:]')
+FOUNDRY_PROJECT=${FOUNDRY_PROJECT:-ruriskry}
+
+if [[ -n "$FOUNDRY_ACCOUNT" ]]; then
+  _RG=$(grep -E '^resource_group_name\s*=' "$TF_DIR/terraform.tfvars" 2>/dev/null \
+    | sed 's/.*=\s*"\([^"]*\)".*/\1/' | tr -d '[:space:]' || echo "ruriskry-core-engine-rg")
+  FOUNDRY_PROJECT_ID="/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${_RG}/providers/Microsoft.CognitiveServices/accounts/${FOUNDRY_ACCOUNT}/projects/${FOUNDRY_PROJECT}"
+  log "Checking Foundry project provisioning state..."
+  for i in $(seq 1 10); do
+    STATE=$(az rest --method get \
+      --url "https://management.azure.com${FOUNDRY_PROJECT_ID}?api-version=2025-04-01-preview" \
+      --query "properties.provisioningState" -o tsv 2>/dev/null || echo "NotFound")
+    if [[ "$STATE" == "Succeeded" || "$STATE" == "Failed" || "$STATE" == "Canceled" || "$STATE" == "NotFound" ]]; then
+      [[ "$STATE" == "Succeeded" ]] && ok "Foundry project is ready (${STATE})"
+      [[ "$STATE" == "NotFound" ]] && log "Foundry project not yet created — will be created by Terraform"
+      [[ "$STATE" == "Failed" || "$STATE" == "Canceled" ]] && warn "Foundry project in ${STATE} state — Terraform will attempt recovery"
+      break
+    fi
+    log "Foundry project still provisioning (${STATE}) — waiting 30s... (attempt $i/10)"
+    sleep 30
+  done
+fi
+
 cd "$TF_DIR"
 terraform apply -auto-approve
 ok "Infrastructure fully provisioned"
