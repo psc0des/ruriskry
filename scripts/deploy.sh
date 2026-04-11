@@ -809,7 +809,8 @@ fi
 step "Checking alert processing rule status"
 
 APR_NAME="apr-ruriskry-governance-fanout"
-APR_RG=$(terraform -chdir="$TF_DIR" output -raw resource_group_name 2>/dev/null || true)
+# APR lives in the monitor RG in the TARGET subscription (not the infra RG)
+APR_RG=$(terraform -chdir="$TF_DIR" output -raw monitor_resource_group_name 2>/dev/null || true)
 TARGET_SUB=$(grep -E '^target_subscription_id\s*=' "$TF_DIR/terraform.tfvars" 2>/dev/null \
   | sed 's/.*=\s*"\([^"]*\)".*/\1/' | tr -d '[:space:]')
 ALERT_SUB="${TARGET_SUB:-$SUBSCRIPTION_ID}"
@@ -826,5 +827,7 @@ if [[ -n "$APR_STATE" ]]; then
 else
   warn "Alert Processing Rule not found — Terraform may have lacked Monitoring Contributor on $ALERT_SUB."
   warn "Grant it to the deploying identity and re-run:"
-  warn "  terraform apply -chdir=$TF_DIR -target=azurerm_monitor_alert_processing_rule_action_group.ruriskry"
+  warn "  terraform apply -chdir=$TF_DIR \\"
+  warn "    -target=azurerm_resource_group.ruriskry_monitor \\"
+  warn "    -target=azurerm_monitor_alert_processing_rule_action_group.ruriskry"
 fi

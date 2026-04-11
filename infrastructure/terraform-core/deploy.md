@@ -37,6 +37,8 @@ LLM / Search / Cosmos / Key Vault  →  provisioned by Terraform
 | Container App | `ruriskry-core-backend-<suffix>` | FastAPI + all agents |
 | Static Web App | `ruriskry-core-dashboard-<suffix>` | React dashboard (global CDN) |
 | Monitor Action Group | `ruriskry-core-alert-handler-<suffix>` | Webhook receiver for Azure Monitor alerts → `/api/alert-trigger` |
+| Resource Group (monitor) | `ruriskry-monitor-rg-<suffix>` | Hosts APR in target subscription (required — APR must be in same sub as its scope) |
+| Alert Processing Rule | `apr-ruriskry-governance-fanout` | Routes all alerts in target subscription to the action group above |
 
 ---
 
@@ -276,9 +278,10 @@ All alert rules in target subscription
 - **Identity-free** — owned by Terraform state, tied to no personal account; survives staff changes
 - **Requires** `Monitoring Contributor` on the target subscription at `terraform apply` time only
 
-`deploy.sh` Step 9 reports APR status (present / missing). If missing after deploy:
+The APR is created in a dedicated resource group (`ruriskry-monitor-rg-<suffix>`) in the **target subscription**, satisfying Azure's requirement that the APR live in the same subscription as its scope. If the APR is missing after deploy, re-apply:
 ```bash
 terraform apply -chdir=infrastructure/terraform-core \
+  -target=azurerm_resource_group.ruriskry_monitor \
   -target=azurerm_monitor_alert_processing_rule_action_group.ruriskry
 ```
 

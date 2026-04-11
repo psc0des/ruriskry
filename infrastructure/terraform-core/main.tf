@@ -55,6 +55,16 @@ provider "azurerm" {
   subscription_id = var.subscription_id
 }
 
+# Aliased provider pointing at the TARGET (scanned) subscription.
+# Used only for resources that must live in the target sub (e.g. APR).
+# When target_subscription_id == subscription_id (same-sub), both providers
+# point at the same subscription — no extra permissions needed.
+provider "azurerm" {
+  alias           = "target"
+  features {}
+  subscription_id = var.target_subscription_id != "" ? var.target_subscription_id : var.subscription_id
+}
+
 # AzAPI inherits credentials from the az CLI login (same as AzureRM).
 # No extra authentication needed.
 provider "azapi" {}
@@ -950,26 +960,42 @@ resource "azurerm_monitor_action_group" "ruriskry" {
 # =============================================================================
 # 12c. Alert Processing Rule — route ALL alerts in target sub to RuriSkry
 # =============================================================================
-# An APR is subscription-scoped and catches every alert rule, including ones
-# created after deployment. It adds the RuriSkry action group to every firing
-# alert automatically — no per-rule wiring needed.
+# Azure requires an APR to live in the SAME subscription as its scope.
+# When target_subscription_id != subscription_id (cross-subscription), the APR
+# must be created under the target subscription via the aliased provider.
+# When same-subscription, the aliased provider resolves to the same sub — no
+# extra permissions are needed.
 #
-# This resource is tied to no personal identity. It is owned by Terraform state
-# and survives staff changes, re-deploys, and subscription ownership transfers.
+# A dedicated resource group is created in the target subscription to hold the
+# APR. This keeps monitoring infra separate from backend infra and works
+# regardless of whether target == infra subscription.
+#
+# The action group (azurerm_monitor_action_group.ruriskry) lives in the infra
+# subscription. Azure APR supports cross-subscription action group references.
 #
 # Scope: entire target subscription (scan_subscription_id).
 # If you want narrower scope (e.g. one resource group), change scopes to:
 #   "/subscriptions/<id>/resourceGroups/<rg>"
+
+# Resource group in the target subscription that hosts the APR.
+resource "azurerm_resource_group" "ruriskry_monitor" {
+  provider = azurerm.target
+  name     = "ruriskry-monitor-rg-${local.name_suffix}"
+  location = var.location
+  tags     = local.common_tags
+}
+
 resource "azurerm_monitor_alert_processing_rule_action_group" "ruriskry" {
+  provider            = azurerm.target
   name                = "apr-ruriskry-governance-fanout"
-  resource_group_name = azurerm_resource_group.ruriskry.name
+  resource_group_name = azurerm_resource_group.ruriskry_monitor.name
   scopes              = ["/subscriptions/${local.scan_subscription_id}"]
   description         = "Routes all Azure Monitor alerts to the RuriSkry AI governance engine. Managed by Terraform — do not edit manually."
   tags                = local.common_tags
 
   add_action_group_ids = [azurerm_monitor_action_group.ruriskry.id]
 
-  depends_on = [azurerm_monitor_action_group.ruriskry]
+  depends_on = [azurerm_monitor_action_group.ruriskry, azurerm_resource_group.ruriskry_monitor]
 }
 
 # =============================================================================

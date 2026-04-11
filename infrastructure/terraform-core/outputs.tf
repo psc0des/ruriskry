@@ -9,6 +9,11 @@ output "resource_group_name" {
   value       = azurerm_resource_group.ruriskry.name
 }
 
+output "monitor_resource_group_name" {
+  description = "Name of the monitor resource group in the target subscription (hosts the Alert Processing Rule)"
+  value       = azurerm_resource_group.ruriskry_monitor.name
+}
+
 output "location" {
   description = "Azure region where core resources were deployed"
   value       = azurerm_resource_group.ruriskry.location
@@ -216,20 +221,11 @@ output "next_steps" {
       See infrastructure/terraform-core/deploy.md § Manual Deploy
       for the Docker build/push and dashboard deploy commands.
 
-    ── Alert wiring (done automatically by deploy.sh) ────────────
-      deploy.sh step 9 creates one Alert Processing Rule in your target
-      subscription that routes ALL current and future alert rules to
-      the RuriSkry action group — no per-rule wiring needed.
-
-      To wire manually (requires alertsmanagement CLI extension):
-        az extension add --name alertsmanagement
-        az monitor alert-processing-rule create \
-          --name apr-ruriskry-governance-fanout \
-          --resource-group <rg-in-target-sub> \
-          --subscription <target_subscription_id> \
-          --rule-type AddActionGroups \
-          --scopes /subscriptions/<target_subscription_id> \
-          --action-groups $(terraform output -raw alert_action_group_id)
+    ── Alert wiring (Terraform-managed) ──────────────────────────
+      Alert Processing Rule is created automatically by Terraform.
+      It lives in ruriskry-monitor-rg-<suffix> in the TARGET subscription
+      and routes ALL current and future alert rules to the RuriSkry
+      action group — no per-rule wiring needed.
 
       Action Group ID (for reference):
         $(terraform output -raw alert_action_group_id)
