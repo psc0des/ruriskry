@@ -119,7 +119,7 @@ bash scripts/deploy.sh
 
 **Cleaning up / retrying a failed deploy:**
 ```bash
-bash scripts/cleanup.sh        # delete RG + purge soft-deleted resources (keeps tfstate)
+bash scripts/cleanup.sh        # delete main RG + monitor RG (target sub) + purge soft-deleted (keeps tfstate)
 bash scripts/cleanup.sh --all  # full wipe including tfstate storage
 bash scripts/deploy.sh         # fresh deploy after cleanup
 ```
