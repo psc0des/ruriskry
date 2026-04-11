@@ -1,373 +1,868 @@
-# Alert Wiring Guide
+# Alert Wiring — How Azure Monitor Alerts Reach RuriSkry
 
-This document explains how Azure Monitor alerts connect to RuriSkry, what is
-wired automatically, what requires manual steps, and how to add monitoring for
-new resources.
-
----
-
-## How the pipeline works
-
-```
-Azure resource changes state (VM stops, CPU spikes, disk fills, etc.)
-    ↓
-Azure Monitor alert rule evaluates the condition
-    ↓
-Alert fires → Action Group (ag-ruriskry-prod)
-    ↓
-Webhook POST → /api/alert-trigger
-    ↓
-MonitoringAgent investigates the resource
-    ↓
-ProposedAction → SRI scoring → Governance verdict
-    ↓
-Slack notification (if DENIED or ESCALATED)
-```
-
-The Action Group is the **single integration point**. Any alert rule that
-references it automatically feeds into RuriSkry. You never need to touch
-application code to add a new alert.
+This document explains every component involved in routing Azure Monitor alerts into
+the RuriSkry governance engine: what each piece is, why it exists, how the pieces
+connect, and how to configure each deployment scenario correctly.
 
 ---
 
-## What is automatic (no wiring needed)
+## Table of Contents
 
-| Capability | How |
-|---|---|
-| **Resource discovery** | Agents query Azure Resource Graph for all resources in scope on every scan. New resources appear automatically on the next scan. |
-| **Governance evaluation** | Any resource that an agent flags gets scored and evaluated — no registration needed. |
-| **Action Group webhook** | Already configured in `terraform-prod`. Any alert rule that references `ag-ruriskry-prod` POSTs to `/api/alert-trigger` automatically. |
-| **Slack notifications** | Fired automatically after every DENIED or ESCALATED verdict. |
+1. [What "alert wiring" means](#1-what-alert-wiring-means)
+2. [Full end-to-end chain](#2-full-end-to-end-chain)
+3. [Component reference](#3-component-reference)
+   - [3.1 Azure Monitor Alert Rules](#31-azure-monitor-alert-rules)
+   - [3.2 Action Group](#32-action-group)
+   - [3.3 Alert Processing Rule (APR)](#33-alert-processing-rule-apr)
+   - [3.4 POST /api/alert-trigger endpoint](#34-post-apialert-trigger-endpoint)
+   - [3.5 Alert normalizer](#35-alert-normalizer)
+   - [3.6 Deduplication and cooldown](#36-deduplication-and-cooldown)
+4. [Deployment scenarios](#4-deployment-scenarios)
+   - [4.1 Single subscription (default)](#41-single-subscription-default)
+   - [4.2 Cross-subscription / hub-spoke](#42-cross-subscription--hub-spoke)
+   - [4.3 You already have existing alert rules](#43-you-already-have-existing-alert-rules)
+5. [Demo environment wiring](#5-demo-environment-wiring)
+6. [Securing the webhook endpoint](#6-securing-the-webhook-endpoint)
+7. [Payload formats Azure Monitor sends](#7-payload-formats-azure-monitor-sends)
+8. [Narrowing alert scope](#8-narrowing-alert-scope)
+9. [Verifying the wiring](#9-verifying-the-wiring)
+10. [Troubleshooting](#10-troubleshooting)
 
 ---
 
-## What requires manual wiring
+## 1. What "alert wiring" means
 
-| Capability | Why it is manual | What to do |
-|---|---|---|
-| **Azure Monitor Agent (AMA)** | AMA must be installed on each VM for heartbeat and performance metrics to flow into Log Analytics. Without it, heartbeat alerts never fire. | See [Step 2](#step-2--install-azure-monitor-agent) below. |
-| **Data Collection Rule (DCR) association** | AMA needs to know which workspace to send data to. Each VM must be associated with the DCR. | See [Step 2](#step-2--install-azure-monitor-agent) below. |
-| **Alert rules** | Alert rules are scoped to specific resources or resource groups. A new VM has no alert rules by default. | See [Step 3](#step-3--create-alert-rules) below. |
+RuriSkry includes a **Monitoring Agent** that investigates Azure operational events
+(CPU spikes, VM heartbeat loss, service restarts) and routes proposed remediation
+actions through the full governance pipeline. For this to happen automatically, Azure
+Monitor must be told where to deliver alert payloads — that delivery target is
+RuriSkry's `/api/alert-trigger` endpoint.
+
+"Alert wiring" is the configuration that creates that delivery path.
+
+There are two separate wiring paths in this project:
+
+| Path | What it covers | Who configures it |
+|------|---------------|-------------------|
+| **Core APR** | Every alert in the monitored subscription | Terraform (`terraform-core`) — fully automatic |
+| **Demo environment** | Synthetic demo VMs (`terraform-demo`) | `deploy.sh --stage2` — automatic if demo is deployed first |
 
 ---
 
-## Adding a new VM
+## 2. Full end-to-end chain
 
-Follow these steps in `infrastructure/terraform-demo/main.tf`. Each step builds
-on the previous one.
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  Azure Subscription (monitored)                                      │
+│                                                                      │
+│  Alert Rule fires (metric threshold OR log query result)             │
+│         │                                                            │
+│         ▼                                                            │
+│  Alert Processing Rule  "apr-ruriskry-governance-fanout"             │
+│  scope: /subscriptions/<target_sub>                                  │
+│  effect: ADD action group → azurerm_monitor_action_group.ruriskry    │
+│         │                                                            │
+└─────────┼────────────────────────────────────────────────────────────┘
+          │  (cross-subscription action group reference is supported)
+          ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  Action Group  "<project>-core-alert-handler-<suffix>"               │
+│  webhook_receiver.service_uri =                                      │
+│    https://<container-app-fqdn>/api/alert-trigger                   │
+│  use_common_alert_schema = false                                     │
+│         │                                                            │
+└─────────┼────────────────────────────────────────────────────────────┘
+          │  HTTP POST (JSON payload)
+          ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  RuriSkry Backend  (Azure Container App)                             │
+│                                                                      │
+│  POST /api/alert-trigger                                             │
+│    ├── Webhook secret check (ALERT_WEBHOOK_SECRET, optional)         │
+│    ├── Payload normalizer  (_normalize_azure_alert_payload)          │
+│    ├── Deduplication check (same resource+metric, 30-min cooldown)   │
+│    └── Creates alert record with status "pending"                    │
+│                                                                      │
+│  Returns: {"status": "pending", "alert_id": "<uuid>"}               │
+│                                                                      │
+│  User opens Alerts tab in the dashboard                              │
+│    └── Clicks "Investigate" → POST /api/alerts/{id}/investigate      │
+│           └── MonitoringAgent runs governance pipeline               │
+└─────────────────────────────────────────────────────────────────────┘
+```
 
-### Step 1 — Define the VM resource
+Key point: the endpoint **does not auto-investigate**. It creates a `pending` record
+and returns immediately. Investigation is user-triggered. This is intentional — it
+gives the operator a chance to review the alert before committing AI-driven
+investigation resources.
 
-Create the VM resource as normal. Tag it so RuriSkry agents can classify it:
+---
+
+## 3. Component reference
+
+### 3.1 Azure Monitor Alert Rules
+
+Alert rules define what condition triggers an alert. RuriSkry works with any alert
+rule type Azure Monitor supports:
+
+| Rule type | Terraform resource | Example in `terraform-demo` |
+|-----------|-------------------|------------------------------|
+| Metric alert | `azurerm_monitor_metric_alert` | CPU > 80% on vm-web-01 (15-min window) |
+| Log Alert V2 | `azurerm_monitor_scheduled_query_rules_alert_v2` | No heartbeat from vm-dr-01 in 15 min |
+| Activity Log alert | `azurerm_monitor_activity_log_alert` | Any resource deletion in subscription |
+
+You do **not** need to modify your existing alert rules. The APR intercepts alert
+events at the subscription level and adds the RuriSkry action group on top of
+whatever action groups the rule already has. Your existing email/PagerDuty/Teams
+actions are unaffected.
+
+---
+
+### 3.2 Action Group
+
+**File:** `infrastructure/terraform-core/main.tf` — `azurerm_monitor_action_group.ruriskry`
 
 ```hcl
-resource "azurerm_linux_virtual_machine" "my_vm" {
-  name                = "vm-my-service"
-  resource_group_name = azurerm_resource_group.prod.name
-  location            = azurerm_resource_group.prod.location
-  # ... standard VM config ...
+resource "azurerm_monitor_action_group" "ruriskry" {
+  name       = "${local.name_prefix}-alert-handler-${local.name_suffix}"
+  short_name = "ruriskry"
 
-  tags = merge(local.common_tags, {
-    "criticality"  = "high"          # low | medium | high | critical
-    "cost-center"  = "my-team"
-    "environment"  = "production"
-    "iac_path"     = "infrastructure/terraform-demo"
-    "iac_repo"     = "yourorg/yourrepo"
-  })
+  webhook_receiver {
+    name                    = "ruriskry-webhook"
+    service_uri             = "https://${azurerm_container_app.backend.ingress[0].fqdn}/api/alert-trigger"
+    use_common_alert_schema = false
+  }
 }
 ```
 
-> **Why tags matter:** RuriSkry's Risk Triage engine reads `criticality` to
-> classify actions into tiers. A `critical` VM routes actions through full LLM
-> governance (Tier 3). A `low` VM gets fast-path deterministic evaluation
-> (Tier 1).
+The `service_uri` is computed at Terraform plan time from the Container App's FQDN.
+Every `terraform apply` keeps this URL current — if the Container App is redeployed
+and its FQDN changes, a subsequent `terraform apply` updates the action group
+automatically. No manual URL management is needed.
 
-### Step 2 — Install Azure Monitor Agent
+`use_common_alert_schema = false` preserves the richer, format-specific payload so
+the normalizer can extract metric values, thresholds, and severity levels that the
+Common Alert Schema strips out. See [section 7](#7-payload-formats-azure-monitor-sends)
+for detail on what each schema looks like.
 
-AMA sends heartbeats and performance metrics to Log Analytics. Without it,
-heartbeat alerts never fire and the MonitoringAgent has no telemetry to work
-with.
+---
+
+### 3.3 Alert Processing Rule (APR)
+
+**File:** `infrastructure/terraform-core/main.tf` — `azurerm_monitor_alert_processing_rule_action_group.ruriskry`
 
 ```hcl
-# Install AMA
-resource "azurerm_virtual_machine_extension" "ama_my_vm" {
-  name                       = "AzureMonitorLinuxAgent"
-  virtual_machine_id         = azurerm_linux_virtual_machine.my_vm.id
-  publisher                  = "Microsoft.Azure.Monitor"
-  type                       = "AzureMonitorLinuxAgent"
-  type_handler_version       = "1.0"
-  auto_upgrade_minor_version = true
-  tags                       = local.common_tags
-}
+resource "azurerm_monitor_alert_processing_rule_action_group" "ruriskry" {
+  provider            = azurerm.target          # lives in the MONITORED subscription
+  name                = "apr-ruriskry-governance-fanout"
+  resource_group_name = azurerm_resource_group.ruriskry_monitor.name
+  scopes              = ["/subscriptions/${local.scan_subscription_id}"]
+  description         = "Routes all Azure Monitor alerts to the RuriSkry AI governance engine. Managed by Terraform — do not edit manually."
 
-# Associate VM with the shared Data Collection Rule
-resource "azurerm_monitor_data_collection_rule_association" "my_vm" {
-  name                    = "dcra-vm-my-service"
-  target_resource_id      = azurerm_linux_virtual_machine.my_vm.id
-  data_collection_rule_id = azurerm_monitor_data_collection_rule.vm_signals.id
-}
-
-# Grant AMA permission to publish metrics
-resource "azurerm_role_assignment" "ama_my_vm" {
-  scope                = azurerm_linux_virtual_machine.my_vm.id
-  role_definition_name = "Monitoring Metrics Publisher"
-  principal_id         = azurerm_linux_virtual_machine.my_vm.identity[0].principal_id
+  add_action_group_ids = [azurerm_monitor_action_group.ruriskry.id]
 }
 ```
 
-> **Prerequisite:** The VM must have a `SystemAssigned` managed identity. Add
-> `identity { type = "SystemAssigned" }` to the VM resource block.
+**What an APR does:** An Alert Processing Rule is an Azure resource that intercepts
+fired alerts and modifies how they are handled — adding or suppressing action groups,
+changing severity, etc. — without touching the alert rules themselves. Think of it
+as middleware for the alerting pipeline.
 
-### Step 3 — Create alert rules
+**Why it lives in the target subscription:** Azure requires an APR to be in the same
+subscription as its `scopes`. When you monitor a different subscription from the one
+RuriSkry is deployed in (hub-spoke), Terraform uses the aliased `azurerm.target`
+provider to create the APR in the correct subscription while the backend action group
+stays in the RuriSkry infra subscription. Azure APRs support cross-subscription
+action group references.
 
-Create at least the heartbeat alert. Add the CPU alert if the VM is a
-workload VM that can legitimately spike.
+**Why a dedicated resource group:** The APR is placed in `ruriskry-monitor-rg-<suffix>`,
+a resource group in the target subscription created solely for monitoring
+infrastructure. This keeps it separate from the RuriSkry backend infra and from
+the customer's workload resources.
 
-#### Heartbeat alert (recommended for all VMs)
+**Scope:** The default scope is the entire target subscription. Every alert rule in
+that subscription — existing and future — is intercepted. See
+[section 8](#8-narrowing-alert-scope) if you want a narrower scope.
 
-Fires when the VM sends no heartbeat for 15 minutes — detects stopped,
-deallocated, or crashed VMs. This is the **most important alert** for
-operational health.
+---
+
+### 3.4 POST /api/alert-trigger endpoint
+
+**File:** `src/api/dashboard_api.py` — `trigger_alert()`
+
+This is the webhook target that Azure Monitor POSTs to. On receipt it:
+
+1. Verifies the `Authorization: Bearer <secret>` header if `ALERT_WEBHOOK_SECRET` is set.
+2. Runs `_normalize_azure_alert_payload()` to flatten the Azure envelope into RuriSkry's
+   internal format (`resource_id`, `metric`, `value`, `threshold`, `severity`, etc.).
+3. Checks for a duplicate alert (same resource + metric already `pending`/`investigating`,
+   or resolved within the last 30 minutes). If found, returns the existing record with
+   `{"duplicate": true}`.
+4. Creates a new `pending` alert record (persisted to disk).
+5. Returns `{"status": "pending", "alert_id": "<uuid>"}` immediately.
+
+The endpoint is **exempt from the global API key middleware** — it has its own
+`ALERT_WEBHOOK_SECRET` mechanism because Azure Monitor cannot send arbitrary headers
+beyond `Authorization`.
+
+---
+
+### 3.5 Alert normalizer
+
+**File:** `src/api/dashboard_api.py` — `_normalize_azure_alert_payload()`
+
+Azure Monitor sends different JSON shapes depending on the alert rule type and whether
+`use_common_alert_schema` is on. The normalizer handles four shapes and converts all
+of them to the same flat internal dict. See
+[section 7](#7-payload-formats-azure-monitor-sends) for the payload shapes and how
+each is parsed.
+
+**The Log Analytics workspace pivot** is worth understanding in detail. When a
+Log Alert V2 fires on a `count = 0` query (e.g. "no heartbeats in 15 minutes"),
+there are no result rows, so `AffectedConfigurationItems` is empty. Azure also sets
+`alertTargetIDs` to the *workspace* ARM ID, not the VM that stopped reporting.
+
+The normalizer detects this by checking whether `alertTargetIDs[0]` contains
+`operationalinsights/workspaces`, then regex-extracts the VM name from the alert
+rule name or description and reconstructs the correct VM ARM ID using the subscription
+and resource group found in the workspace ARM ID. Without this pivot, the Monitoring
+Agent would investigate the Log Analytics workspace instead of the VM.
+
+---
+
+### 3.6 Deduplication and cooldown
+
+**File:** `src/api/dashboard_api.py` — inside `trigger_alert()`
+
+Azure Monitor evaluates alert rules on a schedule (every 5 minutes by default). During
+a persistent outage a rule fires → resolves → fires again on every evaluation cycle,
+generating a new alert every 5 minutes. The deduplication logic prevents alert floods:
+
+- If an alert for the same `(resource_id, metric)` is currently `pending` or
+  `investigating`, the incoming alert is dropped and the existing record's ID is
+  returned.
+- If the most recent alert for that combination resolved or was investigated within the
+  last **30 minutes**, it is also suppressed (the cooldown window).
+
+The cooldown comparison uses ISO 8601 UTC strings
+(`existing.get("resolved_at") >= cutoff.isoformat()`), which works because ISO 8601
+strings sort lexicographically in chronological order.
+
+To adjust the cooldown window, change `_ALERT_COOLDOWN_MINUTES` in `dashboard_api.py`.
+
+---
+
+## 4. Deployment scenarios
+
+### 4.1 Single subscription (default)
+
+RuriSkry and the resources it monitors live in the same Azure subscription.
+
+**Configuration:** Leave `target_subscription_id` empty in
+`infrastructure/terraform-core/terraform.tfvars`.
 
 ```hcl
-resource "azurerm_monitor_scheduled_query_rules_alert_v2" "my_vm_heartbeat" {
-  name                = "alert-vm-my-service-heartbeat"
-  resource_group_name = azurerm_resource_group.prod.name
-  location            = azurerm_resource_group.prod.location
-  description         = "Detects when vm-my-service stops sending heartbeats"
-  severity            = 1   # 0=Critical, 1=Error, 2=Warning, 3=Info
-  enabled             = true
-
-  evaluation_frequency = "PT5M"   # evaluate every 5 minutes
-  window_duration      = "PT15M"  # look back 15 minutes
-
-  scopes = [azurerm_log_analytics_workspace.prod.id]
-
-  criteria {
-    query = <<-QUERY
-      Heartbeat
-      | where _ResourceId =~ "${azurerm_linux_virtual_machine.my_vm.id}"
-      | where TimeGenerated > ago(15m)
-    QUERY
-
-    time_aggregation_method = "Count"
-    threshold               = 0
-    operator                = "LessThanOrEqual"  # fires when count == 0
-
-    failing_periods {
-      minimum_failing_periods_to_trigger_alert = 1
-      number_of_evaluation_periods             = 1
-    }
-  }
-
-  action {
-    action_groups = [azurerm_monitor_action_group.prod.id]  # wires to RuriSkry
-  }
-
-  tags = local.common_tags
-
-  depends_on = [
-    azurerm_virtual_machine_extension.ama_my_vm,
-    azurerm_monitor_data_collection_rule_association.my_vm
-  ]
-}
+# terraform.tfvars
+subscription_id        = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+# target_subscription_id not set — defaults to subscription_id
 ```
 
-#### CPU alert (optional — for workload VMs that can spike)
+**What Terraform does:**
+- The `azurerm.target` provider alias resolves to the same subscription as `azurerm`.
+- The APR, its resource group, and the action group are all in the same subscription.
+- No extra IAM grants are needed beyond the standard Terraform deployment permissions.
 
-Fires when average CPU exceeds 80% over 15 minutes. Use this for VMs running
-active workloads where high CPU is a signal to scale up.
+**Deploy:**
+```bash
+bash scripts/deploy.sh
+```
+
+---
+
+### 4.2 Cross-subscription / hub-spoke
+
+RuriSkry runs in a central platform subscription; the resources it governs live in
+one or more workload subscriptions.
+
+**Configuration:**
 
 ```hcl
-resource "azurerm_monitor_metric_alert" "my_vm_cpu" {
-  name                = "alert-vm-my-service-cpu-high"
-  resource_group_name = azurerm_resource_group.prod.name
-  scopes              = [azurerm_linux_virtual_machine.my_vm.id]
-  description         = "Triggers RuriSkry when vm-my-service CPU > 80%"
-  severity            = 2
-  frequency           = "PT5M"
-  window_size         = "PT15M"
-
-  criteria {
-    metric_namespace = "Microsoft.Compute/virtualMachines"
-    metric_name      = "Percentage CPU"
-    aggregation      = "Average"
-    operator         = "GreaterThan"
-    threshold        = 80
-  }
-
-  action {
-    action_group_id = azurerm_monitor_action_group.prod.id
-  }
-
-  tags = local.common_tags
-}
+# terraform.tfvars
+subscription_id        = "aaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"   # platform / RuriSkry sub
+target_subscription_id = "bbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"   # workload sub to scan
 ```
 
-> **Important:** A CPU alert cannot detect a deallocated VM. A deallocated VM
-> emits zero metrics — Azure Monitor puts the alert in "No data" state, not
-> "Fired". Always create the heartbeat alert in addition to any metric alerts.
+**What Terraform does automatically:**
+- The `azurerm.target` provider points at the workload subscription.
+- `azurerm_resource_group.ruriskry_monitor` is created in the workload subscription.
+- The APR is created in the workload subscription with `scopes` set to that subscription.
+- The APR references the action group in the platform subscription — Azure APRs
+  support cross-subscription action group references.
+- The Container App Managed Identity is granted `Reader`, `Network Contributor`, and
+  `VM Contributor` on the workload subscription automatically by `main.tf`.
 
-### Step 4 — Apply
+**One manual prerequisite:** The identity running `terraform apply` needs
+`Monitoring Contributor` on the workload subscription to create the APR. Grant it once:
 
 ```bash
-cd infrastructure/terraform-demo
-terraform plan   # verify only your new resources appear
-terraform apply
+az role assignment create \
+  --assignee "$(az ad signed-in-user show --query id -o tsv)" \
+  --role "Monitoring Contributor" \
+  --scope "/subscriptions/<workload_subscription_id>"
 ```
 
-Heartbeat data takes ~5 minutes to appear in Log Analytics after AMA is
-installed. The first alert evaluation runs within 5 minutes of that.
+If `terraform apply` fails at the APR resource with `AuthorizationFailed`, this is
+the missing grant. Fix it and re-run with targeting:
+
+```bash
+terraform apply -chdir=infrastructure/terraform-core \
+  -target=azurerm_resource_group.ruriskry_monitor \
+  -target=azurerm_monitor_alert_processing_rule_action_group.ruriskry
+```
 
 ---
 
-## Adding a non-VM resource (storage, database, Container App)
+### 4.3 You already have existing alert rules
 
-RuriSkry's agents already scan these resource types automatically via Resource
-Graph. You only need alert rules if you want **event-driven** (real-time) alerts
-in addition to periodic scans.
+If your subscription already has alert rules with their own action groups
+(email, PagerDuty, Slack, etc.), you do not need to change them.
 
-For non-VM resources, use metric alerts scoped to the resource:
+The APR **adds** the RuriSkry action group to alert delivery. It does not replace or
+suppress existing action groups. Your existing notification paths continue to fire
+exactly as before; RuriSkry is additive.
+
+Concretely: if an alert rule fires and its action group emails on-call, that email
+still goes out. Azure also evaluates the APR, which appends the RuriSkry action
+group, causing a second HTTP POST to `/api/alert-trigger` at the same time.
+
+If you want RuriSkry to receive alerts from only a specific subset of rules rather
+than all rules in the subscription, see [section 8](#8-narrowing-alert-scope).
+
+---
+
+## 5. Demo environment wiring
+
+`infrastructure/terraform-demo` deploys a realistic mini production environment:
+two VMs (`vm-web-01`, `vm-dr-01`), a Log Analytics workspace, Azure Monitor Agent
+extensions, data collection rules, and three alert rules.
+
+This module is optional. It exists to demonstrate concrete end-to-end alert flows
+without needing a live production environment.
+
+### Alert rules in terraform-demo
+
+| Rule | Type | Condition | Expected governance outcome |
+|------|------|-----------|----------------------------|
+| `alert-vm-web-01-cpu-high` | Metric alert | Average CPU > 80% over 15 min | Monitoring Agent proposes scale-up → **APPROVED** (legitimate load) |
+| `alert-vm-dr-01-heartbeat` | Log Alert V2 | No heartbeat from dr-01 in 15 min | Cost Agent flags as idle → proposes deletion → **DENIED** (disaster recovery policy) |
+| `alert-vm-web-01-heartbeat` | Log Alert V2 | No heartbeat from web-01 in 15 min | Monitoring Agent detects stopped web server → proposes restart_service → **APPROVED** |
+
+### How the wiring works
+
+The demo environment has its own action group (`ag-ruriskry-prod`) with a
+`dynamic webhook_receiver` block:
 
 ```hcl
-# Example: Storage account — alert on egress anomaly
-resource "azurerm_monitor_metric_alert" "storage_egress" {
-  name                = "alert-storage-my-account-egress"
-  resource_group_name = azurerm_resource_group.prod.name
-  scopes              = [azurerm_storage_account.my_account.id]
-  severity            = 2
-  frequency           = "PT5M"
-  window_size         = "PT15M"
-
-  criteria {
-    metric_namespace = "Microsoft.Storage/storageAccounts"
-    metric_name      = "Egress"
-    aggregation      = "Total"
-    operator         = "GreaterThan"
-    threshold        = 10737418240  # 10 GB
-  }
-
-  action {
-    action_group_id = azurerm_monitor_action_group.prod.id
+dynamic "webhook_receiver" {
+  for_each = var.alert_webhook_url != "" ? [1] : []
+  content {
+    name                    = "ruriskry-alert-trigger"
+    service_uri             = var.alert_webhook_url
+    use_common_alert_schema = false
   }
 }
 ```
 
-Non-VM resources do not need AMA or DCR — those are VM-only components.
+The webhook receiver only exists when `alert_webhook_url` is set in
+`terraform-demo/terraform.tfvars`. The value must be
+`https://<backend-url>/api/alert-trigger`.
 
----
+### Automatic wiring via deploy.sh --stage2
 
-## How RuriSkry identifies the resource from an alert
+When you run `deploy.sh` after deploying terraform-demo, the script:
 
-When an alert fires, Azure POSTs a JSON payload to `/api/alert-trigger`.
-The `_normalize_azure_alert_payload()` function in `dashboard_api.py` extracts
-the affected resource ID.
+1. Reads `BACKEND_URL` from `terraform-core` outputs.
+2. Checks whether `alert_webhook_url` is already set in `terraform-demo/terraform.tfvars`.
+3. If not, injects `alert_webhook_url = "<BACKEND_URL>/api/alert-trigger"`.
+4. Runs `terraform apply -auto-approve -target=azurerm_monitor_action_group.prod` in
+   `terraform-demo` to activate the webhook receiver immediately (no full apply needed).
 
-**Metric alerts** — straightforward. `alertTargetIDs[0]` is the resource ARM ID.
+### Manual wiring (if auto-wiring was skipped)
 
-**Log Alerts V2 (heartbeat queries)** — Azure always sends the Log Analytics
-workspace ARM ID as the target, never the VM. The normalizer extracts the VM
-name from `essentials.description` or the alert rule name using a regex, then
-reconstructs the correct VM ARM ID.
+```bash
+# 1. Get the backend URL
+BACKEND_URL=$(terraform -chdir=infrastructure/terraform-core output -raw backend_url)
 
-This is why the alert `description` field matters:
+# 2. Add to terraform-demo/terraform.tfvars
+echo "alert_webhook_url = \"$BACKEND_URL/api/alert-trigger\"" \
+  >> infrastructure/terraform-demo/terraform.tfvars
 
-```hcl
-description = "Detects when vm-my-service stops sending heartbeats"
-#                                 ^^^^^^^^^^^^^^
-#                                 Must contain the VM name — used by the normalizer
+# 3. Apply only the action group (fast — no VM changes)
+terraform -chdir=infrastructure/terraform-demo apply -auto-approve \
+  -target=azurerm_monitor_action_group.prod
 ```
 
-If the description does not contain the VM name, the normalizer falls back to
-the alert rule name. Keep both consistent.
-
 ---
 
-## Large environments — automatic wiring via Azure Policy
+## 6. Securing the webhook endpoint
 
-If your fleet has many VMs and you cannot maintain per-VM Terraform resources,
-use Azure Policy to automate AMA installation and a single resource-group-scoped
-heartbeat alert to cover all VMs:
+By default `/api/alert-trigger` is unauthenticated. This is acceptable when the
+backend is on a private network or during development. For public deployments, enable
+the webhook secret.
 
-**Azure Policy (auto-installs AMA on any new VM in the resource group):**
+### Enable ALERT_WEBHOOK_SECRET
+
+```bash
+# Generate a strong secret
+SECRET=$(python -c "import secrets; print(secrets.token_hex(32))")
+
+# Store in Key Vault (recommended)
+az keyvault secret set \
+  --vault-name "<kv-name>" \
+  --name "alert-webhook-secret" \
+  --value "$SECRET"
+
+# Wire into the Container App
+az containerapp secret set \
+  --name "<container-app-name>" \
+  --resource-group "<resource-group>" \
+  --secrets "alert-webhook-secret=keyvaultref:<kv-secret-uri>,identityref:<managed-identity-id>"
+
+az containerapp update \
+  --name "<container-app-name>" \
+  --resource-group "<resource-group>" \
+  --set-env-vars "ALERT_WEBHOOK_SECRET=secretref:alert-webhook-secret"
+```
+
+Or set `ALERT_WEBHOOK_SECRET` in your `.env` for local development.
+
+### Tell Azure Monitor to send the secret
+
+Add the `aad_auth` block to the webhook receiver in Terraform:
 
 ```hcl
-resource "azurerm_resource_group_policy_assignment" "ama_auto" {
-  name                 = "auto-ama-linux"
-  resource_group_id    = azurerm_resource_group.prod.id
-  policy_definition_id = "/providers/Microsoft.Authorization/policyDefinitions/ae8a10e6-19d6-44a3-a02d-a2bdfc707742"
-  location             = azurerm_resource_group.prod.location
-  identity { type = "SystemAssigned" }
+webhook_receiver {
+  name                    = "ruriskry-webhook"
+  service_uri             = "https://<fqdn>/api/alert-trigger"
+  use_common_alert_schema = false
+  aad_auth {
+    object_id = "<managed-identity-or-service-principal-object-id>"
+  }
 }
 ```
 
-**Single heartbeat alert covering all VMs in the resource group:**
+### How the check works
 
-```hcl
-resource "azurerm_monitor_scheduled_query_rules_alert_v2" "all_vms_heartbeat" {
-  name                = "alert-all-vms-heartbeat"
-  resource_group_name = azurerm_resource_group.prod.name
-  location            = azurerm_resource_group.prod.location
-  description         = "Detects any VM in ruriskry-prod-rg that stops sending heartbeats"
-  severity            = 1
-  enabled             = true
+When `ALERT_WEBHOOK_SECRET` is set, the endpoint verifies:
 
-  evaluation_frequency = "PT5M"
-  window_duration      = "PT15M"
-  scopes               = [azurerm_log_analytics_workspace.prod.id]
+```python
+expected = f"Bearer {settings.alert_webhook_secret}"
+if authorization != expected:
+    raise HTTPException(status_code=401, detail="Invalid or missing webhook secret")
+```
 
-  criteria {
-    query = <<-QUERY
-      Heartbeat
-      | where _ResourceId startswith tolower(
-          "/subscriptions/${var.subscription_id}/resourcegroups/${azurerm_resource_group.prod.name}/")
-      | summarize LastHeartbeat = max(TimeGenerated) by Computer, _ResourceId
-      | where LastHeartbeat < ago(15m)
-    QUERY
+The `Authorization` header must be `Bearer <your-secret>`. Requests without the
+correct header receive a 401 before any processing happens.
 
-    time_aggregation_method = "Count"
-    threshold               = 0
-    operator                = "GreaterThan"  # fires when any VM is missing
+---
 
-    failing_periods {
-      minimum_failing_periods_to_trigger_alert = 1
-      number_of_evaluation_periods             = 1
+## 7. Payload formats Azure Monitor sends
+
+`_normalize_azure_alert_payload()` in `src/api/dashboard_api.py` handles four payload
+shapes. Understanding which shape each alert rule type produces helps when debugging
+why an alert is parsed incorrectly.
+
+### Shape 1 — Already-flat (test payloads / direct API calls)
+
+When calling `/api/alert-trigger` directly (e.g. `curl`, integration tests), the
+Azure envelope can be omitted:
+
+```json
+{
+  "resource_id": "/subscriptions/.../virtualMachines/vm-web-01",
+  "metric": "Percentage CPU",
+  "value": 95.0,
+  "threshold": 80.0,
+  "severity": "2",
+  "resource_group": "ruriskry-prod-rg"
+}
+```
+
+Detection: `"resource_id" in raw or "metric" in raw`. Passed through unchanged.
+
+---
+
+### Shape 2 — Common Alert Schema (use_common_alert_schema = true)
+
+Standardised envelope with `data.essentials` and `data.alertContext`. Fired by any
+alert type when `use_common_alert_schema = true` is set on the action group.
+
+RuriSkry uses `use_common_alert_schema = false` by default because the common schema
+drops metric values and thresholds. If you switch, set `use_common_alert_schema = true`
+in Terraform — the normalizer handles both.
+
+```json
+{
+  "schemaId": "azureMonitorCommonAlertSchema",
+  "data": {
+    "essentials": {
+      "alertRule": "alert-vm-web-01-cpu-high",
+      "severity": "Sev2",
+      "targetResourceName": "vm-web-01",
+      "targetResourceGroup": "ruriskry-prod-rg",
+      "firedDateTime": "2026-04-11T10:30:00Z",
+      "alertTargetIDs": ["/subscriptions/.../virtualMachines/vm-web-01"]
+    },
+    "alertContext": {
+      "condition": {
+        "metricName": "Percentage CPU",
+        "metricValue": 95.0,
+        "threshold": 80.0
+      }
     }
   }
+}
+```
 
-  action {
-    action_groups = [azurerm_monitor_action_group.prod.id]
+---
+
+### Shape 3 — Non-common Log Alert V2 (use_common_alert_schema = false + scheduled query rule)
+
+Fired by `azurerm_monitor_scheduled_query_rules_alert_v2`. The `alertContext` has
+`AffectedConfigurationItems` (VM names from query results) and `SearchQuery` (raw KQL).
+
+When the query fires on *silence* (`count = 0`, e.g. no heartbeat), both
+`AffectedConfigurationItems` and `ResultCount` are empty/zero. Azure sets
+`alertTargetIDs` to the **Log Analytics workspace** ARM ID, not the VM.
+
+```json
+{
+  "schemaId": "Microsoft.Insights/scheduledQueryRules",
+  "data": {
+    "essentials": {
+      "alertRule": "alert-vm-dr-01-heartbeat",
+      "severity": "Sev2",
+      "description": "Detects when vm-dr-01 stops sending heartbeats — idle/stopped VM",
+      "alertTargetIDs": [
+        "/subscriptions/xxx/resourceGroups/yyy/providers/Microsoft.OperationalInsights/workspaces/ruriskry-log-abc"
+      ],
+      "firedDateTime": "2026-04-11T10:30:00Z"
+    },
+    "alertContext": {
+      "AffectedConfigurationItems": [],
+      "SearchQuery": "Heartbeat | where _ResourceId =~ '...' | where TimeGenerated > ago(15m)",
+      "ResultCount": 0,
+      "Threshold": 0,
+      "Operator": "LessThanOrEqual"
+    }
   }
 }
 ```
 
-With this setup, a new VM added to the resource group — by Terraform, the portal,
-or a script — is automatically monitored within ~5 minutes of creation.
+**Workspace pivot logic:** The normalizer detects `operationalinsights/workspaces` in
+the target ID, then regex-searches the `description` and `alertRule` fields for a VM
+name pattern (`\b([a-z][a-z0-9]+-[a-z0-9][-a-z0-9]*)\b`). If a match is found (e.g.
+`vm-dr-01`), it extracts the subscription ID and resource group from the workspace
+ARM ID and constructs the correct VM ARM ID:
+
+```
+/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.Compute/virtualMachines/<name>
+```
+
+If the regex does not match, `resource_id` falls back to the workspace ARM ID. Check
+backend logs for `alert-normalizer: workspace pivot` to confirm whether extraction
+succeeded.
+
+The regex matches names like `vm-dr-01`, `web-server-01`, `app-node-02` — anything
+with at least one hyphen. Single-word names (e.g. `myvm`) are not matched; include the
+full name in the `description` field to ensure the pivot works.
 
 ---
 
-## Troubleshooting
+### Shape 4 — Classic Metric Alert (data.context)
 
-**Alert fired but no investigation appeared in the Alerts tab**
+Fired by `azurerm_monitor_metric_alert`. Has `data.context.resourceId` and
+`data.context.condition.allOf[]` instead of `data.essentials`.
 
-1. Check the backend logs: `az containerapp logs show --name <app> --resource-group <rg> --follow`
-2. Verify the webhook URL in the action group matches your backend URL
-3. The alert payload must contain the VM name in `essentials.description` or the alert rule name — check the raw payload in Azure Monitor → Alerts → Alert history → JSON
+```json
+{
+  "data": {
+    "context": {
+      "resourceId": "/subscriptions/.../virtualMachines/vm-web-01",
+      "resourceGroupName": "ruriskry-prod-rg",
+      "name": "alert-vm-web-01-cpu-high",
+      "timestamp": "2026-04-11T10:30:00Z",
+      "severity": "Sev2",
+      "condition": {
+        "allOf": [
+          {
+            "metricName": "Percentage CPU",
+            "metricValue": 95.0,
+            "threshold": 80.0
+          }
+        ]
+      }
+    },
+    "status": "Activated"
+  }
+}
+```
 
-**Heartbeat alert fires immediately after VM creation**
+Detection: `data.context.resourceId` or `data.context.condition` present.
 
-Expected — AMA takes 3–5 minutes to install and start sending heartbeats. The
-alert evaluates before the first heartbeat arrives. It resolves automatically
-once heartbeats begin flowing.
+---
 
-**Alert fires but MonitoringAgent proposes nothing**
+## 8. Narrowing alert scope
 
-The agent found the resource but determined no action was needed. Check the
-alert investigation in the Alerts tab for the agent's reasoning. Common causes:
-VM restarted itself before the agent ran; resource is tagged `criticality=low`
-and the issue is below threshold.
+The default APR scope is the entire target subscription. To narrow it, change
+`scopes` in `main.tf` before your first `terraform apply`:
 
-**VM is deallocated but no alert fires**
+```hcl
+# One resource group only
+scopes = ["/subscriptions/${local.scan_subscription_id}/resourceGroups/your-prod-rg"]
 
-The VM likely has only a CPU metric alert (not a heartbeat alert). A deallocated
-VM emits no metrics. Add the heartbeat alert from [Step 3](#step-3--create-alert-rules).
+# Multiple resource groups
+scopes = [
+  "/subscriptions/${local.scan_subscription_id}/resourceGroups/rg-prod-api",
+  "/subscriptions/${local.scan_subscription_id}/resourceGroups/rg-prod-data",
+]
+
+# One specific resource
+scopes = [
+  "/subscriptions/${local.scan_subscription_id}/resourceGroups/prod-rg/providers/Microsoft.Compute/virtualMachines/vm-web-01"
+]
+```
+
+You can also add `condition` blocks to filter by severity, alert rule name, or
+resource type without changing the scope:
+
+```hcl
+resource "azurerm_monitor_alert_processing_rule_action_group" "ruriskry" {
+  # ... existing config ...
+
+  condition {
+    severity {
+      operator = "Equals"
+      values   = ["Sev0", "Sev1", "Sev2"]   # ignore Sev3 (informational) and Sev4 (verbose)
+    }
+  }
+}
+```
+
+Other supported condition types: `alert_rule_name`, `alert_rule_id`, `description`,
+`monitor_service`, `monitor_condition`, `signal_type`, `target_resource_type`. See the
+[AzureRM provider docs](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/monitor_alert_processing_rule_action_group)
+for the full list.
+
+---
+
+## 9. Verifying the wiring
+
+### Check via deploy.sh
+
+Running `bash scripts/deploy.sh` (or `--stage2`) at any time re-checks and prints:
+
+```
+✓  Alert Processing Rule in place: apr-ruriskry-governance-fanout
+✓  All alerts in sub <id> route to RuriSkry automatically (managed by Terraform).
+```
+
+### Manual CLI verification
+
+```bash
+# Read subscription values from tfvars
+TARGET_SUB=$(grep target_subscription_id infrastructure/terraform-core/terraform.tfvars \
+  | sed "s/.*= *\"//;s/\".*//")
+INFRA_SUB=$(grep '^subscription_id' infrastructure/terraform-core/terraform.tfvars \
+  | sed "s/.*= *\"//;s/\".*//")
+ALERT_SUB=${TARGET_SUB:-$INFRA_SUB}
+
+# Get the monitor resource group name from Terraform output
+APR_RG=$(terraform -chdir=infrastructure/terraform-core output -raw monitor_resource_group_name)
+
+# 1. Confirm the APR exists
+az monitor alert-processing-rule show \
+  --name "apr-ruriskry-governance-fanout" \
+  --resource-group "$APR_RG" \
+  --subscription "$ALERT_SUB" \
+  --output table
+
+# 2. Confirm the action group webhook URL is correct
+BACKEND_RG=$(terraform -chdir=infrastructure/terraform-core output -raw resource_group_name 2>/dev/null \
+  || echo "ruriskry-core-engine-rg")
+az monitor action-group list \
+  --resource-group "$BACKEND_RG" \
+  --query "[].{name:name, webhook:webhookReceivers[0].serviceUri}" \
+  --output table
+
+# 3. Send a synthetic test alert (no secret configured)
+BACKEND_URL=$(terraform -chdir=infrastructure/terraform-core output -raw backend_url)
+curl -s -X POST "$BACKEND_URL/api/alert-trigger" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "resource_id": "test-vm-01",
+    "metric": "Percentage CPU",
+    "value": 95,
+    "threshold": 80,
+    "severity": "2",
+    "resource_group": "test-rg"
+  }' | jq .
+# Expected: {"status":"pending","alert_id":"<uuid>"}
+
+# 4. Confirm the record appears in the alerts list
+curl -s "$BACKEND_URL/api/alerts" | jq '.[0] | {alert_id, resource_name, metric, status}'
+```
+
+---
+
+## 10. Troubleshooting
+
+### APR was not created — AuthorizationFailed
+
+**Symptom:** `terraform apply` failed at
+`azurerm_monitor_alert_processing_rule_action_group.ruriskry` with
+`AuthorizationFailed` or `does not have authorization to perform action`.
+
+**Cause:** The identity running `terraform apply` lacks `Monitoring Contributor` on
+the target subscription.
+
+**Fix:**
+
+```bash
+az role assignment create \
+  --assignee "$(az ad signed-in-user show --query id -o tsv)" \
+  --role "Monitoring Contributor" \
+  --scope "/subscriptions/<target_subscription_id>"
+
+# Re-run only the APR resources (fast, no other infra touched)
+terraform apply -chdir=infrastructure/terraform-core \
+  -target=azurerm_resource_group.ruriskry_monitor \
+  -target=azurerm_monitor_alert_processing_rule_action_group.ruriskry
+```
+
+---
+
+### Alert arrives but resource_id is a Log Analytics workspace ARM ID
+
+**Symptom:** Monitoring Agent investigates the wrong resource (a workspace instead
+of a VM). Backend logs show no `alert-normalizer: workspace pivot` line.
+
+**Cause:** The alert rule name or description does not contain a recognisable resource
+name pattern. The workspace pivot regex `\b([a-z][a-z0-9]+-[a-z0-9][-a-z0-9]*)\b`
+found no match.
+
+**Fix:** Include the VM name in the alert rule's `description` or `name`:
+
+```hcl
+resource "azurerm_monitor_scheduled_query_rules_alert_v2" "dr01_heartbeat" {
+  name        = "alert-vm-dr-01-heartbeat"          # 'vm-dr-01' matched by regex
+  description = "Detects heartbeat loss on vm-dr-01 — idle/stopped VM"
+  # ...
+}
+```
+
+The regex matches names like `vm-dr-01`, `web-server-01`, `app-node-02` (at least one
+hyphen required). Single-word names are not matched — use the `description` field to
+include the full hyphenated name.
+
+---
+
+### Alert flood — same alert arriving every 5 minutes
+
+**Symptom:** Many `pending` records for the same resource and metric accumulate in
+the Alerts tab.
+
+**Cause:** Either the 30-minute cooldown window is shorter than the persistent outage,
+or the deduplication key (`resource_id`, `metric`) is not matching consistently because
+the normalizer extracts slightly different values from consecutive payloads.
+
+**Diagnose:**
+
+```bash
+curl -s "$BACKEND_URL/api/alerts" \
+  | jq '[.[] | {resource_id, metric, status, received_at}] | sort_by(.received_at) | reverse | .[0:10]'
+```
+
+If values differ between records, inspect the `alert_payload._raw_azure_payload` field
+on recent records to see what Azure is actually sending.
+
+**Increase the cooldown** in `src/api/dashboard_api.py`:
+
+```python
+_ALERT_COOLDOWN_MINUTES = 60   # default is 30
+```
+
+---
+
+### "Demo environment not configured — skipping webhook wiring"
+
+**Symptom:** This message appears at the end of `deploy.sh`. Demo VMs exist but
+alerts are not reaching the backend.
+
+**Cause:** `infrastructure/terraform-demo/terraform.tfvars` does not exist, or
+`infrastructure/terraform-demo/.terraform` does not exist (demo not initialised).
+
+**Fix:**
+
+```bash
+# 1. Set up terraform-demo
+cp infrastructure/terraform-demo/terraform.tfvars.example \
+   infrastructure/terraform-demo/terraform.tfvars
+# Edit: set subscription_id, suffix, vm_admin_password, alert_email
+
+# 2. Initialise and apply
+terraform -chdir=infrastructure/terraform-demo init
+terraform -chdir=infrastructure/terraform-demo apply
+
+# 3. Re-run deploy.sh to inject the webhook URL
+bash scripts/deploy.sh --stage2
+```
+
+---
+
+### Webhook returns 401
+
+**Symptom:** Azure Monitor action group delivery history shows HTTP 401. Backend
+logs show `Invalid or missing webhook secret`.
+
+**Cause:** `ALERT_WEBHOOK_SECRET` is set on the backend but the action group is not
+sending the matching `Authorization: Bearer <secret>` header.
+
+**Fix:** Either disable the secret check (acceptable on a private network):
+
+```bash
+az containerapp update \
+  --name "<container-app-name>" \
+  --resource-group "<resource-group>" \
+  --remove-env-vars ALERT_WEBHOOK_SECRET
+```
+
+Or verify the current secret value matches what the action group sends:
+
+```bash
+az keyvault secret show \
+  --vault-name "<kv-name>" \
+  --name "alert-webhook-secret" \
+  --query value -o tsv
+```
+
+---
+
+### Action group webhook URL is stale after backend redeployment
+
+**Symptom:** Alerts stop arriving after a Container App revision update that changed
+the FQDN.
+
+**Cause:** This should not happen with the Terraform-managed action group —
+`service_uri` is recomputed on every `terraform apply`. If it does happen, the action
+group was edited manually in the Azure portal or via CLI, overwriting Terraform's value.
+
+**Fix:**
+
+```bash
+terraform apply -chdir=infrastructure/terraform-core \
+  -target=azurerm_monitor_action_group.ruriskry
+```
+
+To prevent recurrence: do not edit the action group manually. The APR description
+reads "Managed by Terraform — do not edit manually" as a signal to operators.
