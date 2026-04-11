@@ -92,8 +92,11 @@ dashboard/tests/results/
 dashboard/screenshots/
 dashboard/tests/screenshots/
 
-# Live E2E test that requires deployed credentials — keep locally, never publish
+# Live E2E tests / internal tooling — require a live Azure deployment, not useful to contributors
 dashboard/tests/cancel-flow-test.spec.js
+dashboard/tests/scan-capture.spec.js
+dashboard/tests/perf-benchmark.spec.js
+dashboard/playwright.perf.config.js
 
 # Playwright MCP browser session files
 .playwright-mcp/
