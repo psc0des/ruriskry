@@ -106,13 +106,22 @@ CONSTRAINTS:
 - Each step must specify: operation name, target ARM ID, parameters, and reason.
 - Never guess api_version — always call fetch_azure_docs first for update_resource_property.
 - If the resource has already been fixed, submit a plan with empty steps[] and explain why.
-- Always include a rollback_hint — how to reverse the operation if needed.
-  For delete_nsg_rule steps: the rollback_hint MUST include the full original rule properties
-  as a JSON object (priority, protocol, port, sourceAddressPrefix, destinationAddressPrefix,
-  access, direction) captured from list_nsg_rules BEFORE the delete — these cannot be
-  recovered after deletion. Example: "Recreate rule 'allow-ssh' with: {priority: 100,
-  protocol: Tcp, destinationPortRange: '22', sourceAddressPrefix: '*', access: Allow,
-  direction: Inbound, destinationAddressPrefix: '*'}"
+- Always include a rollback_hint that captures enough before-state to AUTOMATE the reversal.
+  Read the current resource state FIRST with get_resource_details or list_nsg_rules, then
+  embed the values needed for reversal. Per operation type:
+  * delete_nsg_rule: embed full original rule properties as JSON (priority, protocol,
+    destinationPortRange, sourceAddressPrefix, destinationAddressPrefix, access, direction)
+    from list_nsg_rules BEFORE the delete — unrecoverable afterwards.
+    Example: "Recreate rule 'allow-ssh' with {priority:100, protocol:'Tcp',
+    destinationPortRange:'22', sourceAddressPrefix:'*', access:'Allow', direction:'Inbound'}"
+  * resize_vm: embed the CURRENT SKU from get_resource_details before resizing.
+    Example: "Resize vm-web-01 back to Standard_D4s_v3 using resize_vm"
+  * update_resource_property: embed the CURRENT property value before patching.
+    Example: "Set allowBlobPublicAccess back to true on storage account 'mystg'"
+  * delete_resource: state that deletion is irreversible and reference the IaC source.
+    Example: "Cannot auto-rollback — recreate from Terraform module terraform-core/main.tf"
+  * start_vm / restart_vm: embed current power state.
+    Example: "Deallocate vm-web-01 to return to Deallocated state using deallocate_vm"
 - Always include equivalent az CLI commands in the commands[] array (one per step).
 """
 
@@ -550,6 +559,14 @@ class ExecutionAgent:
                     f"az resource patch --ids {arm['full_id']} "
                     f"--api-version 2023-01-01 "
                     f"--properties '{{\" {inferred_prop.split('.')[-1]}\": {inferred_val}}}'"
+                )
+                prop_short = inferred_prop.split(".")[-1]
+                rollback_hint = (
+                    f"Revert '{prop_short}' on '{name}' to its previous value using "
+                    f"update_resource_property (resource_id: {arm['full_id']}, "
+                    f"property_path: {inferred_prop}). "
+                    f"Run 'az resource show --ids {arm['full_id']} --query properties' "
+                    "BEFORE executing this plan to capture the current value for rollback."
                 )
             else:
                 steps.append({
@@ -1284,7 +1301,6 @@ class ExecutionAgent:
             "action_type": action.action_type.value,
             "resource_id": action.target.resource_id,
             "reason": action.reason,
-            "nsg_rule_names": action.nsg_rule_names or [],
             "execute_success": execute_result.get("success", False),
             "steps_completed": execute_result.get("steps_completed", []),
         }, indent=2)
@@ -1292,8 +1308,8 @@ class ExecutionAgent:
         prompt = (
             f"The following fix was applied:\n\n{action_summary}\n\n"
             "Please verify the fix is reflected in Azure. "
-            "For MODIFY_NSG actions: check that EACH rule listed in nsg_rule_names "
-            "and in steps_completed no longer appears when you call list_nsg_rules. "
+            "Use steps_completed to understand exactly what was changed and what to check. "
+            "For each step, confirm the expected outcome is now visible in the resource state. "
             "Call submit_verification_result when done."
         )
 
