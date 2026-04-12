@@ -81,6 +81,7 @@ from src.core.models import (
     Urgency,
 )
 from src.core.scan_run_tracker import ScanRunTracker
+from src.operational_agents import is_compliant_reason
 from src.notifications.slack_notifier import (
     send_alert_notification,
     send_alert_resolved_notification,
@@ -855,12 +856,33 @@ async def _run_agent_scan(
                     logger.warning("scan %s: auto-dismiss failed — %s", scan_id[:8], _e)
                 continue
 
-            # Resource was not scanned this run → keep re-flagging.
+            # Resource was not scanned this run — check before re-flagging.
             # Strip any existing [Unresolved since ...] prefixes first so re-flag
             # passes don't stack them up into a double/triple prefix.
             clean_reason = re.sub(
                 r'^(\[Unresolved since [^\]]+\]\s*)+', '', unresolved_action.reason
             )
+
+            # If the stored reason itself signals compliance, the record was a
+            # false proposal created before the compliant-resource filter was
+            # deployed. Auto-dismiss it now rather than re-surfacing it forever.
+            if is_compliant_reason(clean_reason):
+                try:
+                    await _get_execution_gateway().dismiss_execution(
+                        exec_record.execution_id,
+                        "auto-scan",
+                        "Auto-dismissed: stored reason indicates resource was already compliant",
+                    )
+                    auto_dismissed += 1
+                    logger.info(
+                        "scan %s (%s): compliance auto-dismissed stale record %s",
+                        scan_id[:8], agent_type, exec_record.execution_id[:8],
+                    )
+                except Exception as _e:  # noqa: BLE001
+                    logger.warning(
+                        "scan %s: compliance auto-dismiss failed — %s", scan_id[:8], _e
+                    )
+                continue
             unresolved_action = unresolved_action.model_copy(update={
                 "reason": (
                     f"[Unresolved since {exec_record.created_at.strftime('%d %b')}] "

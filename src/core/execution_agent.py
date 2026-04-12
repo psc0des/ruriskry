@@ -269,6 +269,192 @@ def _compute_confidence(steps: list[dict]) -> str:
     return confidence.value
 
 
+def _build_rollback_commands(
+    steps: list[dict],
+    captured_nsg_rules: dict[str, list[dict]],
+    captured_resource_details: dict[str, dict],
+) -> list[dict]:
+    """Build pre-computed rollback commands from before-state captured at plan time.
+
+    Returns a list of dicts: [{operation, step_index, params, az_cli?}]
+    Operations: create_nsg_rule, resize_vm, deallocate_vm,
+                update_resource_property, irreversible, manual.
+
+    These are stored in plan["rollback_commands"] and executed directly at
+    rollback time — no LLM reasoning required.
+    """
+    commands: list[dict] = []
+
+    for i, step in enumerate(steps):
+        op = step.get("operation", "")
+        params = step.get("params", {})
+        target = step.get("target", "")
+
+        if op == "delete_nsg_rule":
+            rule_name = params.get("rule_name", "")
+            rg = params.get("resource_group", "")
+            nsg_name = params.get("nsg_name", "")
+
+            # Search captured NSG data for the original rule properties.
+            # Azure live format: rule["properties"][...] or flat rule[...].
+            original: dict | None = None
+            for rules in captured_nsg_rules.values():
+                for r in rules:
+                    r_name = r.get("name") or r.get("properties", {}).get("name", "")
+                    if r_name.lower() == rule_name.lower():
+                        original = r
+                        break
+                if original:
+                    break
+
+            if original:
+                # Live Azure uses nested "properties"; seed data is flat.
+                props = original.get("properties") or original
+                dest_port = (
+                    props.get("destinationPortRange")
+                    or props.get("destination_port_range")
+                    or str(props.get("port", "*"))
+                )
+                src_addr = (
+                    props.get("sourceAddressPrefix")
+                    or props.get("source_address_prefix", "*")
+                )
+                dst_addr = (
+                    props.get("destinationAddressPrefix")
+                    or props.get("destination_address_prefix", "*")
+                )
+                priority = props.get("priority", 100)
+                direction = props.get("direction", "Inbound")
+                access = props.get("access", "Allow")
+                protocol = props.get("protocol", "*")
+                commands.append({
+                    "operation": "create_nsg_rule",
+                    "step_index": i,
+                    "params": {
+                        "resource_group": rg,
+                        "nsg_name": nsg_name,
+                        "rule_name": rule_name,
+                        "priority": priority,
+                        "direction": direction,
+                        "access": access,
+                        "protocol": protocol,
+                        "source_address_prefix": src_addr,
+                        "destination_address_prefix": dst_addr,
+                        "destination_port_range": dest_port,
+                    },
+                    "az_cli": (
+                        f"az network nsg rule create"
+                        f" --resource-group {rg} --nsg-name {nsg_name}"
+                        f" --name {rule_name} --priority {priority}"
+                        f" --direction {direction} --access {access}"
+                        f" --protocol {protocol}"
+                        f" --source-address-prefixes '{src_addr}'"
+                        f" --destination-address-prefixes '{dst_addr}'"
+                        f" --destination-port-ranges '{dest_port}'"
+                    ),
+                })
+            else:
+                commands.append({
+                    "operation": "irreversible",
+                    "step_index": i,
+                    "reason": (
+                        f"Rule '{rule_name}' properties were not captured at plan time "
+                        "— auto-rollback unavailable. Restore via Azure Portal or Activity Log."
+                    ),
+                })
+
+        elif op == "resize_vm":
+            rg = params.get("resource_group", "")
+            vm_name = params.get("vm_name", "")
+            # Find original SKU in captured resource details
+            original_sku: str | None = None
+            for rid, details in captured_resource_details.items():
+                if vm_name.lower() in rid.lower():
+                    hw = details.get("properties", {}).get("hardwareProfile", {})
+                    original_sku = (
+                        hw.get("vmSize")
+                        or details.get("sku", {}).get("name")
+                        or details.get("current_sku")
+                    )
+                    break
+            if original_sku:
+                commands.append({
+                    "operation": "resize_vm",
+                    "step_index": i,
+                    "params": {"resource_group": rg, "vm_name": vm_name, "new_size": original_sku},
+                    "az_cli": (
+                        f"az vm resize --resource-group {rg}"
+                        f" --name {vm_name} --size {original_sku}"
+                    ),
+                })
+            else:
+                commands.append({
+                    "operation": "manual",
+                    "step_index": i,
+                    "reason": f"Original SKU for '{vm_name}' not found — resize back manually.",
+                })
+
+        elif op in ("start_vm", "restart_vm"):
+            rg = params.get("resource_group", "")
+            vm_name = params.get("vm_name", "")
+            commands.append({
+                "operation": "deallocate_vm",
+                "step_index": i,
+                "params": {"resource_group": rg, "vm_name": vm_name},
+                "az_cli": f"az vm deallocate --resource-group {rg} --name {vm_name}",
+            })
+
+        elif op == "update_resource_property":
+            resource_id = params.get("resource_id", target)
+            property_path = params.get("property_path", "")
+            api_version = params.get("api_version", "")
+            # Navigate the dot-notation path in captured details to find original value
+            details = captured_resource_details.get(resource_id, {})
+            original_value = None
+            if details and property_path:
+                obj: object = details
+                for part in property_path.split("."):
+                    obj = obj.get(part) if isinstance(obj, dict) else None  # type: ignore[union-attr]
+                original_value = obj
+            if original_value is not None:
+                commands.append({
+                    "operation": "update_resource_property",
+                    "step_index": i,
+                    "params": {
+                        "resource_id": resource_id,
+                        "property_path": property_path,
+                        "new_value": original_value,
+                        "api_version": api_version,
+                    },
+                })
+            else:
+                commands.append({
+                    "operation": "manual",
+                    "step_index": i,
+                    "reason": (
+                        f"Original value of '{property_path}' on '{resource_id}' not captured "
+                        "— restore manually."
+                    ),
+                })
+
+        elif op == "delete_resource":
+            commands.append({
+                "operation": "irreversible",
+                "step_index": i,
+                "reason": "Resource deletion cannot be auto-rolled back — recreate from IaC.",
+            })
+
+        else:
+            # guided_manual, manual, unknown
+            commands.append({
+                "operation": "manual",
+                "step_index": i,
+                "reason": f"Operation '{op}' has no pre-computed rollback — reverse manually.",
+            })
+
+    return commands
+
+
 # ---------------------------------------------------------------------------
 # ExecutionAgent
 # ---------------------------------------------------------------------------
@@ -793,6 +979,11 @@ class ExecutionAgent:
         # Result holder — captured via closure from submit_execution_plan
         plan_holder: list[dict] = []
 
+        # Before-state capture — populated by read tools during planning.
+        # Used after planning to build rollback_commands deterministically.
+        captured_nsg_rules: dict[str, list[dict]] = {}
+        captured_resource_details: dict[str, dict] = {}
+
         @af.tool(
             name="get_resource_details",
             description=(
@@ -802,6 +993,7 @@ class ExecutionAgent:
         )
         async def tool_get_resource_details(resource_id: str) -> str:
             details = await get_resource_details_async(resource_id)
+            captured_resource_details[resource_id] = details  # capture before-state
             return json.dumps(details, default=str)
 
         @af.tool(
@@ -813,6 +1005,7 @@ class ExecutionAgent:
         )
         async def tool_list_nsg_rules(nsg_resource_id: str) -> str:
             rules = await list_nsg_rules_async(nsg_resource_id)
+            captured_nsg_rules[nsg_resource_id] = rules  # capture before-state
             return json.dumps(rules, default=str)
 
         @af.tool(
@@ -920,6 +1113,18 @@ class ExecutionAgent:
         if plan_holder:
             plan = plan_holder[0]
             plan.setdefault("remediation_confidence", _compute_confidence(plan.get("steps", [])))
+            # Build pre-computed rollback commands from before-state captured above.
+            # These are stored in the execution record and executed directly at rollback
+            # time — no LLM reasoning needed, no dependency on Activity Log availability.
+            plan["rollback_commands"] = _build_rollback_commands(
+                plan.get("steps", []),
+                captured_nsg_rules,
+                captured_resource_details,
+            )
+            logger.info(
+                "ExecutionAgent: built %d rollback command(s) from captured before-state",
+                len(plan["rollback_commands"]),
+            )
             return plan
 
         # LLM didn't call submit_execution_plan — fall back to mock plan
@@ -1520,41 +1725,106 @@ class ExecutionAgent:
             except Exception as exc:  # noqa: BLE001
                 return json.dumps({"status": "failed", "rule": rule_name, "error": str(exc)})
 
-        @af.tool(name="report_step_result", description="Report the outcome of a rollback step.")
-        async def tool_report_step_result(step_index: int, success: bool, message: str) -> str:
-            rollback_log.append({"step": step_index, "success": success, "message": message})
-            return "Step result recorded."
+        # ------------------------------------------------------------------
+        # Path A: pre-computed rollback commands (deterministic, no LLM)
+        # ------------------------------------------------------------------
+        rollback_commands: list[dict] = plan.get("rollback_commands", [])
 
-        agent = client.as_agent(
-            name="execution-rollback-agent",
-            instructions=_ROLLBACK_INSTRUCTIONS,
-            tools=[
-                tool_get_resource_details,
-                tool_list_nsg_rules,
-                tool_start_vm,
-                tool_deallocate_vm,
-                tool_resize_vm,
-                tool_create_nsg_rule,
-                tool_report_step_result,
-            ],
-        )
+        if rollback_commands:
+            logger.info(
+                "ExecutionAgent: executing %d pre-computed rollback command(s) — no LLM needed",
+                len(rollback_commands),
+            )
+            for cmd in rollback_commands:
+                op = cmd.get("operation", "")
+                params = cmd.get("params", {})
+                idx = cmd.get("step_index", len(rollback_log))
 
-        rollback_hint = plan.get("rollback_hint", "No rollback hint available.")
-        prompt = (
-            f"Action type: {action.action_type.value}\n"
-            f"Resource: {action.target.resource_id}\n"
-            f"Rollback hint: {rollback_hint}\n\n"
-            "Please reverse the applied fix. Use the tools to execute the rollback. "
-            "Call report_step_result for each step."
-        )
+                try:
+                    if op == "create_nsg_rule":
+                        raw = await tool_create_nsg_rule(**params)
+                        result = json.loads(raw)
+                        ok = result.get("status") == "created"
+                        rollback_log.append({
+                            "step": idx, "operation": op, "success": ok, "message": raw,
+                        })
+                    elif op == "resize_vm":
+                        raw = await tool_resize_vm(**params)
+                        result = json.loads(raw)
+                        ok = result.get("status") == "resized"
+                        rollback_log.append({
+                            "step": idx, "operation": op, "success": ok, "message": raw,
+                        })
+                    elif op == "deallocate_vm":
+                        raw = await tool_deallocate_vm(**params)
+                        result = json.loads(raw)
+                        ok = result.get("status") == "deallocated"
+                        rollback_log.append({
+                            "step": idx, "operation": op, "success": ok, "message": raw,
+                        })
+                    elif op == "start_vm":
+                        raw = await tool_start_vm(**params)
+                        result = json.loads(raw)
+                        ok = result.get("status") == "started"
+                        rollback_log.append({
+                            "step": idx, "operation": op, "success": ok, "message": raw,
+                        })
+                    elif op in ("irreversible", "manual"):
+                        reason = cmd.get("reason", f"Operation '{op}' — manual rollback required")
+                        rollback_log.append({
+                            "step": idx, "operation": op, "success": False, "message": reason,
+                        })
+                    else:
+                        rollback_log.append({
+                            "step": idx, "operation": op, "success": False,
+                            "message": f"Unknown rollback operation '{op}'",
+                        })
+                except Exception as exc:  # noqa: BLE001
+                    rollback_log.append({
+                        "step": idx, "operation": op, "success": False,
+                        "message": f"Rollback step failed: {exc}",
+                    })
 
-        await run_with_throttle(agent.run, prompt)
+        else:
+            # ------------------------------------------------------------------
+            # Path B: LLM-based rollback (fallback when no pre-computed commands)
+            # ------------------------------------------------------------------
+            logger.info(
+                "ExecutionAgent: no pre-computed rollback commands — using LLM fallback"
+            )
+            @af.tool(name="report_step_result", description="Report the outcome of a rollback step.")
+            async def tool_report_step_result_llm(step_index: int, success: bool, message: str) -> str:
+                rollback_log.append({"step": step_index, "success": success, "message": message})
+                return "Step result recorded."
+
+            agent = client.as_agent(
+                name="execution-rollback-agent",
+                instructions=_ROLLBACK_INSTRUCTIONS,
+                tools=[
+                    tool_get_resource_details,
+                    tool_list_nsg_rules,
+                    tool_start_vm,
+                    tool_deallocate_vm,
+                    tool_resize_vm,
+                    tool_create_nsg_rule,
+                    tool_report_step_result_llm,
+                ],
+            )
+            rollback_hint = plan.get("rollback_hint", "No rollback hint available.")
+            prompt = (
+                f"Action type: {action.action_type.value}\n"
+                f"Resource: {action.target.resource_id}\n"
+                f"Rollback hint: {rollback_hint}\n\n"
+                "Please reverse the applied fix. Use the tools to execute the rollback. "
+                "Call report_step_result for each step."
+            )
+            await run_with_throttle(agent.run, prompt)
 
         if not rollback_log:
             return {
                 "success": False,
                 "steps_completed": [],
-                "summary": "No rollback steps were executed — LLM did not call any tools",
+                "summary": "No rollback steps were executed",
             }
 
         all_ok = all(s["success"] for s in rollback_log)
