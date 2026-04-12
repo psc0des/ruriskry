@@ -157,10 +157,13 @@ class TestPlanMockMode:
 
     @pytest.mark.asyncio
     async def test_plan_update_config(self, agent):
+        # UPDATE_CONFIG has no single generic SDK call — mock path returns
+        # a manual step so the user gets an honest "apply this yourself"
+        # message rather than a misleading update_resource_tags no-op.
         action = _make_action(ActionType.UPDATE_CONFIG)
         plan = await agent.plan(action, {})
 
-        assert plan["steps"][0]["operation"] == "update_resource_tags"
+        assert plan["steps"][0]["operation"] == "manual"
 
     @pytest.mark.asyncio
     async def test_plan_create_resource_is_manual(self, agent):

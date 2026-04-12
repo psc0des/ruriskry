@@ -395,14 +395,23 @@ class ExecutionAgent:
             )
 
         elif action.action_type == ActionType.UPDATE_CONFIG:
+            # UPDATE_CONFIG covers a wide range of OS/service settings that
+            # cannot be expressed as a single generic SDK call.  The LLM live
+            # path inspects the reason and picks the correct operation.  In
+            # mock/fallback mode we surface a manual step so the user gets an
+            # honest "apply this yourself" message rather than a misleading
+            # update_resource_tags call that does nothing useful.
             steps.append({
-                "operation": "update_resource_tags",
+                "operation": "manual",
                 "target": action.target.resource_id,
-                "params": {"resource_id": arm["full_id"], "tags_json": "{}"},
-                "reason": f"Update configuration/tags on '{name}'",
+                "params": {},
+                "reason": (
+                    f"Configuration change on '{name}' — "
+                    f"apply via Azure Portal or az CLI: {action.reason[:150]}"
+                ),
             })
             commands.append(
-                f"# Manual: update tags/config on '{name}' via Azure Portal or az tag update"
+                f"# Apply manually: {action.reason[:200]}"
             )
 
         elif action.action_type == ActionType.CREATE_RESOURCE:

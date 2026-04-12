@@ -526,14 +526,20 @@ class ExecutionGateway:
 
         action = ProposedAction.model_validate(snapshot["proposed_action"])
 
-        from src.core.execution_agent import ExecutionAgent  # noqa: PLC0415
-        agent = ExecutionAgent(cfg=settings)
-        plan = await agent.plan(action, snapshot)
+        # Return the cached plan if one already exists — keeps the plan stable
+        # so what the user reviewed in the preview is exactly what gets executed.
+        # Only regenerate when there is no stored plan yet.
+        if record.execution_plan:
+            plan = record.execution_plan
+        else:
+            from src.core.execution_agent import ExecutionAgent  # noqa: PLC0415
+            agent = ExecutionAgent(cfg=settings)
+            plan = await agent.plan(action, snapshot)
 
-        # Store the plan on the record so execute_agent_fix() can read it
-        record.execution_plan = plan
-        record.updated_at = datetime.now(timezone.utc)
-        self._save(record)
+            # Store the plan on the record so execute_agent_fix() can read it
+            record.execution_plan = plan
+            record.updated_at = datetime.now(timezone.utc)
+            self._save(record)
 
         # Augment with execution metadata for the API response
         plan["execution_id"] = execution_id

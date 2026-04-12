@@ -3279,17 +3279,26 @@ async def create_pr_from_manual(
 
 
 @app.get("/api/execution/{execution_id}/agent-fix-preview")
-async def agent_fix_preview(execution_id: str) -> dict:
-    """Generate the LLM-driven execution plan for this issue.
+async def agent_fix_preview(
+    execution_id: str,
+    regenerate: bool = Query(default=False),
+) -> dict:
+    """Return the execution plan for this issue.
 
-    Pure read — no side effects.  Returns a structured plan with steps,
-    summary, estimated impact, rollback hint, and backward-compat commands list.
+    Returns the cached plan if one has already been generated (stable preview).
+    Pass ?regenerate=true to force a fresh LLM call (e.g. after resource state
+    has changed and you want an updated plan).
 
     Returns 404 if execution_id is unknown.
     Returns 400 if the verdict snapshot is missing.
     """
     gateway = _get_execution_gateway()
     try:
+        if regenerate:
+            # Clear stored plan so generate_agent_fix_plan will re-invoke the LLM
+            record = gateway.get_record(execution_id)
+            if record:
+                record.execution_plan = None
         return await gateway.generate_agent_fix_plan(execution_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
