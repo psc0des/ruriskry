@@ -354,14 +354,14 @@ class TestPolicyComplianceAgent:
     # ------------------------------------------------------------------
 
     async def test_pol_shared001_delete_shared_messaging_resource(self, agent):
-        """Deleting a shared-messaging resource is blocked."""
+        """Deleting a shared-messaging resource is blocked by POL-SHARED-002."""
         action = _make_action(action_type=ActionType.DELETE_RESOURCE)
         result = await agent.evaluate(
             action,
             resource_metadata={"tags": {"purpose": "shared-messaging"}},
             now=_WEDNESDAY_NOON,
         )
-        assert any(v.policy_id == "POL-SHARED-001" for v in result.violations)
+        assert any(v.policy_id == "POL-SHARED-002" for v in result.violations)
 
     async def test_pol_shared001_scale_down_shared_resource_allowed(self, agent):
         """scale_down is not in POL-SHARED-001 blocked list."""
@@ -727,11 +727,11 @@ class TestPolicyComplianceAgent:
     # Updated score / metadata checks
     # ------------------------------------------------------------------
 
-    async def test_total_policies_is_eleven(self, agent):
-        """Production policy set should have 11 policies (POL-SEC-003 added in Phase 22G)."""
+    async def test_total_policies_is_fifteen(self, agent):
+        """Production policy set should have 15 policies (4 added: POL-DR-002, POL-SHARED-002, POL-PROD-002, POL-PROD-003)."""
         action = _make_action()
         result = await agent.evaluate(action, now=_WEDNESDAY_NOON)
-        assert result.total_policies_checked == 11
+        assert result.total_policies_checked == 15
 
 
 # ---------------------------------------------------------------------------

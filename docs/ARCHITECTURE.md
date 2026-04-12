@@ -35,11 +35,12 @@ RuriSkryPipeline.evaluate(action)
 GovernanceDecisionEngine.evaluate()
     │  SRI Composite = weighted sum of 4 dimensions
     │  Decision rules (priority order):
-    │  1. DENIED    if CRITICAL policy violation (not llm_override)
-    │  2. DENIED    if composite > 60
-    │  3. ESCALATED if composite > 25
-    │  4. ESCALATED if any HIGH violation (not llm_override) — Rule 3.5 verdict floor
-    │  5. APPROVED  otherwise
+    │  1.   DENIED    if CRITICAL policy violation (not llm_override)
+    │  1.5. ESCALATED if CRITICAL violation WITH llm_override — LLM cannot grant VP/CAB approval
+    │  2.   DENIED    if composite > 60
+    │  3.   ESCALATED if composite > 25
+    │  3.5. ESCALATED if any HIGH violation (not llm_override) — verdict floor
+    │  4.   APPROVED  otherwise
     │
     │  verdict.triage_tier = 1 | 2 | 3  ← stamped after engine returns
     │  verdict.triage_mode = "deterministic" | "full"  ← Phase 27A
@@ -170,7 +171,7 @@ boundary — minimal overhead. Used by `examples/demo.py` and all unit tests.
 | Agent | SRI Dimension | Data Source |
 |---|---|---|
 | `BlastRadiusAgent` | Infrastructure (0.30) | **Live:** `ResourceGraphClient` (KQL topology) + gpt-4.1-mini decision maker · **Mock:** `seed_resources.json` |
-| `PolicyComplianceAgent` | Policy (0.25) | `policies.json` — 11 production policies · gpt-4.1-mini decision maker with remediation intent detection · structured `nsg_change_direction` field distinguishes opening from restricting ports |
+| `PolicyComplianceAgent` | Policy (0.25) | `policies.json` — 15 production policies · gpt-4.1-mini decision maker with remediation intent detection · structured `nsg_change_direction` field distinguishes opening from restricting ports · CRITICAL violations with `llm_override` floor at ESCALATED (Rule 1.5) |
 | `HistoricalPatternAgent` | Historical (0.25) | Azure AI Search / `seed_incidents.json` · gpt-4.1-mini decision maker |
 | `FinancialImpactAgent` | Cost (0.20) | **Live:** `ResourceGraphClient` + Azure Retail Prices API · gpt-4.1-mini decision maker · **Mock:** `seed_resources.json` |
 
@@ -394,6 +395,12 @@ ops agent reading resource tags with semantic understanding would recognise a DR
 resource before proposing its deletion — and either skip the proposal or explicitly
 flag the risk in its reason. The exact-match policy is the safety net, not the
 first line of defence. A purely rule-based ops agent is a weak Layer 1.
+
+`POL-DR-002` complements POL-DR-001 with reason-pattern matching — it catches DR
+infrastructure that isn't individually tagged (e.g. resources in `rg-dr-east`,
+`rg-backup`, or described as "standby replica") by checking the ops agent's reason
+text with a regex. Two complementary policies covering the same risk from different
+angles is the right design for CRITICAL protection.
 
 **Intelligent monitoring-agent — actual end-to-end flow (live):**
 ```
@@ -861,7 +868,7 @@ data/
 ├── agents/                    # A2A agent registry (mock mode)
 ├── decisions/                 # Governance verdict audit trail (mock mode)
 ├── scans/                     # Scan-run records (mock mode — ScanRunTracker)
-├── policies.json              # 6 governance policies
+├── policies.json              # 15 governance policies (edit JSON to add/modify rules)
 ├── seed_incidents.json        # 7 historical incidents
 └── seed_resources.json        # Azure resource topology (see note below)
 infrastructure/

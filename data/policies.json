@@ -12,6 +12,18 @@
     "category": "compliance"
   },
   {
+    "id": "POL-DR-002",
+    "name": "Disaster Recovery Reason Pattern Protection",
+    "description": "Actions whose reason text references DR infrastructure (backup, failover, disaster-recovery keywords) require VP review — catches DR resources that are not individually tagged",
+    "severity": "high",
+    "conditions": {
+      "reason_pattern": "(?i)(disaster.recov|failover|backup.replica|dr-|rg-dr|standby)",
+      "blocked_actions": ["delete_resource", "scale_down"]
+    },
+    "override_requires": "vp_approval",
+    "category": "compliance"
+  },
+  {
     "id": "POL-SEC-001",
     "name": "Network Security Group Change Control",
     "description": "Network security group changes require security team review before execution",
@@ -87,7 +99,19 @@
   {
     "id": "POL-SHARED-001",
     "name": "Shared Resource Protection",
-    "description": "Resources tagged 'shared' or with multiple consumers cannot be deleted without verifying zero active connections",
+    "description": "Resources tagged 'shared: true' or 'purpose: shared-messaging' cannot be deleted without verifying zero active connections",
+    "severity": "high",
+    "conditions": {
+      "tags_match": {"shared": "true"},
+      "blocked_actions": ["delete_resource"]
+    },
+    "override_requires": "multi_team_approval",
+    "category": "governance"
+  },
+  {
+    "id": "POL-SHARED-002",
+    "name": "Shared Messaging Resource Protection",
+    "description": "Resources tagged 'purpose: shared-messaging' cannot be deleted without verifying zero active connections",
     "severity": "high",
     "conditions": {
       "tags_match": {"purpose": "shared-messaging"},
@@ -118,6 +142,30 @@
       "blocked_actions": ["delete_resource"]
     },
     "override_requires": "sre_lead_approval",
+    "category": "compliance"
+  },
+  {
+    "id": "POL-PROD-002",
+    "name": "Production Service Restart Protection",
+    "description": "Restarting a service in a production environment causes downtime and requires SRE review regardless of tags or blast radius score",
+    "severity": "medium",
+    "conditions": {
+      "environment_match": "production",
+      "blocked_actions": ["restart_service"]
+    },
+    "override_requires": "sre_review",
+    "category": "compliance"
+  },
+  {
+    "id": "POL-PROD-003",
+    "name": "Production Configuration Change Review",
+    "description": "Configuration changes and scale-up actions in production require review — even remediation proposals can misconfigure live workloads or drive unexpected cost increases",
+    "severity": "low",
+    "conditions": {
+      "environment_match": "production",
+      "blocked_actions": ["update_config", "scale_up"]
+    },
+    "override_requires": "sre_review",
     "category": "compliance"
   },
   {
