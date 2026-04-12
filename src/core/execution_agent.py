@@ -109,19 +109,39 @@ CONSTRAINTS:
 - Always include a rollback_hint that captures enough before-state to AUTOMATE the reversal.
   Read the current resource state FIRST with get_resource_details or list_nsg_rules, then
   embed the values needed for reversal. Per operation type:
-  * delete_nsg_rule: embed full original rule properties as JSON (priority, protocol,
-    destinationPortRange, sourceAddressPrefix, destinationAddressPrefix, access, direction)
-    from list_nsg_rules BEFORE the delete — unrecoverable afterwards.
-    Example: "Recreate rule 'allow-ssh' with {priority:100, protocol:'Tcp',
-    destinationPortRange:'22', sourceAddressPrefix:'*', access:'Allow', direction:'Inbound'}"
+
+  * delete_nsg_rule: MANDATORY — embed the original rule as a JSON object using
+    the EXACT parameter names of the create_nsg_rule tool (the rollback LLM will
+    copy these values verbatim). Call list_nsg_rules BEFORE generating the delete
+    step — the rule will be unrecoverable afterwards.
+    Required format (these are the exact parameters create_nsg_rule accepts):
+    {
+      "resource_group": "<rg>",
+      "nsg_name": "<nsg-name>",
+      "rule_name": "<rule-name>",
+      "priority": <integer>,
+      "direction": "Inbound" or "Outbound",
+      "access": "Allow" or "Deny",
+      "protocol": "Tcp" or "Udp" or "*",
+      "source_address_prefix": "<value from list_nsg_rules>",
+      "destination_address_prefix": "<value from list_nsg_rules>",
+      "destination_port_range": "<value from list_nsg_rules>"
+    }
+    The hint must start with: "Call create_nsg_rule with these exact parameters: "
+    followed by the JSON. Do not paraphrase — the rollback LLM needs machine-readable values.
+    NOTE: source_port_range is always "*" and is handled internally — do not include it.
+
   * resize_vm: embed the CURRENT SKU from get_resource_details before resizing.
-    Example: "Resize vm-web-01 back to Standard_D4s_v3 using resize_vm"
+    Format: "Call resize_vm with resource_group='<rg>', vm_name='<name>', new_size='<original_sku>'"
+
   * update_resource_property: embed the CURRENT property value before patching.
-    Example: "Set allowBlobPublicAccess back to true on storage account 'mystg'"
+    Format: "Call update_resource_property to restore <property_path> to <original_value> on <resource_id>"
+
   * delete_resource: state that deletion is irreversible and reference the IaC source.
     Example: "Cannot auto-rollback — recreate from Terraform module terraform-core/main.tf"
+
   * start_vm / restart_vm: embed current power state.
-    Example: "Deallocate vm-web-01 to return to Deallocated state using deallocate_vm"
+    Format: "Call deallocate_vm with resource_group='<rg>', vm_name='<name>' to return to Deallocated state"
 - Always include equivalent az CLI commands in the commands[] array (one per step).
 """
 
@@ -156,21 +176,43 @@ Be concise. Do not propose further actions.
 
 _ROLLBACK_INSTRUCTIONS = """\
 You are RuriSkry's Rollback Agent. A previously approved and applied fix now
-needs to be reversed. The rollback hint below tells you what the inverse
-operation is.
+needs to be reversed.
+
+CRITICAL: The rollback_hint was captured at plan time — BEFORE the fix ran.
+It contains the complete original resource state needed to reverse the operation.
+Trust it. Do NOT try to query Azure to reconstruct the original state.
 
 Your job:
-1. Read the rollback_hint to understand what needs to be undone.
-2. Use get_resource_details (and list_nsg_rules for NSG actions) to confirm
-   the current resource state before acting.
-3. Execute the inverse operation using the appropriate write tool.
-4. Call report_step_result for each step with the outcome.
-5. If the resource is already in the pre-fix state, report success — no-op is fine.
+1. Read the rollback_hint carefully — it is the authoritative source of original state.
+2. Execute the inverse operation using the appropriate write tool with the values
+   from the hint. Use them exactly — do not modify or look them up from Azure.
+3. Call report_step_result for each step with the outcome.
+
+OPERATION-SPECIFIC GUIDANCE:
+
+NSG rule deleted → recreate it:
+  The hint contains the original rule properties as JSON (priority, protocol,
+  source_address_prefix, destination_address_prefix, destination_port_range, etc.)
+  Call create_nsg_rule with those exact values.
+  DO NOT call list_nsg_rules — the rule was deleted, it will NOT be there.
+
+VM resized → resize back:
+  The hint contains the original SKU. Call resize_vm with it.
+
+VM started → deallocate:
+  Call deallocate_vm with the resource_group and vm_name from the hint.
+
+Resource property updated → restore old value:
+  The hint contains the original property value. Call update_resource_property to restore it.
+
+Irreversible (resource deleted, etc.):
+  Call report_step_result with success=false and explain why in the message.
 
 CONSTRAINTS:
 - Only reverse what was applied. Do NOT change anything else.
-- If rollback is genuinely impossible (e.g. deleted resource), call report_step_result
-  with success=false and explain why in the message.
+- Do NOT query Azure to reconstruct original state — the hint has it.
+- If the hint is incomplete or missing properties, call report_step_result with
+  success=false and message: "Rollback failed: rollback_hint missing required properties".
 """
 
 _EXECUTE_INSTRUCTIONS = """\
@@ -458,22 +500,41 @@ class ExecutionAgent:
                     f" --nsg-name {name}"
                     f" --name {rule_name}"
                 )
+            # Build one JSON block per rule. In mock mode the real properties
+            # are unknown (no Azure connection), so placeholders are embedded.
+            # The rollback LLM reads this hint and calls create_nsg_rule directly —
+            # it must NOT call list_nsg_rules (the rule has been deleted).
+            rule_blocks = "\n".join(
+                json.dumps({
+                    "resource_group": rg,
+                    "nsg_name": name,
+                    "rule_name": r,
+                    "priority": "<retrieve-from-activity-log>",
+                    "direction": "Inbound",
+                    "access": "Allow",
+                    "protocol": "Tcp",
+                    "source_address_prefix": "*",
+                    "destination_address_prefix": "*",
+                    "destination_port_range": "<retrieve-from-activity-log>",
+                }, indent=2)
+                for r in rule_names_list
+            )
             quoted = ", ".join(f"'{r}'" for r in rule_names_list)
             rollback_hint = (
-                f"Recreate the deleted NSG rule(s) {quoted} on NSG '{name}' "
-                f"(resource group: {rg}) using the create_nsg_rule tool. "
-                "Call list_nsg_rules on the NSG first to confirm the rules are gone, "
-                "then call get_resource_details to check the Azure Activity Log for the "
-                "original rule properties, or use these az CLI commands to restore them:\n"
+                f"Call create_nsg_rule with these exact parameters for rule(s) {quoted}:\n"
+                f"{rule_blocks}\n"
+                "NOTE: priority and destination_port_range values marked "
+                "<retrieve-from-activity-log> must be retrieved from the Azure Activity Log "
+                "using get_resource_details before calling create_nsg_rule. "
+                "Do NOT call list_nsg_rules — the rule was deleted and will not be found.\n"
+                "Manual fallback (az CLI):\n"
                 + "\n".join(
                     f"az network nsg rule create"
                     f" --resource-group {rg}"
                     f" --nsg-name {name}"
                     f" --name {r}"
                     f" --priority <original-priority>"
-                    f" --direction Inbound"
-                    f" --access Allow"
-                    f" --protocol Tcp"
+                    f" --direction Inbound --access Allow --protocol Tcp"
                     f" --source-address-prefixes '*'"
                     f" --destination-address-prefixes '*'"
                     f" --destination-port-ranges <original-port>"
