@@ -304,6 +304,9 @@ A 6-page React governance UI with real-time SSE streaming, custom design tokens,
 > Azure Monitor alerts flow in via webhook and land in a **Pending** queue. Click **Investigate** in the table row or inside the alert drilldown panel to manually trigger the Monitoring Agent. While investigating, the panel shows a **live terminal-style investigation log** (real-time event stream via polling) — reasoning steps, discoveries, verdicts, and execution status — all without needing the SSE stream. Governance verdicts and action buttons appear once investigation completes.
 
 ### Resource Inventory Browser
+<p align="center">
+  <img src="docs/screenshots/visual-scan-inventory.png" alt="Resource Inventory Browser" width="100%">
+</p>
 
 > Full Azure resource inventory: summary cards (total resources, VMs, App Services, types), stale-age warning, refresh button with live progress, **subscription filter** (auto-shown when resources span >1 subscription), type filter, resource group filter, name search, expandable resource rows with per-resource detail, VM power-state dot (green=running, red=deallocated, gray=unknown). Scan modal lets you choose inventory mode (existing / refresh / skip) before each scan.
 
