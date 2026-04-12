@@ -246,9 +246,11 @@ class AgentRegistry:
             return entries
         else:
             query = "SELECT * FROM c ORDER BY c.last_seen DESC"
-            return list(
+            items = list(
                 self._container.query_items(query, enable_cross_partition_query=True)
             )
+            # Filter out non-agent documents (e.g. _admin_auth stored in the same container)
+            return [i for i in items if not str(i.get("id", "")).startswith("_")]
 
 
 # ---------------------------------------------------------------------------

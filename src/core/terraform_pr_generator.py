@@ -345,11 +345,18 @@ class TerraformPRGenerator:
                 "TerraformPRGenerator: extracted rule_name='%s' from resource_id", rule_name
             )
 
-        # Fallback: parse reason string — handles "rule 'name'" or "rule \"name\""
+        # Fallback: parse reason string — multiple formats:
+        # 1. CRITICAL deterministic: "NSG 'nsg-name': 'allow-ssh-anywhere' port=22 src=*"
+        # 2. LLM format: "rule 'allow-ssh-anywhere'" or "rule allow-ssh-anywhere"
         if not rule_name:
-            rule_match = re.search(
-                r"rule ['\"]([^'\"]+)['\"]", action.reason, re.IGNORECASE
-            ) or re.search(r"\brule\s+([\w][\w]*[-_][\w\-_]+)", action.reason, re.IGNORECASE)
+            rule_match = (
+                # Format 1: quoted string immediately followed by " port="
+                re.search(r"['\"]([^'\"]+)['\"](?:\s+port=)", action.reason, re.IGNORECASE)
+                # Format 2: the word "rule" followed by quoted name
+                or re.search(r"rule\s+['\"]([^'\"]+)['\"]", action.reason, re.IGNORECASE)
+                # Format 3: "rule allow-ssh-anywhere" (unquoted, hyphenated)
+                or re.search(r"\brule\s+([\w][\w]*[-_][\w\-_]+)", action.reason, re.IGNORECASE)
+            )
             if rule_match:
                 rule_name = rule_match.group(1)
                 logger.info(
