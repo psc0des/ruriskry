@@ -133,8 +133,8 @@ rearchitecture.md
 decisions_mockup.png
 overview_mockup.png
 
-# Generated HTML (PNG + excalidraw source are tracked instead)
-docs/architecture-diagram.html
+# Generated HTML — kept tracked as diagram source (PNG is rendered from it)
+# docs/architecture-diagram.html
 
 # Environment-specific test reports (hardcoded live URLs — not portable)
 docs/LIVE_TEST_REPORT.md
