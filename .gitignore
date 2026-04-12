@@ -119,6 +119,7 @@ docs/demo-script.md
 # Internal Playwright visual-scan screenshots — removed from ignore so README renders on GitHub
 
 # Internal planning / rearchitecture working docs (not for contributors)
+PLAN-*.md
 Adding-HITL-Agent-Fix-Plan.md
 Adding-Terraform-Feature.md
 ag_opus_issues_detailed.md
