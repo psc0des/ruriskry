@@ -41,6 +41,7 @@ from pathlib import Path
 
 from src.config import settings as _default_settings
 from src.core.models import ActionTarget, ActionType, ProposedAction, Urgency
+from src.operational_agents import is_compliant_reason
 
 logger = logging.getLogger(__name__)
 
@@ -496,6 +497,19 @@ class CostOptimizationAgent:
                 parts = resource_id.split("/")
                 if len(parts) > 7:
                     resource_type = f"{parts[6]}/{parts[7]}"
+
+            # Deterministic gate: block proposals where the reason signals compliance.
+            # This cannot be overridden by LLM non-determinism or instruction drift.
+            if is_compliant_reason(reason):
+                name = resource_id.split("/")[-1]
+                logger.info(
+                    "CostAgent: blocked compliant-resource proposal — %s on %s",
+                    action_type, name,
+                )
+                return (
+                    f"Proposal rejected: reason indicates resource is already compliant "
+                    f"— no governance action needed for {name}"
+                )
 
             proposal = ProposedAction(
                 agent_id=_AGENT_ID,

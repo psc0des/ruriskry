@@ -589,3 +589,129 @@ class TestScanAPIEndpoints:
         """GET /api/alerts/{unknown}/status returns 404."""
         response = api_client.get("/api/alerts/nonexistent-id/status")
         assert response.status_code == 404
+
+
+# ============================================================================
+# Section G — Compliant-resource proposal filter
+# ============================================================================
+# is_compliant_reason() is the deterministic gate that prevents the LLM from
+# submitting governance proposals for resources that are already compliant.
+# It lives in src/operational_agents/__init__.py and is wired into every
+# agent's tool_propose_action before proposals_holder.append().
+# ============================================================================
+
+
+class TestIsCompliantReason:
+    """Unit tests for the is_compliant_reason() deterministic filter."""
+
+    @pytest.fixture(autouse=True)
+    def _import(self):
+        from src.operational_agents import is_compliant_reason
+        self.check = is_compliant_reason
+
+    # ------------------------------------------------------------------
+    # Positive cases — should be blocked
+    # ------------------------------------------------------------------
+
+    @pytest.mark.parametrize("reason", [
+        "No action needed — storage account is already encrypted.",
+        "Resource is already compliant with the security policy.",
+        "Already configured: supportsHttpsTrafficOnly is true.",
+        "Disk is already encrypted with platform key, compliant and secure.",
+        "Already secure — no vulnerability found.",
+        "No action required for this resource.",
+        "Storage account has already been hardened.",
+        "No issues found — configuration is compliant.",
+        "Nothing to do — already enabled.",
+        "Does not require any changes.",
+        "Already disabled as required by policy.",
+        "Is already in the desired state.",
+        "Resource is compliant with CIS benchmark.",
+        "Configuration is compliant and no remediation is needed.",
+        "No vulnerabilities detected on this resource.",
+        "Is compliant — soft-delete already enabled.",
+        "Not required: resource already meets the control objective.",
+        "No issues detected — policy is satisfied.",
+        "Secure configuration detected — no action needed.",
+    ])
+    def test_compliant_reason_returns_true(self, reason):
+        """Reasons signalling compliance must return True → proposal blocked."""
+        assert self.check(reason) is True, (
+            f"Expected is_compliant_reason({reason!r}) to return True"
+        )
+
+    # ------------------------------------------------------------------
+    # Negative cases — actual violations must pass through
+    # ------------------------------------------------------------------
+
+    @pytest.mark.parametrize("reason", [
+        "NSG rule 'allow-ssh-anywhere' exposes port 22 to 0.0.0.0/0.",
+        "Storage account allows public blob access — data exposure risk.",
+        "Key vault has soft-delete disabled — data loss risk if deleted.",
+        "VM is stopped — restart required to maintain SLA.",
+        "CPU utilisation averaged 3% over 7 days — candidate for right-sizing.",
+        "Disk encryption not enabled — data at rest is unprotected.",
+        "Public network access enabled on SQL database.",
+        "Missing deny-all inbound rule on NSG 'nsg-east-prod'.",
+        "RDP port 3389 open to internet — critical exposure.",
+        "Resource has no tags — blast radius analysis unavailable.",
+    ])
+    def test_violation_reason_returns_false(self, reason):
+        """Reasons describing real violations must return False → proposal allowed."""
+        assert self.check(reason) is False, (
+            f"Expected is_compliant_reason({reason!r}) to return False"
+        )
+
+    def test_empty_string_returns_false(self):
+        """Empty reason is not a compliance signal — do not block."""
+        assert self.check("") is False
+
+    def test_case_insensitive(self):
+        """Match is case-insensitive."""
+        assert self.check("NO ACTION NEEDED — everything is fine.") is True
+        assert self.check("Already Compliant with security baseline.") is True
+
+
+class TestCompliantFilterWiredInAgents:
+    """Verify that is_compliant_reason is wired into all three agent files."""
+
+    @pytest.mark.parametrize("module_path,agent_name", [
+        ("src.operational_agents.deploy_agent", "DeployAgent"),
+        ("src.operational_agents.monitoring_agent", "MonitoringAgent"),
+        ("src.operational_agents.cost_agent", "CostOptimizationAgent"),
+    ])
+    def test_filter_imported_in_agent(self, module_path, agent_name):
+        """is_compliant_reason must be imported at the module level."""
+        import importlib
+        import inspect
+        module = importlib.import_module(module_path)
+        source = inspect.getsource(module)
+        assert "is_compliant_reason" in source, (
+            f"{agent_name} ({module_path}) does not import is_compliant_reason — "
+            "compliant-resource proposals will not be blocked"
+        )
+
+    @pytest.mark.parametrize("module_path,agent_name", [
+        ("src.operational_agents.deploy_agent", "DeployAgent"),
+        ("src.operational_agents.monitoring_agent", "MonitoringAgent"),
+        ("src.operational_agents.cost_agent", "CostOptimizationAgent"),
+    ])
+    def test_filter_called_before_append_in_agent(self, module_path, agent_name):
+        """is_compliant_reason must be called inside tool_propose_action."""
+        import importlib
+        import inspect
+        module = importlib.import_module(module_path)
+        source = inspect.getsource(module)
+        # The guard must appear before proposals_holder.append
+        filter_pos = source.find("is_compliant_reason(reason)")
+        append_pos = source.find("proposals_holder.append(proposal)")
+        assert filter_pos != -1, (
+            f"{agent_name}: is_compliant_reason(reason) call not found in source"
+        )
+        assert append_pos != -1, (
+            f"{agent_name}: proposals_holder.append(proposal) not found in source"
+        )
+        assert filter_pos < append_pos, (
+            f"{agent_name}: is_compliant_reason must appear BEFORE "
+            "proposals_holder.append to act as a gate"
+        )
