@@ -970,7 +970,7 @@ class DeployAgent:
         for resource in self._resources.values():
             if resource.get("type") != _NSG_RESOURCE_TYPE:
                 continue
-            tags = resource.get("tags", {})
+            tags = resource.get("tags") or {}
             has_deny_all = tags.get("deny_all_inbound") == "true"
             if has_deny_all:
                 continue
@@ -1002,7 +1002,7 @@ class DeployAgent:
     def _detect_missing_lifecycle_tags(self) -> list[ProposedAction]:
         proposals: list[ProposedAction] = []
         for resource in self._resources.values():
-            tags = resource.get("tags", {})
+            tags = resource.get("tags") or {}
             if tags.get("environment") != "production":
                 continue
             # A resource is considered adequately tagged if it has ANY tag beyond

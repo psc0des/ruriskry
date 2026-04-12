@@ -449,14 +449,14 @@ class BlastRadiusAgent:
     ) -> list[str]:
         """Async variant of :meth:`_detect_spofs` — non-blocking resource lookups."""
         spofs: list[str] = []
-        if resource and resource.get("tags", {}).get("criticality") == "critical":
+        if resource and (resource.get("tags") or {}).get("criticality") == "critical":
             spofs.append(resource["name"])
         for name in affected_resources:
             if self._rg_client is not None:
                 r = await self._rg_client.get_resource_async(name)
             else:
                 r = self._resources.get(name)
-            if r and r.get("tags", {}).get("criticality") == "critical":
+            if r and (r.get("tags") or {}).get("criticality") == "critical":
                 if name not in spofs:
                     spofs.append(name)
         return spofs
@@ -571,7 +571,7 @@ class BlastRadiusAgent:
         """
         spofs: list[str] = []
 
-        if resource and resource.get("tags", {}).get("criticality") == "critical":
+        if resource and (resource.get("tags") or {}).get("criticality") == "critical":
             spofs.append(resource["name"])
 
         for name in affected_resources:
@@ -580,7 +580,7 @@ class BlastRadiusAgent:
                 r = self._rg_client.get_resource(name)
             else:
                 r = self._resources.get(name)
-            if r and r.get("tags", {}).get("criticality") == "critical":
+            if r and (r.get("tags") or {}).get("criticality") == "critical":
                 if name not in spofs:
                     spofs.append(name)
 
@@ -638,7 +638,7 @@ class BlastRadiusAgent:
 
         if resource:
             # 2. Criticality of the target resource
-            criticality = resource.get("tags", {}).get("criticality", "")
+            criticality = (resource.get("tags") or {}).get("criticality", "")
             score += _CRITICALITY_SCORE.get(criticality, 0.0)
 
             # 3. Downstream dependents + governed resources
@@ -682,7 +682,7 @@ class BlastRadiusAgent:
             )
 
         name = resource["name"]
-        criticality = resource.get("tags", {}).get("criticality", "unknown")
+        criticality = (resource.get("tags") or {}).get("criticality", "unknown")
         base = _ACTION_BASE_SCORE.get(action.action_type, 10.0)
         preview = affected_resources[:3]
         ellipsis = "..." if len(affected_resources) > 3 else ""

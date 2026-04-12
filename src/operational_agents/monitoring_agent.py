@@ -887,7 +887,7 @@ class MonitoringAgent:
     def _detect_untagged_critical_resources(self) -> list[ProposedAction]:
         proposals: list[ProposedAction] = []
         for resource in self._resources.values():
-            tags = resource.get("tags", {})
+            tags = resource.get("tags") or {}
             if tags.get("criticality") != "critical":
                 continue
             if "owner" in tags:
@@ -951,7 +951,7 @@ class MonitoringAgent:
     def _detect_high_cost_spofs(self) -> list[ProposedAction]:
         proposals: list[ProposedAction] = []
         for resource in self._resources.values():
-            tags = resource.get("tags", {})
+            tags = resource.get("tags") or {}
             if tags.get("criticality") != "critical":
                 continue
             monthly_cost = resource.get("monthly_cost")

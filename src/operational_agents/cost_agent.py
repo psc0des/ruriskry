@@ -736,7 +736,7 @@ class CostOptimizationAgent:
             return None
         proposed_sku = _DOWNSIZE_MAP[sku]
         savings = round(monthly_cost * _VM_DOWNSIZE_SAVINGS_RATE, 2)
-        tags = resource.get("tags", {})
+        tags = resource.get("tags") or {}
         is_idle = tags.get("purpose") == "disaster-recovery"
         reason = f"VM '{resource['name']}' is running SKU {sku} at ${monthly_cost:.0f}/month. "
         if is_idle:

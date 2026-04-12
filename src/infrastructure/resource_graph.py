@@ -371,7 +371,7 @@ class ResourceGraphClient:
         from src.infrastructure.cost_lookup import get_sku_monthly_cost
 
         name = resource.get("name", "")
-        tags = resource.get("tags", {})
+        tags = resource.get("tags") or {}
         rg = resource.get("resource_group", "")
         rid = resource.get("id", "")
         rtype = (resource.get("type") or "").lower()
@@ -604,7 +604,7 @@ Resources
         from src.infrastructure.cost_lookup import get_sku_monthly_cost_async
 
         name = resource.get("name", "")
-        tags = resource.get("tags", {})
+        tags = resource.get("tags") or {}
         rg = resource.get("resource_group", "")
         rid = resource.get("id", "")
         rtype = (resource.get("type") or "").lower()

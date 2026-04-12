@@ -360,7 +360,7 @@ async def _get_resource_tags(resource_id: str) -> dict[str, str]:
     cache = _load_seed_cache()
     name = resource_id.split("/")[-1] if "/" in resource_id else resource_id
     resource = cache.get(resource_id) or cache.get(name)
-    return resource.get("tags", {}) if resource else {}
+    return (resource.get("tags") or {}) if resource else {}
 
 # ---------------------------------------------------------------------------
 # FastAPI app
