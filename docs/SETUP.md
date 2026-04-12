@@ -569,9 +569,11 @@ lets you select the correct repo at click-time even if tags are missing or wrong
 
 **Step 2 — Create a GitHub Personal Access Token:**
 1. GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens
-2. Repository access: select your IaC repo (or all repos you want searchable in the overlay)
+2. Repository access: select **only your IaC repo** (e.g. `yourname/ruriskry-iac-test`) — do not grant access to the RuriSkry backend repo or any unrelated repos
 3. Permissions: Contents (Read & Write), Pull requests (Read & Write)
 4. Copy the token
+
+> **Security note:** The governance engine will only show repos matching `IAC_GITHUB_REPO` in the dropdown regardless of token scope, but scoping the PAT narrowly is defence-in-depth — it prevents the engine from ever creating PRs against unintended repos even if misconfigured.
 
 **Step 3 — Store the PAT:**
 

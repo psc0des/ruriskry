@@ -103,6 +103,7 @@ dashboard/playwright.perf.config.js
 
 # AI Agent Context (private)
 CLAUDE.md
+HOW-IT-WORKS.md
 .claude/
 
 # Learning notes (personal)

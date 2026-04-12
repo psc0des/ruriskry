@@ -880,14 +880,16 @@ Human dismisses a verdict — no execution will happen.
 
 ### `GET /api/github/repos`
 
-List GitHub repositories accessible via the configured `GITHUB_TOKEN`. Used by the "Create Terraform PR" overlay dropdown to populate the repo search box. Returns up to 100 repos (GitHub API page limit), sorted alphabetically.
+List GitHub repositories for the "Create Terraform PR" overlay dropdown. Returns only repos that match the configured `IAC_GITHUB_REPO` — if the token has broader access (e.g. a classic PAT), the extras are filtered out and a warning is logged. `IAC_GITHUB_REPO` is always included as a fallback even if the token cannot list repos.
 
 **Response:**
 ```json
-{ "repos": ["org/infra-repo", "user/another-repo", ...] }
+{ "repos": ["psc0des/ruriskry-iac-test"] }
 ```
 
-Returns `503` if `GITHUB_TOKEN` is not set. Returns `502` on GitHub API error with an actionable message: invalid/expired token (401), insufficient permissions (403), or other GitHub API failure. Compatible with both classic PATs and fine-grained PATs (fine-grained PATs must omit the `type` filter — the endpoint handles this automatically).
+Returns `503` if `GITHUB_TOKEN` is not set. Returns `502` on GitHub API error. Compatible with classic PATs and fine-grained PATs.
+
+> **Security:** Use a fine-grained PAT scoped only to your IaC repo. If the token has access to additional repos, the endpoint filters them out and logs a warning — but the right fix is to narrow the token's scope in GitHub settings.
 
 ---
 
