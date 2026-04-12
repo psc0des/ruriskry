@@ -116,8 +116,7 @@ CONTEXT.md
 # Internal demo production notes (not for contributors)
 docs/demo-script.md
 
-# Internal Playwright visual-scan screenshots (not product demos)
-docs/screenshots/visual-scan-*.png
+# Internal Playwright visual-scan screenshots — removed from ignore so README renders on GitHub
 
 # Internal planning / rearchitecture working docs (not for contributors)
 Adding-HITL-Agent-Fix-Plan.md
