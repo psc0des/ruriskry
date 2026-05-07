@@ -1107,3 +1107,76 @@ Used in `EvaluationDrilldown` verdict header: left 2 cols = verdict badge + meta
 **Inline stat rows (label | bar | annotation)**
 
 For breakdown bars with a fixed label and a fixed annotation, use: `flex items-center gap-3` → `w-48 shrink-0` label → `flex-1` bar container → `w-36 shrink-0 text-right` annotation. Bars then fill the remaining width between label and annotation regardless of page width.
+
+## Decision-Incident Linkage + Accuracy Metrics (Phase 36)
+
+```
+        POST /api/alert-trigger
+              │
+              ▼
+        _normalize_azure_alert_payload()     (existing)
+              │
+              ▼
+        correlate_alert_to_decisions()       (NEW — src/core/decision_alert_correlator.py)
+              │  exact resource_id match, 7-day backward window
+              │  → decision.outcome_label = "incident_correlated"
+              │  → alert.correlated_decision_ids = [...]
+              │
+        DecisionLabeler (background, 6h)     (NEW — src/core/decision_labeler.py)
+              │  for each decision older than 7d with outcome_label=None
+              └─ decision.outcome_label = "no_incident_observed"
+
+        GET /api/metrics/accuracy            (NEW)
+              │  reads labeled decisions from CosmosDecisionClient.get_labeled()
+              │  computes confusion matrix: TP/TN/FP/FN + precision/recall/F1
+              └─ empty_state: true when total_labeled = 0 (OSS day-1 contract)
+```
+
+**New modules:** `src/core/decision_alert_correlator.py`, `src/core/decision_labeler.py`
+
+**New tracker methods:** `DecisionTracker.update_outcome_label()`, `AlertTracker.update_correlated_decisions()`, `CosmosDecisionClient.get_by_id()`, `get_labeled()`, `get_unlabeled_before()`
+
+**New persisted-record fields** (Cosmos only, not on in-memory Pydantic models):
+- Decision records: `outcome_label`, `correlated_alert_ids`, `labeled_at`, `is_validated`
+- Alert records: `correlated_decision_ids`, `correlated_at`
+
+**New page:** `dashboard/src/pages/DecisionQuality.jsx` — switches on `metrics.empty_state`.
+
+## Few-Shot Bank + Borderline Rerun (Phase 38)
+
+```
+        RuriSkryPipeline.evaluate(action)
+              │
+              ▼ first pass (all 4 agents, normal path)
+              │
+              ▼ GovernanceVerdict (first pass)
+              │
+              ▼ is_borderline(verdict)?           (src/core/governance_engine.py)
+              │   True when |sri_composite - boundary| ≤ 3
+              │   Boundaries: 20, 30, 60 (hardcoded)
+              │
+        [if borderline]
+              │
+              ▼ retrieve_similar_validated(action, k=3)
+              │   (src/core/few_shot_retrieval.py)
+              │   embed_text(action_summary) → 1536-dim vector
+              │   AI Search query: filter is_validated=true OR is_seed=true
+              │   returns top-K by cosine similarity
+              │
+              ▼ re-run all 4 governance agents
+              │   few_shot_examples injected into LLM prompt
+              │   via format_few_shot_examples() in _llm_governance.py
+              │
+              ▼ GovernanceVerdict (refined)
+                  few_shot_examples_used = [seed_ids or decision_ids]
+```
+
+**Seed bank** (`data/few_shot_seed_bank.json`): 40 curated examples, version-controlled, CI-validated for schema + coverage matrix. Loaded idempotently into AI Search by `seed_bank_loader.load_seed_bank_if_needed()` at startup.
+
+**AI Search index `governance-decisions`**: vector field (1536-dim, HNSW, cosine), filterable fields for `action_type`, `resource_type`, `is_validated`, `is_seed`. Created programmatically by `AzureSearchClient._ensure_few_shot_index()` on first upsert — not Terraform-managed (vector fields not yet fully supported in azurerm provider).
+
+**Embedding model**: `text-embedding-3-small` hardcoded. All stored embeddings must use this model. Changing it requires a full backfill via `python -m src.tools.backfill_embeddings`.
+
+**is_validated logic**: `True` when `update_outcome_label()` is called (Phase 36 alert correlation or labeler). Seeds have `is_validated=True` and `is_seed=True`. User-generated validated decisions have `is_validated=True` and `is_seed=False`. Retrieval filters to either.
+
+**Observability**: `GovernanceVerdict.few_shot_examples_used: list[str]` stores seed/decision IDs used. EvaluationDrilldown shows "Few-shot calibrated" badge; `FewShotExamplesModal` lists examples with `(seed)` tags.

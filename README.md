@@ -111,6 +111,27 @@ cannot dominate. This enables **remediation intent detection**: when an ops agen
 security issue (not creating one), the LLM recognises that intent and reduces the risk score
 rather than blocking the fix.
 
+### Decision Quality Metrics (Phases 36 + 38)
+RuriSkry now measures its own accuracy over time and improves on borderline cases.
+
+**Phase 36 — Decision-Incident Linkage**: Every ingested Azure Monitor alert is correlated
+against recent governance decisions on the same resource (7-day window, exact `resource_id`
+match). When a match is found, both records get backref fields and the decision is labeled
+`incident_correlated`. A 6-hour background labeler marks aged decisions that saw no incident as
+`no_incident_observed`. The new **Decision Quality** dashboard page surfaces precision, recall,
+and F1 computed from labeled decisions — the same metrics ML researchers use to grade a model.
+A clean empty-state card is shown on day 1 (no errors, no 404s).
+
+**Phase 38 — Few-Shot Seed Bank**: A curated set of 40 validated examples (`data/few_shot_seed_bank.json`)
+ships with RuriSkry, covering all action-type × verdict combinations including 6 boundary cases.
+On startup, these examples are loaded idempotently into Azure AI Search (vector index, `text-embedding-3-small`,
+1536-dim HNSW cosine). When a governance scan produces a **borderline** verdict (composite SRI
+within ±3 of any decision boundary), all 4 governance agents re-run with the top-3 most-similar
+validated or seed examples injected into the LLM prompt — improving calibration where it matters most.
+As operators accumulate real validated decisions, those rank above the seeds automatically (closer
+vectors). A "Few-shot calibrated" badge appears on the verdict drilldown for any borderline verdict;
+clicking opens a modal listing the examples with `(seed)` tags for shipped examples.
+
 ### Universal Rules Engine (Phase 40)
 Before any LLM call, a **34-rule deterministic engine** scans every resource in the inventory
 against a self-registering `@rule` decorator registry. Rules are organised into three layers:
