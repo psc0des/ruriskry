@@ -99,6 +99,49 @@ class DecisionTracker:
         """
         return self._cosmos.get_by_resource(resource_id, limit)
 
+    async def embed_and_index(self, decision_id: str) -> None:
+        """Embed a decision and upsert it into the AI Search few-shot index.
+
+        Called fire-and-forget from the pipeline after record().
+        Non-fatal: any failure is logged and silently swallowed.
+
+        Args:
+            decision_id: The action_id of the decision to embed.
+        """
+        try:
+            from src.core.decision_embedder import build_embedding_text, embed_text  # noqa: PLC0415
+            from src.infrastructure.search_client import AzureSearchClient  # noqa: PLC0415
+
+            record = self._cosmos.get_by_id(decision_id)
+            if record is None:
+                return
+
+            text = build_embedding_text(record)
+            vector = await embed_text(text)
+
+            is_validated = record.get("outcome_label") is not None
+
+            search = AzureSearchClient()
+            search.upsert_few_shot_example({
+                "decision_id": decision_id,
+                "action_type": record.get("action_type", "unknown"),
+                "resource_type": (record.get("resource_type") or "").lower(),
+                "verdict": record.get("decision", "unknown"),
+                "sri_composite": record.get("sri_composite", 0.0),
+                "summary_text": text,
+                "outcome_reason": record.get("verdict_reason", ""),
+                "embedding": vector,
+                "is_seed": False,
+                "is_validated": is_validated,
+            })
+
+            # Store embedding on the Cosmos record for backfill detection
+            record["embedding"] = vector
+            record["is_validated"] = is_validated
+            self._cosmos.upsert(record)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("DecisionTracker.embed_and_index: %s — skipping", exc)
+
     def update_outcome_label(
         self,
         decision_id: str,
@@ -128,6 +171,8 @@ class DecisionTracker:
         record["outcome_label"] = label
         record["correlated_alert_ids"] = alert_ids
         record["labeled_at"] = datetime.now(timezone.utc).isoformat()
+        # Phase 38: a labeled decision has a confirmed outcome signal → is_validated = True
+        record["is_validated"] = True
         self._cosmos.upsert(record)
         logger.debug(
             "DecisionTracker: labeled %s → %s (alerts=%d)",
@@ -234,4 +279,5 @@ class DecisionTracker:
             "violations": violations,
             "triage_tier": verdict.triage_tier,  # None for pre-Phase-26 records
             "triage_mode": verdict.triage_mode,
+            "few_shot_examples_used": verdict.few_shot_examples_used,  # Phase 38
         }

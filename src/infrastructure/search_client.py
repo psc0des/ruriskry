@@ -65,6 +65,10 @@ class AzureSearchClient:
             or not self._api_key
         )
 
+        # Phase 38: in-memory few-shot store for mock mode; lazy live client
+        self._few_shot_examples: list[dict] = []
+        self._few_shot_search_client = None
+
         if self._is_mock:
             if not self._cfg.use_local_mocks and self._cfg.azure_search_endpoint:
                 logger.warning(
@@ -273,6 +277,184 @@ class AzureSearchClient:
             self._cfg.azure_search_index,
         )
         return succeeded
+
+    # ------------------------------------------------------------------
+    # Phase 38 — Few-shot example index (governance-decisions)
+    # ------------------------------------------------------------------
+
+    def count_seeds(self) -> int:
+        """Count documents with is_seed=True in the few-shot index.
+
+        Used by seed_bank_loader to decide whether to upload seeds.
+        Returns 0 in mock mode (seeds stored in memory, counted there).
+        """
+        if self._is_mock:
+            return sum(1 for ex in self._few_shot_examples if ex.get("is_seed"))
+
+        if not self._few_shot_search_client:
+            self._ensure_few_shot_client()
+
+        try:
+            results = self._few_shot_search_client.search(
+                search_text="*",
+                filter="is_seed eq true",
+                select=["seed_id"],
+            )
+            return sum(1 for _ in results)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("AzureSearchClient.count_seeds: %s — returning 0", exc)
+            return 0
+
+    def upsert_few_shot_example(self, doc: dict) -> None:
+        """Upsert one few-shot example document into the governance-decisions index.
+
+        In mock mode, stores in-memory (``self._few_shot_examples``).
+        In live mode, uploads to Azure AI Search.
+
+        The document must have either ``seed_id`` or ``decision_id`` as key.
+        """
+        if self._is_mock:
+            key = doc.get("seed_id") or doc.get("decision_id", "")
+            self._few_shot_examples = [
+                ex for ex in self._few_shot_examples
+                if (ex.get("seed_id") or ex.get("decision_id")) != key
+            ]
+            self._few_shot_examples.append(doc)
+            return
+
+        if not self._few_shot_search_client:
+            self._ensure_few_shot_client()
+
+        # Normalise key: Azure Search requires a single 'id' key field
+        normalised = {**doc, "id": doc.get("seed_id") or doc.get("decision_id", "")}
+        try:
+            self._ensure_few_shot_index()
+            self._few_shot_search_client.upload_documents(documents=[normalised])
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("AzureSearchClient.upsert_few_shot_example: %s", exc)
+            raise
+
+    def search_validated_similar(
+        self,
+        vector: list[float],
+        k: int = 3,
+    ) -> list[dict]:
+        """Search for the top-K most similar validated or seed examples.
+
+        Filters to ``is_validated=true OR is_seed=true`` and ranks by
+        cosine similarity on the embedding vector.
+
+        In mock mode: returns the first K examples from in-memory list
+        (vector ranking is not available without real embeddings).
+
+        Args:
+            vector: 1536-dim query embedding.
+            k: Number of results.
+
+        Returns:
+            List of example dicts, empty on failure.
+        """
+        if self._is_mock:
+            # Mock: return first K is_validated or is_seed examples
+            candidates = [
+                ex for ex in self._few_shot_examples
+                if ex.get("is_validated") or ex.get("is_seed")
+            ]
+            return candidates[:k]
+
+        if not self._few_shot_search_client:
+            self._ensure_few_shot_client()
+
+        try:
+            from azure.search.documents.models import VectorizedQuery  # type: ignore[import]
+            vq = VectorizedQuery(vector=vector, k_nearest_neighbors=k, fields="embedding")
+            results = self._few_shot_search_client.search(
+                search_text=None,
+                vector_queries=[vq],
+                filter="is_validated eq true or is_seed eq true",
+                select=[
+                    "seed_id", "decision_id", "action_type", "resource_type",
+                    "verdict", "sri_composite", "summary_text", "outcome_reason",
+                    "is_seed", "is_validated",
+                ],
+                top=k,
+            )
+            return [dict(r) for r in results]
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("AzureSearchClient.search_validated_similar: %s — returning []", exc)
+            return []
+
+    def _ensure_few_shot_client(self) -> None:
+        """Lazily create the SearchClient for the governance-decisions index."""
+        if self._few_shot_search_client:
+            return
+        from azure.core.credentials import AzureKeyCredential  # type: ignore[import]
+        from azure.search.documents import SearchClient  # type: ignore[import]
+        self._few_shot_search_client = SearchClient(
+            endpoint=self._cfg.azure_search_endpoint,
+            index_name=self._cfg.azure_search_few_shot_index,
+            credential=AzureKeyCredential(self._api_key),
+        )
+
+    def _ensure_few_shot_index(self) -> None:
+        """Create the governance-decisions index in AI Search if it doesn't exist.
+
+        Called lazily on first upsert. Uses the azure-search-documents SDK
+        >= 11.4 for vector field support. Safe to call multiple times
+        (create_or_update_index is idempotent).
+        """
+        try:
+            from azure.core.credentials import AzureKeyCredential  # type: ignore[import]
+            from azure.search.documents.indexes import SearchIndexClient  # type: ignore[import]
+            from azure.search.documents.indexes.models import (  # type: ignore[import]
+                HnswAlgorithmConfiguration,
+                SearchField,
+                SearchFieldDataType,
+                SearchIndex,
+                SimpleField,
+                VectorSearch,
+                VectorSearchProfile,
+            )
+            credential = AzureKeyCredential(self._api_key)
+            idx_client = SearchIndexClient(
+                endpoint=self._cfg.azure_search_endpoint,
+                credential=credential,
+            )
+            fields = [
+                SimpleField(name="id",            type=SearchFieldDataType.String, key=True),
+                SimpleField(name="seed_id",        type=SearchFieldDataType.String, filterable=True),
+                SimpleField(name="decision_id",    type=SearchFieldDataType.String, filterable=True),
+                SimpleField(name="action_type",    type=SearchFieldDataType.String, filterable=True),
+                SimpleField(name="resource_type",  type=SearchFieldDataType.String, filterable=True),
+                SimpleField(name="verdict",        type=SearchFieldDataType.String, filterable=True),
+                SimpleField(name="sri_composite",  type=SearchFieldDataType.Double),
+                SimpleField(name="summary_text",   type=SearchFieldDataType.String),
+                SimpleField(name="outcome_reason", type=SearchFieldDataType.String),
+                SimpleField(name="is_seed",        type=SearchFieldDataType.Boolean, filterable=True),
+                SimpleField(name="is_validated",   type=SearchFieldDataType.Boolean, filterable=True),
+                SearchField(
+                    name="embedding",
+                    type=SearchFieldDataType.Collection(SearchFieldDataType.Single),
+                    vector_search_dimensions=1536,
+                    vector_search_profile_name="hnsw-cosine",
+                ),
+            ]
+            vector_search = VectorSearch(
+                algorithms=[HnswAlgorithmConfiguration(name="hnsw", kind="hnsw")],
+                profiles=[VectorSearchProfile(name="hnsw-cosine", algorithm_configuration_name="hnsw")],
+            )
+            index = SearchIndex(
+                name=self._cfg.azure_search_few_shot_index,
+                fields=fields,
+                vector_search=vector_search,
+            )
+            idx_client.create_or_update_index(index)
+            logger.info(
+                "AzureSearchClient: created/updated index '%s'",
+                self._cfg.azure_search_few_shot_index,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("AzureSearchClient._ensure_few_shot_index: %s", exc)
 
     @property
     def is_mock(self) -> bool:

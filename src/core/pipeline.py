@@ -310,6 +310,17 @@ class RuriSkryPipeline:
             )
 
         # ------------------------------------------------------------------
+        # Phase 38B — Borderline few-shot rerun
+        # ------------------------------------------------------------------
+        # If the composite SRI is within ±3 of any verdict boundary (20/30/60),
+        # retrieve top-3 similar validated/seed examples and re-run all 4
+        # governance agents with those examples injected into the LLM prompts.
+        # Non-fatal: if retrieval fails, continue with the original verdict.
+        # Borderline cases are rare — the 4× LLM cost is acceptable.
+        # ------------------------------------------------------------------
+        verdict = await self._maybe_rerun_borderline(action, verdict, resource_metadata, force_deterministic)
+
+        # ------------------------------------------------------------------
         # Fire-and-forget Slack notification (Phase 32A)
         # ------------------------------------------------------------------
         # For DENIED or ESCALATED verdicts, send a Slack Block Kit message
@@ -323,6 +334,94 @@ class RuriSkryPipeline:
             logger.debug("Slack notification task could not be created.", exc_info=True)
 
         return verdict
+
+    # ------------------------------------------------------------------
+    # Phase 38B — Borderline few-shot rerun helper
+    # ------------------------------------------------------------------
+
+    async def _maybe_rerun_borderline(
+        self,
+        action: ProposedAction,
+        first_verdict: "GovernanceVerdict",
+        resource_metadata: dict,
+        force_deterministic: bool,
+    ) -> "GovernanceVerdict":
+        """Re-run all 4 agents with few-shot examples if verdict is borderline.
+
+        Borderline = composite SRI within ±3 of any verdict boundary (20, 30, 60).
+        Non-fatal: if retrieval or rerun fails, return the original verdict.
+
+        Args:
+            action: The proposed action being evaluated.
+            first_verdict: The verdict from the first pipeline pass.
+            resource_metadata: Resource context for the policy agent.
+            force_deterministic: Whether to skip LLM in all agents.
+
+        Returns:
+            Refined verdict (with few_shot_examples_used set) or original verdict.
+        """
+        from src.core.governance_engine import is_borderline  # noqa: PLC0415
+
+        if force_deterministic or not is_borderline(first_verdict):
+            return first_verdict
+
+        logger.info(
+            "Pipeline: borderline SRI=%.1f — retrieving few-shot examples for second pass",
+            first_verdict.skry_risk_index.sri_composite,
+        )
+
+        try:
+            from src.core.few_shot_retrieval import retrieve_similar_validated  # noqa: PLC0415
+            examples = await retrieve_similar_validated(action, k=3)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Pipeline: few-shot retrieval failed (%s) — using first-pass verdict", exc)
+            return first_verdict
+
+        if not examples:
+            logger.info("Pipeline: no few-shot examples found — using first-pass verdict")
+            return first_verdict
+
+        logger.info(
+            "Pipeline: few-shot second pass with %d example(s) (SRI=%.1f)",
+            len(examples),
+            first_verdict.skry_risk_index.sri_composite,
+        )
+
+        try:
+            # Re-run all 4 agents with few-shot examples injected
+            (
+                blast_result,
+                policy_result,
+                historical_result,
+                financial_result,
+            ) = await asyncio.gather(
+                self._blast.evaluate(action, force_deterministic=force_deterministic, few_shot_examples=examples),
+                self._policy.evaluate(action, resource_metadata, force_deterministic=force_deterministic, few_shot_examples=examples),
+                self._historical.evaluate(action, force_deterministic=force_deterministic, few_shot_examples=examples),
+                self._financial.evaluate(action, force_deterministic=force_deterministic, few_shot_examples=examples),
+            )
+            refined = self._engine.evaluate(
+                action, blast_result, policy_result, historical_result, financial_result
+            )
+            refined.triage_tier = first_verdict.triage_tier
+            refined.triage_mode = first_verdict.triage_mode
+            # Preserve action_id from first verdict for audit trail consistency
+            refined.action_id = first_verdict.action_id
+            # Record which examples were used (Sprint 3 observability)
+            refined.few_shot_examples_used = [
+                ex.get("seed_id") or ex.get("decision_id", "") for ex in examples
+            ]
+            logger.info(
+                "Pipeline: few-shot second pass → verdict=%s composite=%.1f",
+                refined.decision.value,
+                refined.skry_risk_index.sri_composite,
+            )
+            return refined
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Pipeline: borderline rerun failed (%s) — using first-pass verdict", exc
+            )
+            return first_verdict
 
     # ------------------------------------------------------------------
     # Public API — Operational agent orchestration

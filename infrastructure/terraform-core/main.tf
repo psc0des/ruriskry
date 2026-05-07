@@ -302,6 +302,12 @@ resource "azurerm_search_service" "ruriskry" {
   replica_count   = var.search_sku == "free" ? null : 1
   partition_count = var.search_sku == "free" ? null : 1
 
+  # Phase 38: The `governance-decisions` index (vector search, 1536-dim HNSW cosine)
+  # is managed programmatically by AzureSearchClient._ensure_few_shot_index()
+  # on first upsert. Terraform provisions the Search Service; the index schema
+  # is created by the application at runtime so it can use vector field types
+  # not yet fully supported in the azurerm provider's azurerm_search_index resource.
+
   tags = local.common_tags
 }
 

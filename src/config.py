@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     azure_search_api_key: str = ""
     azure_search_api_key_secret_name: str = "search-primary-key"
     azure_search_index: str = "incident-history"
+    azure_search_few_shot_index: str = "governance-decisions"   # Phase 38
+
+    # --- Embedding model (Phase 38 few-shot retrieval) ---
+    azure_embedding_deployment: str = "text-embedding-3-small"
 
     # --- Azure Cosmos DB (SQL API — Decisions) ---
     cosmos_endpoint: str = ""

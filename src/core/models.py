@@ -254,6 +254,7 @@ class GovernanceVerdict(BaseModel):
     triage_tier: Optional[int] = None  # 1 | 2 | 3 — set by risk_triage (Phase 26)
     triage_mode: Optional[str] = None  # "full" | "deterministic" | None (pre-Phase-27)
     conditions: list["ApprovalCondition"] = Field(default_factory=list)  # Phase 32 Part 2
+    few_shot_examples_used: list[str] = Field(default_factory=list)  # Phase 38: seed_ids or decision_ids
 
 
 # ============================================

@@ -169,6 +169,51 @@ def format_overrides_for_prompt(overrides: list) -> str:
     return "\n".join(lines)
 
 
+def format_few_shot_examples(examples: list[dict]) -> str:
+    """Format retrieved few-shot examples as a prompt section.
+
+    Returns an empty string when the list is empty — cold-start safe.
+    Each entry shows the action context, verdict, SRI, and outcome so
+    the LLM can calibrate its score against similar past decisions.
+
+    Args:
+        examples: List of dicts from ``retrieve_similar_validated()``.
+                  Each may come from the seed bank (is_seed=True) or
+                  from user-generated validated decisions.
+
+    Returns:
+        A prompt section string, or empty string if examples is empty.
+    """
+    if not examples:
+        return ""
+
+    lines = [
+        "\n## Similar Past Decisions (Few-Shot Examples)",
+        "The following similar cases were confirmed correct by operator signal or",
+        "alert correlation. Use them to calibrate your judgment on the current case.",
+    ]
+    for i, ex in enumerate(examples, 1):
+        action_type = ex.get("action_type", "?")
+        resource_type = ex.get("resource_type", "?")
+        verdict = ex.get("verdict", "?")
+        sri = ex.get("sri_composite", "?")
+        summary = ex.get("summary_text", "")
+        reason = ex.get("outcome_reason", "")
+        is_seed = ex.get("is_seed", False)
+        source = "(seed example)" if is_seed else "(operator-validated)"
+
+        sri_str = f"{sri:.1f}" if isinstance(sri, (int, float)) else str(sri)
+
+        lines.append(f"\n{i}. {source} {action_type} on {resource_type}")
+        lines.append(f"   Verdict: {verdict.upper()} (SRI {sri_str})")
+        if summary:
+            lines.append(f"   Context: {summary[:150]}")
+        if reason:
+            lines.append(f"   Outcome: {reason[:200]}")
+    lines.append("")
+    return "\n".join(lines)
+
+
 def annotate_violations(
     violations: list,
     adj_list: list[dict],

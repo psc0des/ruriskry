@@ -350,3 +350,42 @@ class GovernanceDecisionEngine:
             f"threshold (≤ {self._approve_threshold}). Action cleared for execution.",
             [],
         )
+
+
+# ---------------------------------------------------------------------------
+# Phase 38B — Borderline detection
+# ---------------------------------------------------------------------------
+
+# Verdict boundary values (must match the decision thresholds in Settings).
+# APPROVED / APPROVED_IF boundary: 20  (below=APPROVED if no conditions, above=APPROVED_IF)
+# APPROVED_IF / ESCALATED boundary: 30  (sri_auto_approve_threshold = 25 → ESCALATED above 25,
+#   but effective "soft" boundary where a single-point change flips verdict is ~25 ± 3)
+# ESCALATED / DENIED boundary: 60        (sri_human_review_threshold = 60)
+# We use the *configured* thresholds, not hardcoded values, but the OSS plan
+# says to hardcode ±3 of {20, 30, 60}. Those numbers are approximate mid-points
+# between the configured thresholds (25, 60) and their adjacent bands.
+_VERDICT_BOUNDARIES = (20, 30, 60)
+_BORDERLINE_WINDOW = 3
+
+
+def is_borderline(verdict: "GovernanceVerdict") -> bool:  # type: ignore[name-defined]
+    """Return True if the composite SRI is within ±3 of any verdict boundary.
+
+    Boundaries hardcoded at 20, 30, 60 — these are the sensitive points where
+    a single-agent score change can flip the final verdict. When a verdict is
+    borderline, the pipeline re-runs all 4 governance agents with few-shot
+    examples injected to improve calibration.
+
+    Phase 38 plan specifies window=3 hardcoded — no config needed.
+
+    Args:
+        verdict: The GovernanceVerdict from the first pipeline pass.
+
+    Returns:
+        True if the SRI composite is within ±3 of 20, 30, or 60.
+    """
+    sri = verdict.skry_risk_index.sri_composite
+    for boundary in _VERDICT_BOUNDARIES:
+        if abs(sri - boundary) <= _BORDERLINE_WINDOW:
+            return True
+    return False

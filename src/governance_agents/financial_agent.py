@@ -213,7 +213,7 @@ class FinancialImpactAgent:
     # Public API
     # ------------------------------------------------------------------
 
-    async def evaluate(self, action: ProposedAction, force_deterministic: bool = False) -> FinancialResult:
+    async def evaluate(self, action: ProposedAction, force_deterministic: bool = False, few_shot_examples: list[dict] | None = None) -> FinancialResult:
         """Evaluate the financial impact of a proposed infrastructure action.
 
         Routes to the Microsoft Agent Framework agent in live mode, or to the
@@ -241,7 +241,7 @@ class FinancialImpactAgent:
             return self._evaluate_rules(action)  # mock: pure in-memory, no IO
 
         try:
-            return await self._evaluate_with_framework(action)
+            return await self._evaluate_with_framework(action, few_shot_examples=few_shot_examples or [])
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "FinancialImpactAgent: framework call failed (%s) — falling back to rules.", exc
@@ -254,7 +254,7 @@ class FinancialImpactAgent:
     # Microsoft Agent Framework path (live mode)
     # ------------------------------------------------------------------
 
-    async def _evaluate_with_framework(self, action: ProposedAction) -> FinancialResult:
+    async def _evaluate_with_framework(self, action: ProposedAction, few_shot_examples: list[dict] | None = None) -> FinancialResult:
         """Run the framework agent with GPT-4.1 driving the tool call."""
         from openai import AsyncAzureOpenAI
         from azure.identity import DefaultAzureCredential, get_bearer_token_provider
@@ -335,6 +335,7 @@ class FinancialImpactAgent:
         from src.infrastructure.llm_throttle import run_with_throttle
         from src.governance_agents._llm_governance import (  # noqa: PLC0415
             format_overrides_for_prompt,
+            format_few_shot_examples,
             parse_llm_decision,
         )
         from src.core.override_retrieval import retrieve_relevant_overrides  # noqa: PLC0415
@@ -345,11 +346,13 @@ class FinancialImpactAgent:
 
         overrides = await retrieve_relevant_overrides(action)
         override_section = format_overrides_for_prompt(overrides)
+        few_shot_section = format_few_shot_examples(few_shot_examples or [])
         prompt = (
             f"## Proposed Action\n{action.model_dump_json()}\n\n"
             f"## Ops Agent's Reasoning\n{action.reason}\n"
             f"{evidence_section}\n"
             f"{override_section}"
+            f"{few_shot_section}"
             "INSTRUCTIONS: First call evaluate_financial_rules to get the baseline score "
             "and cost analysis. Reason about whether the financial risk accurately reflects "
             "the business impact given the ops agent's intent. "
