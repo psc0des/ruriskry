@@ -43,7 +43,8 @@ import Admin     from './pages/Admin'
 import Inventory from './pages/Inventory'
 import Login     from './pages/Login'
 import Setup     from './pages/Setup'
-import Glossary  from './pages/Glossary'
+import Glossary        from './pages/Glossary'
+import DecisionQuality from './pages/DecisionQuality'
 import { RefreshCw, Bell, LogOut, BookOpen } from 'lucide-react'
 import { NavLink } from 'react-router-dom'
 
@@ -393,7 +394,8 @@ export default function App() {
               <Route path="alerts"      element={<Alerts />} />
               <Route path="audit"       element={<AuditLog />} />
               <Route path="admin"       element={<Admin />} />
-              <Route path="glossary"    element={<Glossary />} />
+              <Route path="glossary"         element={<Glossary />} />
+              <Route path="decision-quality" element={<DecisionQuality />} />
               <Route path="*"           element={<Navigate to="/overview" replace />} />
             </Route>
           </Routes>

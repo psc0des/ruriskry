@@ -431,12 +431,32 @@ async def lifespan(app: FastAPI):
     _watcher = ConditionWatcher(_get_execution_gateway())
     _watcher_task = asyncio.create_task(_watcher.run())
 
+    # Phase 36B: start decision labeler (marks aged decisions no_incident_observed)
+    from src.core.decision_labeler import DecisionLabeler  # noqa: PLC0415
+    _labeler = DecisionLabeler(_get_tracker())
+    _labeler_task = asyncio.create_task(_labeler.run())
+
+    # Phase 38: load seed bank into AI Search on startup (non-fatal if missing/down)
+    try:
+        from src.core.seed_bank_loader import load_seed_bank_if_needed  # noqa: PLC0415
+        from src.infrastructure.search_client import AzureSearchClient  # noqa: PLC0415
+        _search_for_seeds = AzureSearchClient()
+        asyncio.create_task(load_seed_bank_if_needed(_search_for_seeds))
+    except Exception as _seed_exc:  # noqa: BLE001
+        logger.warning("Startup: seed bank load skipped — %s", _seed_exc)
+
     yield  # application runs
 
     _watcher.stop()
     _watcher_task.cancel()
+    _labeler.stop()
+    _labeler_task.cancel()
     try:
         await _watcher_task
+    except asyncio.CancelledError:
+        pass
+    try:
+        await _labeler_task
     except asyncio.CancelledError:
         pass
 
@@ -1687,6 +1707,115 @@ async def get_metrics() -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Endpoint — Phase 36C decision accuracy metrics
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/metrics/accuracy")
+async def get_accuracy_metrics(
+    days: int = 30,
+    action_type: str | None = None,
+) -> dict:
+    """Return decision accuracy metrics over the past N days.
+
+    Computes a confusion matrix from labeled decisions:
+      - TP: ESCALATED or DENIED that were followed by an incident
+      - FP: ESCALATED or DENIED that were NOT followed by an incident
+      - FN: APPROVED or APPROVED_IF that were followed by an incident
+      - TN: APPROVED or APPROVED_IF that were NOT followed by an incident
+
+    OSS empty-state contract: when no decisions have been labeled yet,
+    returns ``empty_state: true`` with null precision/recall/f1 and zero
+    counts. Frontend uses this flag to switch between the populated view
+    and the empty-state card.
+
+    Query params:
+    - **days**: look-back window (default 30)
+    - **action_type**: filter to one action type (optional)
+    """
+    labeled = _get_tracker()._cosmos.get_labeled(window_days=days, action_type=action_type)
+
+    if not labeled:
+        return {
+            "window_days": days,
+            "total_labeled": 0,
+            "by_predicted_verdict": {
+                "approved":     {"incident_correlated": 0, "no_incident_observed": 0, "rate": None},
+                "approved_if":  {"incident_correlated": 0, "no_incident_observed": 0, "rate": None},
+                "escalated":    {"incident_correlated": 0, "no_incident_observed": 0, "rate": None},
+                "denied":       {"incident_correlated": 0, "no_incident_observed": 0, "rate": None},
+            },
+            "confusion_matrix": {"tp": 0, "tn": 0, "fp": 0, "fn": 0},
+            "precision": None,
+            "recall": None,
+            "f1": None,
+            "empty_state": True,
+            "empty_state_reason": "no_labeled_decisions_yet",
+        }
+
+    # Aggregate by predicted verdict × outcome label
+    by_verdict: dict[str, dict[str, int]] = {
+        v: {"incident_correlated": 0, "no_incident_observed": 0}
+        for v in ("approved", "approved_if", "escalated", "denied")
+    }
+
+    tp = tn = fp = fn = 0
+    for record in labeled:
+        predicted = record.get("decision", "").lower()
+        outcome = record.get("outcome_label", "")
+
+        if predicted not in by_verdict:
+            continue
+
+        if outcome == "incident_correlated":
+            by_verdict[predicted]["incident_correlated"] += 1
+            # ESCALATED/DENIED → incident = True Positive (correct high-risk prediction)
+            # APPROVED/APPROVED_IF → incident = False Negative (missed risk)
+            if predicted in ("escalated", "denied"):
+                tp += 1
+            else:
+                fn += 1
+        elif outcome == "no_incident_observed":
+            by_verdict[predicted]["no_incident_observed"] += 1
+            # ESCALATED/DENIED → no incident = False Positive (over-flagged)
+            # APPROVED/APPROVED_IF → no incident = True Negative (correctly approved)
+            if predicted in ("escalated", "denied"):
+                fp += 1
+            else:
+                tn += 1
+
+    # Compute per-verdict incident rate
+    by_predicted_out: dict[str, dict] = {}
+    for verdict, counts in by_verdict.items():
+        total_v = counts["incident_correlated"] + counts["no_incident_observed"]
+        rate = round(counts["incident_correlated"] / total_v, 3) if total_v else None
+        by_predicted_out[verdict] = {
+            "incident_correlated": counts["incident_correlated"],
+            "no_incident_observed": counts["no_incident_observed"],
+            "rate": rate,
+        }
+
+    # Precision = TP / (TP + FP)
+    precision = round(tp / (tp + fp), 3) if (tp + fp) else None
+    # Recall = TP / (TP + FN)
+    recall = round(tp / (tp + fn), 3) if (tp + fn) else None
+    # F1 = 2 * P * R / (P + R)
+    f1 = round(2 * precision * recall / (precision + recall), 3) if (precision and recall) else None
+
+    return {
+        "window_days": days,
+        "total_labeled": len(labeled),
+        "by_predicted_verdict": by_predicted_out,
+        "confusion_matrix": {"tp": tp, "tn": tn, "fp": fp, "fn": fn},
+        "precision": precision,
+        "recall": recall,
+        "f1": f1,
+        "empty_state": False,
+        "empty_state_reason": None,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Endpoint 4 — resource risk profile
 # ---------------------------------------------------------------------------
 
@@ -2271,6 +2400,24 @@ async def trigger_alert(
     _alerts[alert_id] = record
     _alert_events[alert_id] = asyncio.Queue()
     _persist_alert_record(alert_id)
+
+    # Phase 36A: correlate this alert to recent decisions on the same resource.
+    # Non-fatal — a correlation failure must never block alert ingestion.
+    try:
+        from src.core.decision_alert_correlator import correlate_alert_to_decisions  # noqa: PLC0415
+        linked = correlate_alert_to_decisions(
+            alert={**record, "alert_id": alert_id},
+            decision_tracker=_get_tracker(),
+            alert_tracker=_get_alert_tracker(),
+        )
+        if linked:
+            logger.info(
+                "alert-trigger: correlated %s to %d decision(s)",
+                alert_id[:8],
+                len(linked),
+            )
+    except Exception as _corr_exc:  # noqa: BLE001
+        logger.warning("alert-trigger: correlation failed (%s) — continuing", _corr_exc)
 
     logger.info("alert-trigger: created %s (resource=%s, metric=%s)", alert_id[:8], resource_name, alert.get("metric"))
 

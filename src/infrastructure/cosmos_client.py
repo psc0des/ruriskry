@@ -134,6 +134,112 @@ class CosmosDecisionClient:
             self._container.query_items(query, enable_cross_partition_query=True)
         )
 
+    def get_by_id(self, decision_id: str) -> dict | None:
+        """Return one decision record by its id, or None if not found.
+
+        Args:
+            decision_id: The document id (= action_id) to look up.
+
+        Returns:
+            The decision dict, or None if not found.
+        """
+        if self._is_mock:
+            path = self._decisions_dir / f"{decision_id}.json"
+            if not path.exists():
+                return None
+            try:
+                import json as _json  # noqa: PLC0415
+                with open(path, encoding="utf-8") as fh:
+                    return _json.load(fh)
+            except (OSError, ValueError):
+                return None
+
+        query = "SELECT TOP 1 * FROM c WHERE c.id = @id"
+        items = list(
+            self._container.query_items(
+                query=query,
+                parameters=[{"name": "@id", "value": decision_id}],
+                enable_cross_partition_query=True,
+            )
+        )
+        return items[0] if items else None
+
+    def get_unlabeled_before(self, cutoff_iso: str, limit: int = 10_000) -> list[dict]:
+        """Return decisions older than cutoff_iso with no outcome_label set.
+
+        Used by DecisionLabeler to find decisions to label.
+
+        Args:
+            cutoff_iso: ISO-8601 timestamp. Decisions with timestamp <= this
+                        value and no outcome_label are returned.
+            limit: Maximum records to return.
+
+        Returns:
+            List of decision dicts, oldest first.
+        """
+        if self._is_mock:
+            records = self._load_local_all()
+            unlabeled = [
+                r for r in records
+                if r.get("timestamp", "") <= cutoff_iso
+                and r.get("outcome_label") is None
+                and r.get("decision", "").lower() != "denied"
+            ]
+            unlabeled.sort(key=lambda r: r.get("timestamp", ""))
+            return unlabeled[:limit]
+
+        query = (
+            f"SELECT TOP {limit} * FROM c "
+            "WHERE c.timestamp <= @cutoff "
+            "AND (NOT IS_DEFINED(c.outcome_label) OR c.outcome_label = null) "
+            "AND c.decision != 'denied' "
+            "ORDER BY c.timestamp ASC"
+        )
+        params = [{"name": "@cutoff", "value": cutoff_iso}]
+        return list(
+            self._container.query_items(
+                query, parameters=params, enable_cross_partition_query=True
+            )
+        )
+
+    def get_labeled(self, window_days: int = 30, action_type: str | None = None) -> list[dict]:
+        """Return labeled decisions (outcome_label is set) within the window.
+
+        Used by the metrics accuracy endpoint to compute confusion matrix.
+
+        Args:
+            window_days: How far back to look (default 30 days).
+            action_type: Optional filter by action_type value.
+
+        Returns:
+            List of decision dicts with non-null outcome_label.
+        """
+        from datetime import datetime, timedelta, timezone  # noqa: PLC0415
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=window_days)).isoformat()
+
+        if self._is_mock:
+            records = self._load_local_all()
+            result = [
+                r for r in records
+                if r.get("outcome_label") is not None
+                and r.get("timestamp", "") >= cutoff
+            ]
+            if action_type:
+                result = [r for r in result if r.get("action_type") == action_type]
+            return result
+
+        filters = ["IS_DEFINED(c.outcome_label)", "c.outcome_label != null", "c.timestamp >= @cutoff"]
+        params = [{"name": "@cutoff", "value": cutoff}]
+        if action_type:
+            filters.append("c.action_type = @at")
+            params.append({"name": "@at", "value": action_type})
+        query = f"SELECT * FROM c WHERE {' AND '.join(filters)}"
+        return list(
+            self._container.query_items(
+                query, parameters=params, enable_cross_partition_query=True
+            )
+        )
+
     def get_by_resource(self, resource_id: str, limit: int = 10) -> list[dict]:
         """Return decisions for a specific resource, newest first.
 

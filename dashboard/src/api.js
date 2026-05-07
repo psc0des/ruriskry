@@ -753,6 +753,21 @@ export async function fetchOverridesMetrics() {
 }
 
 /**
+ * Fetch decision accuracy metrics (Phase 36C confusion matrix).
+ * @param {object} [opts]
+ * @param {number} [opts.days=30] - look-back window
+ * @param {string} [opts.action_type] - optional filter
+ * @returns {Promise<object>} accuracy metrics including empty_state flag
+ */
+export async function fetchAccuracyMetrics({ days = 30, action_type = null } = {}) {
+  const params = new URLSearchParams({ days })
+  if (action_type) params.set('action_type', action_type)
+  const res = await apiFetch(`${BASE}/metrics/accuracy?${params}`)
+  if (!res.ok) throw new Error(`API error ${res.status}: failed to fetch accuracy metrics`)
+  return res.json()
+}
+
+/**
  * Call the A2 Validator Agent to get a safety brief for the playbook command.
  * Always resolves (never rejects) — check brief.validator_status for "unavailable".
  * @param {string} decisionId - action_id UUID from the governance verdict

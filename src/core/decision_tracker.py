@@ -99,6 +99,43 @@ class DecisionTracker:
         """
         return self._cosmos.get_by_resource(resource_id, limit)
 
+    def update_outcome_label(
+        self,
+        decision_id: str,
+        label: str,
+        alert_ids: list[str],
+    ) -> None:
+        """Set outcome_label and correlated_alert_ids on a persisted decision record.
+
+        Called by the correlator (when an alert fires) and the labeler (nightly).
+        Reads the existing record, merges the fields, and re-upserts so the
+        update is idempotent — calling it twice with the same args is safe.
+
+        Args:
+            decision_id: The action_id (= Cosmos document ``id``) to update.
+            label: ``"incident_correlated"`` or ``"no_incident_observed"``.
+            alert_ids: Full list of correlated alert UUIDs (may be empty).
+        """
+        from datetime import datetime, timezone  # noqa: PLC0415
+        record = self._cosmos.get_by_id(decision_id)
+        if record is None:
+            logger.warning(
+                "DecisionTracker.update_outcome_label: decision %s not found",
+                decision_id[:8],
+            )
+            return
+
+        record["outcome_label"] = label
+        record["correlated_alert_ids"] = alert_ids
+        record["labeled_at"] = datetime.now(timezone.utc).isoformat()
+        self._cosmos.upsert(record)
+        logger.debug(
+            "DecisionTracker: labeled %s → %s (alerts=%d)",
+            decision_id[:8],
+            label,
+            len(alert_ids),
+        )
+
     def get_risk_profile(self, resource_id: str) -> dict:
         """Return an aggregated risk summary for a resource.
 

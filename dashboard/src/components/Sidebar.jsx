@@ -11,15 +11,16 @@
 
 import React from 'react'
 import { NavLink } from 'react-router-dom'
-import { LayoutDashboard, ScanLine, Bot, ShieldCheck, FileText, Activity, Zap, Settings, Server } from 'lucide-react'
+import { LayoutDashboard, ScanLine, Bot, ShieldCheck, FileText, Activity, Zap, Settings, Server, BarChart2 } from 'lucide-react'
 
 const NAV = [
-  { to: '/overview',   icon: LayoutDashboard, label: 'Overview' },
-  { to: '/inventory',  icon: Server,          label: 'Inventory' },
-  { to: '/agents',     icon: Bot,             label: 'Agents' },
-  { to: '/decisions',  icon: ShieldCheck,     label: 'Decisions' },
-  { to: '/audit',      icon: FileText,        label: 'Audit Log' },
-  { to: '/alerts',     icon: Zap,             label: 'Alerts' },
+  { to: '/overview',          icon: LayoutDashboard, label: 'Overview' },
+  { to: '/inventory',         icon: Server,          label: 'Inventory' },
+  { to: '/agents',            icon: Bot,             label: 'Agents' },
+  { to: '/decisions',         icon: ShieldCheck,     label: 'Decisions' },
+  { to: '/audit',             icon: FileText,        label: 'Audit Log' },
+  { to: '/alerts',            icon: Zap,             label: 'Alerts' },
+  { to: '/decision-quality',  icon: BarChart2,       label: 'Dec. Quality' },
 ]
 
 export default function Sidebar({ pendingCount = 0, alertCount = 0, loggedInUser = null }) {

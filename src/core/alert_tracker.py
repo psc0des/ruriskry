@@ -179,6 +179,39 @@ class AlertTracker:
         )
         return items[0] if items else 0
 
+    def update_correlated_decisions(
+        self,
+        alert_id: str,
+        decision_ids: list[str],
+    ) -> None:
+        """Set correlated_decision_ids and correlated_at on an alert record.
+
+        Merges the given decision_ids with any already stored — idempotent.
+
+        Args:
+            alert_id: UUID of the alert to update.
+            decision_ids: Decision ids that were matched by the correlator.
+        """
+        from datetime import datetime, timezone  # noqa: PLC0415
+        record = self.get(alert_id)
+        if record is None:
+            logger.warning(
+                "AlertTracker.update_correlated_decisions: alert %s not found",
+                alert_id[:8] if alert_id else "?",
+            )
+            return
+
+        existing = record.get("correlated_decision_ids", [])
+        merged = list(set(existing) | set(decision_ids))
+        record["correlated_decision_ids"] = merged
+        record["correlated_at"] = datetime.now(timezone.utc).isoformat()
+        self.upsert(record)
+        logger.debug(
+            "AlertTracker: linked alert %s to %d decision(s)",
+            alert_id[:8] if alert_id else "?",
+            len(merged),
+        )
+
     @property
     def is_mock(self) -> bool:
         return self._is_mock
