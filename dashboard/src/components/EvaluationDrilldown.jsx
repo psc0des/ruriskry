@@ -22,6 +22,7 @@ import TerraformPROverlay from './TerraformPROverlay'
 import PlaybookPanel from './PlaybookPanel'
 import OverrideHistoryPanel from './OverrideHistoryPanel'
 import InfoIcon from './glossary/InfoIcon'
+import FewShotExamplesModal from './FewShotExamplesModal'
 
 // Map verdict string → glossary term id for the inline info icon
 const VERDICT_TERM = {
@@ -371,6 +372,7 @@ export default function EvaluationDrilldown({ evaluation, onBack, reviewedBy }) 
     const [showPROverlay, setShowPROverlay] = useState(false)
     const [rollbackExecuting, setRollbackExecuting] = useState(false)
     const [rollbackResult, setRollbackResult] = useState(null)
+    const [showFewShotModal, setShowFewShotModal] = useState(false)
 
     // Normalize: evaluation may be a flat tracker record OR a GovernanceVerdict
     // snapshot (from ?exec= URL). Flatten proposed_action fields so the rest of
@@ -627,10 +629,24 @@ export default function EvaluationDrilldown({ evaluation, onBack, reviewedBy }) 
                                         <InfoIcon termId={VERDICT_TERM[(ev.verdict ?? '').toLowerCase()]} size={16} />
                                     )}
                                 </h1>
-                                <p className="text-xs text-slate-500 mt-0.5 flex items-center gap-1">
-                                    Governance Verdict
-                                    <InfoIcon termId="governance-verdict" size={11} />
-                                </p>
+                                <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                                    <p className="text-xs text-slate-500 flex items-center gap-1">
+                                        Governance Verdict
+                                        <InfoIcon termId="governance-verdict" size={11} />
+                                    </p>
+                                    {/* Phase 38C — few-shot calibration badge */}
+                                    {(ev.few_shot_examples_used?.length > 0) && (
+                                        <button
+                                            onClick={() => setShowFewShotModal(true)}
+                                            className="text-[11px] px-2 py-0.5 rounded-full border font-medium transition-colors
+                                                       bg-teal-900/30 text-teal-300 border-teal-700/40
+                                                       hover:bg-teal-900/50 hover:text-teal-200"
+                                            title="Click to see the few-shot examples used in this decision"
+                                        >
+                                            ✦ Few-shot calibrated
+                                        </button>
+                                    )}
+                                </div>
                             </div>
                         </div>
 
@@ -1324,6 +1340,14 @@ export default function EvaluationDrilldown({ evaluation, onBack, reviewedBy }) 
                     loading={createPrLoading}
                     onConfirm={(repo, path, confirmedChange) => handleCreatePR(executionStatus.execution_id, repo, path, confirmedChange)}
                     onCancel={() => { setShowPROverlay(false); setCreatePrError(null) }}
+                />
+            )}
+
+            {/* Phase 38C — Few-shot examples modal */}
+            {showFewShotModal && (
+                <FewShotExamplesModal
+                    examples={ev.few_shot_examples_used_details ?? ev.few_shot_examples_used?.map(id => ({ seed_id: id, is_seed: true })) ?? []}
+                    onClose={() => setShowFewShotModal(false)}
                 />
             )}
         </div>
