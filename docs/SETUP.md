@@ -746,7 +746,9 @@ Env vars and secrets are wired automatically by Terraform — you don't ship a `
 | `AZURE_OPENAI_ENDPOINT` | Live only | — | Foundry endpoint URL |
 | `AZURE_OPENAI_DEPLOYMENT` | Live only | `gpt-4.1-mini` | Model deployment name (set via `foundry_deployment_name` in terraform.tfvars) |
 | `AZURE_SEARCH_ENDPOINT` | Live only | — | Azure AI Search endpoint |
-| `AZURE_SEARCH_INDEX` | Live only | `incident-history` | Search index name |
+| `AZURE_SEARCH_INDEX` | Live only | `incident-history` | Search index name for incident history |
+| `AZURE_SEARCH_FEW_SHOT_INDEX` | Live only | `governance-decisions` | **Phase 38** — AI Search index for few-shot examples. Created programmatically by `AzureSearchClient._ensure_few_shot_index()` on first seed upload. Requires vector search capability (not available on Free tier — use Basic or above). Index size: ~1MB for 40 seeds + 1 year of typical decisions. Recommend Standard tier above ~10k decisions/year. |
+| `AZURE_EMBEDDING_DEPLOYMENT` | Live only | `text-embedding-3-small` | **Phase 38** — Azure OpenAI embedding model deployment name. Must be `text-embedding-3-small` (1536-dim). All stored embeddings use this model — changing it requires a full backfill via `python -m src.tools.backfill_embeddings`. |
 | `COSMOS_ENDPOINT` | Live only | — | Cosmos DB endpoint |
 | `COSMOS_DATABASE` | Live only | `ruriskry` | Database name |
 | `COSMOS_CONTAINER_DECISIONS` | Live only | `governance-decisions` | Container for verdict audit trail |
