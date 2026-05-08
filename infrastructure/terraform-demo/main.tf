@@ -185,14 +185,14 @@ resource "azurerm_network_security_group" "prod" {
   }
 
   security_rule {
-    name                       = "allow-ssh-anywhere"
+    name                       = "allow-ssh-my-ip"
     priority                   = 140
     direction                  = "Inbound"
     access                     = "Allow"
     protocol                   = "Tcp"
     source_port_range          = "*"
     destination_port_range     = "22"
-    source_address_prefix      = "*"
+    source_address_prefix      = local.allowed_source_cidr
     destination_address_prefix = "*"
   }
 
@@ -233,8 +233,26 @@ resource "azurerm_storage_account" "prod" {
 }
 
 # =============================================================================
-# 5. Network Interface Cards
+# 5. Network Interface Cards (+ Public IPs for SSH access)
 # =============================================================================
+
+resource "azurerm_public_ip" "dr01" {
+  name                = "pip-vm-dr-01"
+  location            = azurerm_resource_group.prod.location
+  resource_group_name = azurerm_resource_group.prod.name
+  allocation_method   = "Static"
+  sku                 = "Standard"
+  tags                = local.common_tags
+}
+
+resource "azurerm_public_ip" "web01" {
+  name                = "pip-vm-web-01"
+  location            = azurerm_resource_group.prod.location
+  resource_group_name = azurerm_resource_group.prod.name
+  allocation_method   = "Static"
+  sku                 = "Standard"
+  tags                = local.common_tags
+}
 
 resource "azurerm_network_interface" "dr01" {
   name                = "nic-vm-dr-01"
@@ -246,6 +264,7 @@ resource "azurerm_network_interface" "dr01" {
     name                          = "internal"
     subnet_id                     = azurerm_subnet.prod.id
     private_ip_address_allocation = "Dynamic"
+    public_ip_address_id          = azurerm_public_ip.dr01.id
   }
 }
 
@@ -259,6 +278,7 @@ resource "azurerm_network_interface" "web01" {
     name                          = "internal"
     subnet_id                     = azurerm_subnet.prod.id
     private_ip_address_allocation = "Dynamic"
+    public_ip_address_id          = azurerm_public_ip.web01.id
   }
 }
 

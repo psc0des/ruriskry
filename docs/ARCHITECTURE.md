@@ -157,6 +157,21 @@ ConditionGateExecutor: WorkflowContext[None, GovernanceVerdict] (terminal output
 mid-scan, `POST /api/scan/{id}/resume` reads the checkpoint and skips already-evaluated proposals.
 Cosmos container: `governance-checkpoints`, partition key `/id` (matches `checkpoint_id` for direct point reads).
 
+**Scan Failure Handling:**
+When `_run_agent_scan` raises an unhandled exception, the except block:
+1. Creates a retry scan of the same type via `asyncio.create_task` if this scan has no `retry_of` field (prevents cascades).
+2. Persists `scan_error` (normalised key — was `error`) with `status=error` and the retry scan ID.
+3. Dispatches `send_scan_failure_notification` fire-and-forget — red Slack Block Kit card with scan ID, agent type, error, and retry status.
+
+**Background Tasks (lifespan):**
+Three background coroutines start at server startup and cancel cleanly on shutdown:
+
+| Task | Interval | Purpose |
+|---|---|---|
+| `ConditionWatcher` | 60 s | Polls auto-checkable APPROVED_IF conditions; promotes to APPROVED when all met |
+| `DecisionLabeler` | 6 h | Labels aged decisions `no_incident_observed` if no correlated alert appeared |
+| `_inventory_staleness_watcher` | 6 h | Sends Slack alert when `age_hours > 2 × inventory_stale_hours`; deduped to once per calendar day |
+
 **SSE Streaming (Phase 33B):**
 `stream_governance_evaluation()` translates workflow events to SSE:
 - `executor_invoked` event → `evaluation` SSE (agent starting)
@@ -206,7 +221,14 @@ boundary — minimal overhead. Used by `examples/demo.py` and all unit tests.
 
 ## Key Design Decisions
 
-1. **Async end-to-end** — all agent `evaluate()` / `scan()` methods, all `@af.tool` callbacks,
+1. **Auth-expiry redirect** — `apiFetch` (the shared auth-injecting fetch wrapper in `dashboard/src/api.js`)
+   dispatches `window.dispatchEvent(new CustomEvent('ruriskry:auth-expired'))` whenever it receives a 401
+   *and* a session token was present on the outgoing request. `AuthGate` (`App.jsx`) listens for this event
+   and immediately transitions `authState → 'login'`, which unmounts the app shell and shows the login form.
+   The guard `if (token)` prevents the event from firing on unauthenticated startup probes, avoiding
+   interference with the initial `authMe()` → `authStatus()` check sequence.
+
+2. **Async end-to-end** — all agent `evaluate()` / `scan()` methods, all `@af.tool` callbacks,
    and all Azure SDK calls are `async def`. The pipeline uses `asyncio.gather()` so all 4
    governance agents run truly in parallel — no thread pool, no event-loop blocking. Topology
    enrichment fans out 4 concurrent KQL queries + 1 HTTP cost lookup via `asyncio.gather()`.
@@ -215,16 +237,16 @@ boundary — minimal overhead. Used by `examples/demo.py` and all unit tests.
    `search_incidents()` call is wrapped in `asyncio.to_thread()` — the standard Python pattern
    for bridging sync I/O into an async context without rewriting the underlying client library.
 
-2. **A2A as the network protocol layer** — `src/a2a/ruriskry_a2a_server.py` exposes
+3. **A2A as the network protocol layer** — `src/a2a/ruriskry_a2a_server.py` exposes
    RuriSkry as an A2A-compliant HTTP server. Any A2A-capable agent discovers it via
    `/.well-known/agent-card.json`, sends `ProposedAction` tasks, and receives streaming
    `GovernanceVerdict` results via SSE. Existing MCP and direct Python paths are unchanged.
 
-3. **MCP as interception layer** — `skry_evaluate_action` is a standard MCP tool; any
+4. **MCP as interception layer** — `skry_evaluate_action` is a standard MCP tool; any
    MCP-capable agent (Claude Desktop, Copilot, custom agents) can call RuriSkry without
    SDK changes.
 
-4. **LLM-as-Decision-Maker (Phase 22)** — in live mode, each governance agent uses gpt-4.1-mini as
+5. **LLM-as-Decision-Maker (Phase 22)** — in live mode, each governance agent uses gpt-4.1-mini as
    an **active decision maker**, not a narrator. The flow: (1) deterministic rules run and produce
    a baseline score; (2) the LLM receives the baseline + full policy definitions + ops agent's
    reasoning; (3) the LLM calls `submit_governance_decision` with an adjusted score and per-adjustment
@@ -234,7 +256,7 @@ boundary — minimal overhead. Used by `examples/demo.py` and all unit tests.
    blocking the remediation. Mock mode bypasses the framework entirely — deterministic baseline only
    (all tests pass unchanged).
 
-5. **DefaultAzureCredential (sync vs async, lifecycle)** — sync clients use
+6. **DefaultAzureCredential (sync vs async, lifecycle)** — sync clients use
    `azure.identity.DefaultAzureCredential`; async clients (`.aio.*` packages) use
    `azure.identity.aio.DefaultAzureCredential`. Both resolve credentials the same way (`az login`
    locally, Managed Identity in Azure) — no code changes between environments. Using the wrong
@@ -250,16 +272,16 @@ boundary — minimal overhead. Used by `examples/demo.py` and all unit tests.
    > protocol`. Each tool now imports `AioCredential` locally (`from azure.identity.aio import
    > DefaultAzureCredential as AioCredential`), matching the execute-phase tool pattern.
 
-6. **Branded scoring (SRI™)** — consistent 0–100 scale per dimension, weighted composite,
+7. **Branded scoring (SRI™)** — consistent 0–100 scale per dimension, weighted composite,
    configurable thresholds in `src/config.py`.
 
-7. **Immutable audit trail** — every verdict is written to Cosmos DB (live) or a local JSON file
+8. **Immutable audit trail** — every verdict is written to Cosmos DB (live) or a local JSON file
    (mock). Never overwritten; each decision gets a UUID `action_id`.
 
-8. **Configurable thresholds** — `SRI_AUTO_APPROVE_THRESHOLD` (default 25) and
+9. **Configurable thresholds** — `SRI_AUTO_APPROVE_THRESHOLD` (default 25) and
    `SRI_HUMAN_REVIEW_THRESHOLD` (default 60) are environment-variable driven.
 
-9. **Risk Triage (Phase 26)** — before any governance agent runs, `compute_fingerprint()`
+10. **Risk Triage (Phase 26)** — before any governance agent runs, `compute_fingerprint()`
    derives an `ActionFingerprint` from the action and resource metadata in <1 ms (no I/O,
    no LLM). `classify_tier()` then routes the action to Tier 1 (0 LLM calls), Tier 2 (1
    consolidated call — Phase 27), or Tier 3 (full 4-agent pipeline). Four deterministic

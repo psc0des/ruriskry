@@ -50,6 +50,11 @@ output "vm_dr01_private_ip" {
   value       = azurerm_network_interface.dr01.private_ip_address
 }
 
+output "vm_dr01_public_ip" {
+  description = "Public IP address of vm-dr-01 (for SSH)"
+  value       = azurerm_public_ip.dr01.ip_address
+}
+
 # --- VM: vm-web-01 ---
 
 output "vm_web01_id" {
@@ -70,6 +75,11 @@ output "vm_web01_tags" {
 output "vm_web01_private_ip" {
   description = "Private IP address of vm-web-01"
   value       = azurerm_network_interface.web01.private_ip_address
+}
+
+output "vm_web01_public_ip" {
+  description = "Public IP address of vm-web-01 (for SSH)"
+  value       = azurerm_public_ip.web01.ip_address
 }
 
 # --- App Service: payment-api-prod ---
@@ -112,7 +122,7 @@ output "nsg_tags" {
 }
 
 output "nsg_allowed_source_cidr" {
-  description = "Effective source CIDR for NSG HTTP/HTTPS rules (e.g. 1.2.3.4/32). No SSH rule — VMs are private-only."
+  description = "Effective source CIDR for NSG HTTP/HTTPS/SSH rules (e.g. 1.2.3.4/32)."
   value       = local.allowed_source_cidr
 }
 

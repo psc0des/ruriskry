@@ -11,7 +11,7 @@
 
 RuriSkry is two systems in one: a team of **Azure AI Cloud Ops Agents** (Monitoring, Cost, Deploy) that propose fixes to your infrastructure — and an **AI Change Advisory Board** (Policy, Blast Radius, Historical, Financial) that simulates, scores, and adjudicates every proposed action *before* it touches production. Ops agents supply the changes; the CAB decides whether they ship.
 
-Born at the Microsoft AI Dev Days Hackathon 2026, RuriSkry has since matured into a fully async, enterprise-ready governance engine with live Azure topology analysis, a 34-rule deterministic rules engine, durable audit trails (Cosmos DB), Slack alerting, explainable AI verdicts with counterfactual analysis, operator override feedback capture, and 1457 automated tests.
+Born at the Microsoft AI Dev Days Hackathon 2026, RuriSkry has since matured into a fully async, enterprise-ready governance engine with live Azure topology analysis, a 34-rule deterministic rules engine, durable audit trails (Cosmos DB), Slack alerting, explainable AI verdicts with counterfactual analysis, operator override feedback capture, and 1462 automated tests.
 
 ---
 
@@ -94,7 +94,7 @@ RuriSkry is a **governance engine** that acts as the **Change Advisory Board for
 | Audit DB | Azure Cosmos DB (SQL API) | Governance decisions + agent registry + scan-run records |
 | Secret Management | Azure Key Vault + `DefaultAzureCredential` | Runtime secret resolution |
 | Dashboard | React + Vite + FastAPI | 6-page governance UI with SSE real-time streaming, custom design system, animated components |
-| Slack Notifications | Slack Incoming Webhook (Block Kit attachments) | Real-time alerts for DENIED/ESCALATED verdicts + Azure Monitor alerts |
+| Slack Notifications | Slack Incoming Webhook (Block Kit attachments) | Real-time alerts for DENIED/ESCALATED verdicts, Azure Monitor alerts, agent scan failures, and inventory staleness |
 | Azure Monitor → RuriSkry | Alert Processing Rule (APR) scoped to target subscription + `azurerm_monitor_action_group.ruriskry` (`terraform-core`) | One APR routes ALL current and future alert rules automatically — no per-rule wiring. Alerts POST to `/api/alert-trigger` → `pending` record → **Investigate** → `MonitoringAgent` → governance verdict → Alerts tab |
 | Decision Explanation Engine | `DecisionExplainer` — LLM summary + counterfactual analysis | Click any verdict row → 6-section drilldown with "what would change this?" analysis |
 
@@ -199,14 +199,21 @@ Scans are cancellable via `PATCH /api/scan/{id}/cancel`.
 Proposals are evaluated in **configurable parallel batches** (`PROPOSAL_BATCH_SIZE` env var, default 4) using `asyncio.gather` — a 35-proposal Deploy scan drops from ~19 min sequential to ~5 min evaluation time. `POST /api/scan/all` pre-fetches one shared inventory snapshot so all three agents operate on identical resource data.
 
 ### Slack Notifications
-DENIED and ESCALATED verdicts trigger an instant **Slack message** via Incoming Webhook —
-no one needs to watch the dashboard. The message shows the verdict badge, resource and
-agent info, SRI composite + 4-dimension breakdown, governance reason, and top policy
-violation. Azure Monitor alerts (fired + resolved) are also notified.
+Five event types trigger an instant **Slack Block Kit message** via Incoming Webhook —
+no one needs to watch the dashboard:
+
+| Event | Colour | Trigger |
+|---|---|---|
+| DENIED / ESCALATED verdict | 🔴 red / 🟡 amber | Any governance decision at the threshold or above |
+| Azure Monitor alert fired | 🟡 amber | Webhook received — investigation started |
+| Azure Monitor alert resolved | 🟢 green | Investigation complete |
+| **Agent scan failed** | 🔴 red | Unhandled exception in `_run_agent_scan` — includes scan ID, agent type, error, and whether auto-retry was triggered |
+| **Inventory stale** | 🟡 amber | Background watcher fires when inventory age exceeds `2 × inventory_stale_hours` (default 48 h); deduped to once per calendar day |
 
 - **Zero-config default** — leave the Slack webhook URL empty to disable silently (in deployed environments the URL is stored as a Key Vault secret and injected via Container App secret mechanism, not as a plain env var)
 - **Fire-and-forget** — never blocks or delays a governance decision
 - **Master switch** — `SLACK_NOTIFICATIONS_ENABLED=false` pauses all notifications without removing the webhook URL
+- **Auto-retry on failure** — when a scan crashes, a new scan of the same type starts automatically (guarded by `retry_of` flag to prevent cascades); the failure notification includes the retry scan ID
 - See [`docs/slack-setup.md`](docs/slack-setup.md) for the full setup guide
 
 ### Decision Explanation & Counterfactual Drilldown
@@ -265,7 +272,7 @@ Every plan is stamped with a **Remediation Confidence badge** shown next to the 
 - **Guided manual** (amber) — exact steps provided; human runs them
 - **Manual** (grey) — investigation required
 
-The generic PATCH tool (`update_resource_property`) covers storage `allowBlobPublicAccess`, Key Vault `enableSoftDelete`, App Service `httpsOnly`, database `publicNetworkAccess`, and hundreds of other property-level fixes that previously fell to "manual required". Works in mock mode (1457 tests pass, no Azure/OpenAI required) and live mode.
+The generic PATCH tool (`update_resource_property`) covers storage `allowBlobPublicAccess`, Key Vault `enableSoftDelete`, App Service `httpsOnly`, database `publicNetworkAccess`, and hundreds of other property-level fixes that previously fell to "manual required". Works in mock mode (1462 tests pass, no Azure/OpenAI required) and live mode.
 
 <p align="center">
   <img src="docs/screenshots/execution-status.png" alt="Execution Status — LLM-Driven Fix with Live Terminal" width="100%">
@@ -302,7 +309,7 @@ on 429s; operational agents return `[]` (no false positives from stale seed data
 ### Production Security Hardening
 The API layer is production-hardened for public OSS deployment:
 
-- **Dashboard Login** — First visit shows a one-time admin setup screen (create username + password). Every subsequent visit shows a login screen. Session tokens (256-bit random, 8-hour TTL) are stored in the browser's `localStorage` and sent as `Authorization: Bearer <token>` on all mutating requests. Logout button in the top bar.
+- **Dashboard Login** — First visit shows a one-time admin setup screen (create username + password). Every subsequent visit shows a login screen. Session tokens (256-bit random, 8-hour TTL) are stored in the browser's `localStorage` and sent as `Authorization: Bearer <token>` on all mutating requests. Logout button in the top bar. When the backend returns a 401 mid-session (session expired), `apiFetch` dispatches a `ruriskry:auth-expired` window event — `AuthGate` catches it and immediately shows the login form instead of letting the dashboard go dark silently.
 - **API Key Authentication** — `_APIKeyMiddleware` gates all `POST`/`PATCH` endpoints with either a session token (browser) or an `X-API-Key` header (machine-to-machine / CI-CD). Both credential types are accepted; neither blocks the other. Uses `secrets.compare_digest` (constant-time comparison) to prevent timing attacks. GET endpoints stay open so the browser dashboard works without credentials. Opt-in: set `API_KEY` env var; empty = disabled.
 - **Alert Webhook Secret** — `POST /api/alert-trigger` is exempt from the API key middleware (it has its own secret). The endpoint verifies `Authorization: Bearer <secret>` using constant-time comparison. Protects expensive LLM investigation calls from spoofed Azure Monitor payloads.
 - **X-Request-ID Tracing** — `_RequestIDMiddleware` generates (or echoes) a UUID per request, stores it in a `ContextVar` (safe under async concurrency), injects it into every log line via `logging.Filter`, and echoes it in the response header. Correlates frontend → backend → Cosmos → LLM log lines across distributed failures.
@@ -433,7 +440,7 @@ A 7-page React governance UI with real-time SSE streaming, custom design tokens,
   <img src="docs/screenshots/slack-alerts.png" alt="Slack Alert Notifications" width="100%">
 </p>
 
-> DENIED and ESCALATED verdicts, Azure Monitor alerts (fired + investigated), and resolution summaries are pushed to Slack in real-time via Block Kit messages with "View in Dashboard" deep links.
+> DENIED and ESCALATED verdicts, Azure Monitor alerts (fired + investigated), resolution summaries, agent scan failures (with auto-retry status), and inventory staleness alerts are pushed to Slack in real-time via Block Kit messages with "View in Dashboard" deep links.
 
 ---
 
@@ -516,7 +523,7 @@ python examples/demo_live.py                # two-layer intelligence demo
 ### Run Tests
 
 ```bash
-# Expected: 1457 passed, 0 failed
+# Expected: 1462 passed, 0 failed
 # Tests use mock mode by default — no Azure credentials needed.
 pytest tests/ -v
 
@@ -643,7 +650,7 @@ challenge track: *Automate and Optimize Software Delivery — Leverage Agentic D
 Since its hackathon origins, the project has matured into a production-grade governance engine
 with fully async internals, live Azure topology analysis (Resource Graph + Retail Prices API),
 durable Cosmos DB audit trails, Slack alerting, explainable AI with counterfactual
-drilldowns, and a comprehensive 1457-test suite.
+drilldowns, and a comprehensive 1462-test suite.
 
 ---
 
