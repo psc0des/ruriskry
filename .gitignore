@@ -81,6 +81,8 @@ infrastructure/terraform-demo/*.tfstate.*
 infrastructure/terraform-demo/*.tfstate.backup
 infrastructure/terraform-demo/terraform.tfvars
 infrastructure/terraform-demo/tfplan
+infrastructure/terraform-demo/scripts/
+infrastructure/**/*.bak*
 # .terraform.lock.hcl is intentionally NOT ignored — commit it to pin provider versions
 
 # Runtime-generated data (not source code)
@@ -123,6 +125,9 @@ docs/demo-script.md
 
 # Internal planning / rearchitecture working docs (not for contributors)
 PLAN-*.md
+docs/plans/
+docs/QA-OPEN-ITEMS*.md
+docs/QA-REVERIFICATION*.md
 Adding-HITL-Agent-Fix-Plan.md
 Adding-Terraform-Feature.md
 ag_opus_issues_detailed.md
