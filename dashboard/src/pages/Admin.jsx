@@ -3,12 +3,12 @@
  *
  * Two sections:
  *   1. System Configuration — mode, timeouts, feature flags (read from GET /api/config)
- *   2. Danger Zone — Reset button (moved here from the top header)
+ *   2. Danger Zone — Reset button with typed DELETE confirmation
  */
 
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { useOutletContext } from 'react-router-dom'
-import { Settings, AlertTriangle, Trash2, RefreshCw } from 'lucide-react'
+import { Settings, AlertTriangle, Trash2, RefreshCw, CheckCircle, XCircle } from 'lucide-react'
 import { fetchConfig, adminReset } from '../api'
 import GlowCard from '../components/magicui/GlowCard'
 
@@ -58,6 +58,10 @@ export default function Admin() {
   const [config, setConfig] = useState(null)
   const [configError, setConfigError] = useState(null)
   const [resetting, setResetting] = useState(false)
+  const [showResetModal, setShowResetModal] = useState(false)
+  const [resetConfirmText, setResetConfirmText] = useState('')
+  const [resetResult, setResetResult] = useState(null) // { ok: bool, message: string }
+  const confirmInputRef = useRef(null)
 
   useEffect(() => {
     if (!loggedInUser) return
@@ -66,15 +70,23 @@ export default function Admin() {
       .catch(e => setConfigError(e.message))
   }, [loggedInUser])
 
+  function openResetModal() {
+    setResetConfirmText('')
+    setResetResult(null)
+    setShowResetModal(true)
+    setTimeout(() => confirmInputRef.current?.focus(), 50)
+  }
+
   async function handleReset() {
-    if (!window.confirm('Delete ALL local evaluation, scan, alert and execution data? This cannot be undone.')) return
+    if (resetConfirmText !== 'DELETE') return
     setResetting(true)
+    setShowResetModal(false)
     try {
       const result = await adminReset()
       await fetchAll()
-      alert(`Reset complete — deleted ${result.total} records.`)
+      setResetResult({ ok: true, message: `Reset complete — ${result.total} records deleted.` })
     } catch (e) {
-      alert(`Reset failed: ${e.message}`)
+      setResetResult({ ok: false, message: `Reset failed: ${e.message}` })
     } finally {
       setResetting(false)
     }
@@ -160,7 +172,7 @@ export default function Admin() {
             </p>
           </div>
           <button
-            onClick={handleReset}
+            onClick={openResetModal}
             disabled={resetting}
             className="shrink-0 flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium bg-rose-500/10 border border-rose-500/30 text-rose-400 hover:bg-rose-500/20 hover:border-rose-500/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
           >
@@ -168,9 +180,65 @@ export default function Admin() {
             {resetting ? 'Resetting…' : 'Reset'}
           </button>
         </div>
+
+        {/* Inline result notification */}
+        {resetResult && (
+          <div className={`mt-4 flex items-center gap-2 text-xs rounded-lg px-3 py-2 border ${
+            resetResult.ok
+              ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+              : 'bg-rose-500/10 border-rose-500/30 text-rose-400'
+          }`}>
+            {resetResult.ok
+              ? <CheckCircle className="w-3.5 h-3.5 shrink-0" />
+              : <XCircle className="w-3.5 h-3.5 shrink-0" />}
+            {resetResult.message}
+          </div>
+        )}
       </GlowCard>
 
       </div>
+
+      {/* ── Typed DELETE confirmation modal ── */}
+      {showResetModal && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={() => setShowResetModal(false)}>
+          <div className="bg-slate-800 border border-rose-500/30 rounded-xl p-6 w-full max-w-sm shadow-2xl space-y-4" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0" />
+              <h3 className="text-sm font-semibold text-slate-200">Confirm data reset</h3>
+            </div>
+            <p className="text-xs text-slate-400">
+              This will permanently delete all local scan, evaluation, execution, and alert records.
+              <strong className="text-slate-200"> This cannot be undone.</strong>
+            </p>
+            <div className="space-y-1.5">
+              <label className="text-xs text-slate-500">
+                Type <span className="font-mono font-bold text-rose-400">DELETE</span> to confirm
+              </label>
+              <input
+                ref={confirmInputRef}
+                type="text"
+                value={resetConfirmText}
+                onChange={e => setResetConfirmText(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter' && resetConfirmText === 'DELETE') handleReset() }}
+                placeholder="DELETE"
+                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm font-mono text-slate-200 placeholder-slate-600 focus:outline-none focus:border-rose-500/60"
+              />
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setShowResetModal(false)} className="px-3 py-1.5 text-sm text-slate-400 hover:text-slate-200 transition-colors">
+                Cancel
+              </button>
+              <button
+                onClick={handleReset}
+                disabled={resetConfirmText !== 'DELETE'}
+                className="px-4 py-1.5 text-sm bg-rose-600/20 hover:bg-rose-600/30 border border-rose-500/40 text-rose-300 hover:text-rose-200 rounded-lg font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Reset all data
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   )

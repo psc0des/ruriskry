@@ -131,7 +131,7 @@ function GuidedManualSteps({ params }) {
                         <span className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">az CLI Commands</span>
                         <CopyButton text={allCmds} />
                     </div>
-                    <pre className="text-xs text-emerald-300 bg-slate-950 rounded-lg p-3 overflow-x-auto border border-slate-700/50 whitespace-pre-wrap leading-relaxed">
+                    <pre className="text-xs text-emerald-300 bg-slate-950 rounded-lg p-3 overflow-x-auto border border-slate-700/50 whitespace-pre-wrap break-all leading-relaxed">
                         {cmds.map((cmd, i) => (
                             <span key={i} className="block">
                                 <span className={cmd.startsWith('#') ? 'text-slate-500' : 'text-emerald-300'}>
@@ -366,6 +366,7 @@ export default function EvaluationDrilldown({ evaluation, onBack, reviewedBy }) 
     const [createPrLoading, setCreatePrLoading] = useState(false)
     const [showDismissInput, setShowDismissInput] = useState(false)
     const [dismissReasonDraft, setDismissReasonDraft] = useState('')
+    const [dismissError, setDismissError] = useState('')
     const [showSatisfyInput, setShowSatisfyInput] = useState(null) // condition index | null
     const [satisfyWhoDraft, setSatisfyWhoDraft] = useState('')
     const [createPrError, setCreatePrError] = useState(null)
@@ -432,19 +433,25 @@ export default function EvaluationDrilldown({ evaluation, onBack, reviewedBy }) 
         }
     }
 
-    function handleDismiss(executionId, prefillReason = '') {
-        setDismissReasonDraft(prefillReason)
+    function handleDismiss(executionId) {
+        setDismissReasonDraft('')
+        setDismissError('')
         setShowDismissInput(executionId)
     }
 
     async function confirmDismiss() {
+        if (!dismissReasonDraft.trim()) {
+            setDismissError('Justification is required for the audit trail.')
+            return
+        }
         const executionId = showDismissInput
         setShowDismissInput(false)
+        setDismissError('')
         try {
             const updated = await dismissExecution(executionId, reviewedBy || 'dashboard-user', dismissReasonDraft)
             setExecutionStatus(updated)
         } catch (err) {
-            alert(`Dismiss failed: ${err.message}`)
+            setDismissError(`Dismiss failed: ${err.message}`)
         }
     }
 
@@ -963,10 +970,10 @@ export default function EvaluationDrilldown({ evaluation, onBack, reviewedBy }) 
                                         </a>
                                     )}
                                     <button
-                                        onClick={() => handleDismiss(executionStatus.execution_id, 'Closing PR — fixed via alternative method')}
+                                        onClick={() => handleDismiss(executionStatus.execution_id)}
                                         className="flex items-center gap-1.5 px-4 py-2 bg-red-600/10 hover:bg-red-600/20 border border-red-500/30 text-red-400 hover:text-red-300 rounded-lg text-sm font-medium transition-colors"
                                     >
-                                        ✕ Close PR / Ignore
+                                        ✕ Dismiss
                                     </button>
                                 </div>
                                 {agentFixExpanded && (
@@ -1152,10 +1159,10 @@ export default function EvaluationDrilldown({ evaluation, onBack, reviewedBy }) 
                                     </button>
 
                                     <button
-                                        onClick={() => handleDismiss(executionStatus.execution_id, 'Declined — not applicable')}
+                                        onClick={() => handleDismiss(executionStatus.execution_id)}
                                         className="flex items-center gap-1.5 px-4 py-2 bg-red-600/10 hover:bg-red-600/20 border border-red-500/30 text-red-400 hover:text-red-300 rounded-lg text-sm font-medium transition-colors"
                                     >
-                                        ✕ Decline / Ignore
+                                        ✕ Dismiss
                                     </button>
                                 </div>
 
@@ -1307,21 +1314,27 @@ export default function EvaluationDrilldown({ evaluation, onBack, reviewedBy }) 
             {showDismissInput && (
                 <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setShowDismissInput(false)}>
                     <div className="bg-slate-800 border border-slate-600 rounded-xl p-5 w-full max-w-md space-y-4 shadow-2xl" onClick={e => e.stopPropagation()}>
-                        <h3 className="text-sm font-semibold text-slate-200">Dismiss — add reason (optional)</h3>
+                        <div>
+                            <h3 className="text-sm font-semibold text-slate-200">Dismiss — reason required</h3>
+                            <p className="text-xs text-slate-500 mt-0.5">This justification is recorded in the audit trail and cannot be blank.</p>
+                        </div>
                         <textarea
                             autoFocus
                             rows={3}
                             value={dismissReasonDraft}
-                            onChange={e => setDismissReasonDraft(e.target.value)}
+                            onChange={e => { setDismissReasonDraft(e.target.value); setDismissError('') }}
                             onKeyDown={e => {
                                 if (e.key === 'Escape') setShowDismissInput(false)
                                 if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) confirmDismiss()
                             }}
-                            placeholder="Why is this being dismissed?"
-                            className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-slate-500 resize-none"
+                            placeholder="Why is this being dismissed? (required)"
+                            className={`w-full bg-slate-900 border rounded-lg px-3 py-2 text-sm text-slate-200 placeholder-slate-600 focus:outline-none resize-none transition-colors ${dismissError ? 'border-red-500/60 focus:border-red-500' : 'border-slate-700 focus:border-slate-500'}`}
                         />
+                        {dismissError && (
+                            <p className="text-xs text-red-400 -mt-2">{dismissError}</p>
+                        )}
                         <div className="flex gap-2 justify-end">
-                            <button onClick={() => setShowDismissInput(false)} className="px-3 py-1.5 text-sm text-slate-400 hover:text-slate-200 transition-colors">Cancel</button>
+                            <button onClick={() => { setShowDismissInput(false); setDismissError('') }} className="px-3 py-1.5 text-sm text-slate-400 hover:text-slate-200 transition-colors">Cancel</button>
                             <button onClick={confirmDismiss} className="px-4 py-1.5 text-sm bg-red-600/20 hover:bg-red-600/30 border border-red-500/40 text-red-300 hover:text-red-200 rounded-lg font-medium transition-colors">
                                 Confirm Dismiss
                             </button>

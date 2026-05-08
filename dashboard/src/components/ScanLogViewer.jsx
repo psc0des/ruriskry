@@ -324,11 +324,17 @@ function HistoricalLogBody({ scanId }) {
               </p>
             </div>
           ) : data.status === 'error' ? (
-            <div className="text-center py-8 space-y-2">
+            <div className="py-8 space-y-3 px-2">
               <p className="text-sm font-medium text-rose-400">Scan failed — no evaluations completed</p>
-              <p className="text-xs text-slate-500">
-                Check the scan duration; a ~100 min runtime indicates a governance timeout.
-              </p>
+              {data.scan_error ? (
+                <pre className="text-xs text-slate-400 bg-slate-900/60 border border-slate-700/50 rounded-lg p-3 whitespace-pre-wrap break-all">
+                  {data.scan_error}
+                </pre>
+              ) : (
+                <p className="text-xs text-slate-500">
+                  Check the scan duration; a ~100 min runtime indicates a governance timeout.
+                </p>
+              )}
             </div>
           ) : (
             <div className="text-center py-8 space-y-2">

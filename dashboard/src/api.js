@@ -247,7 +247,8 @@ export async function fetchInventory(subscriptionId = null, summaryOnly = false)
 export async function fetchInventoryStatus(subscriptionId = null) {
   const params = new URLSearchParams()
   if (subscriptionId) params.set('subscription_id', subscriptionId)
-  const res = await apiFetch(`${BASE}/inventory/status?${params}`)
+  const qs = params.toString()
+  const res = await apiFetch(`${BASE}/inventory/status${qs ? '?' + qs : ''}`)
   if (!res.ok) throw new Error(`Inventory status failed: ${res.status}`)
   return res.json()
 }

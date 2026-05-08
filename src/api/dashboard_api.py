@@ -506,29 +506,35 @@ app.add_middleware(
 class _APIKeyMiddleware(BaseHTTPMiddleware):
     _EXEMPT_PATHS = {"/api/alert-trigger"}
     _AUTH_EXEMPT_PREFIX = "/api/auth/"
+    _PUBLIC_PATHS = {"/health", "/docs", "/openapi.json", "/redoc"}
 
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        if request.method in ("POST", "PATCH"):
-            if path not in self._EXEMPT_PATHS and not path.startswith(self._AUTH_EXEMPT_PREFIX):
-                need_api_key = bool(settings.api_key)
-                need_session = _get_admin() is not None
+        # OPTIONS is always allowed (CORS preflight)
+        if request.method == "OPTIONS":
+            return await call_next(request)
+        # Public paths and auth endpoints are never gated
+        if path in self._PUBLIC_PATHS or path in self._EXEMPT_PATHS or path.startswith(self._AUTH_EXEMPT_PREFIX):
+            return await call_next(request)
 
-                if need_api_key or need_session:
-                    # Check API key (X-API-Key header)
-                    api_key_ok = need_api_key and secrets.compare_digest(
-                        request.headers.get("X-API-Key", ""), settings.api_key
-                    )
-                    # Check session token (Authorization: Bearer <token>)
-                    auth_hdr = request.headers.get("Authorization", "")
-                    raw_token = auth_hdr[7:].strip() if auth_hdr.startswith("Bearer ") else ""
-                    session_ok = bool(raw_token and _validate_session(raw_token))
+        need_api_key = bool(settings.api_key)
+        need_session = _get_admin() is not None
 
-                    if not api_key_ok and not session_ok:
-                        return JSONResponse(
-                            {"detail": "Authentication required. Log in via the dashboard or supply X-API-Key."},
-                            status_code=401,
-                        )
+        if need_api_key or need_session:
+            # Check API key (X-API-Key header)
+            api_key_ok = need_api_key and secrets.compare_digest(
+                request.headers.get("X-API-Key", ""), settings.api_key
+            )
+            # Check session token (Authorization: Bearer <token>)
+            auth_hdr = request.headers.get("Authorization", "")
+            raw_token = auth_hdr[7:].strip() if auth_hdr.startswith("Bearer ") else ""
+            session_ok = bool(raw_token and _validate_session(raw_token))
+
+            if not api_key_ok and not session_ok:
+                return JSONResponse(
+                    {"detail": "Authentication required. Log in via the dashboard or supply X-API-Key."},
+                    status_code=401,
+                )
         return await call_next(request)
 
 
@@ -1856,21 +1862,18 @@ async def list_agents() -> dict:
     registry = _get_registry()
     agents = registry.get_connected_agents()
 
-    # Backfill approved_if_count for agent records written before Phase 32 —
-    # those records have no approved_if_count field so the card total mismatches.
-    agents_missing_ai = [a for a in agents if "approved_if_count" not in a]
-    if agents_missing_ai:
-        all_decisions = _get_tracker().get_recent(limit=10_000)
-        # Build per-agent_id count from decision tracker
-        ai_by_agent: dict[str, int] = {}
-        for d in all_decisions:
-            if (d.get("decision") or "").lower() == "approved_if":
-                aid = d.get("agent_id", "")
-                if aid:
-                    ai_by_agent[aid] = ai_by_agent.get(aid, 0) + 1
-        for agent in agents_missing_ai:
-            agent_id = agent.get("name") or agent.get("id") or ""
-            agent["approved_if_count"] = ai_by_agent.get(agent_id, 0)
+    # Always recompute approved_if_count from decision history — stored values
+    # can be stale when decisions were recorded before the field was introduced.
+    all_decisions = _get_tracker().get_recent(limit=10_000)
+    ai_by_agent: dict[str, int] = {}
+    for d in all_decisions:
+        if (d.get("decision") or "").lower() == "approved_if":
+            aid = d.get("agent_id", "")
+            if aid:
+                ai_by_agent[aid] = ai_by_agent.get(aid, 0) + 1
+    for agent in agents:
+        agent_id = agent.get("name") or agent.get("id") or ""
+        agent["approved_if_count"] = ai_by_agent.get(agent_id, 0)
 
     return {"count": len(agents), "agents": agents}
 
@@ -3785,10 +3788,11 @@ async def execute_decision_playbook(
 
 @app.get("/api/execution/pending-reviews")
 async def get_pending_reviews() -> dict:
-    """List all ESCALATED verdicts currently awaiting human review.
+    """List all records requiring human action: ESCALATED + APPROVED_IF.
 
-    These are records with ``status == "awaiting_review"`` — the human
-    can approve or dismiss them via the dashboard buttons.
+    Returns records with ``status == "awaiting_review"`` (ESCALATED) OR
+    ``status == "conditional"`` (APPROVED_IF — conditions must be satisfied
+    before execution proceeds).  Reviewers must see both to action them.
 
     This route is declared BEFORE ``/by-action/{action_id}`` so FastAPI does
     not mistake the literal string "pending-reviews" for an action_id.

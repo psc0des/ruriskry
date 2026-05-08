@@ -348,7 +348,11 @@ export default function ScanHistoryTable({ onViewLog, scanState = {}, refreshKey
                           )
                         }
                         if (scan.status === 'complete') {
-                          return (
+                          return isClean ? (
+                            <span className="text-xs text-emerald-400 flex items-center gap-1">
+                              <CheckCircle className="w-3 h-3" /> Clean
+                            </span>
+                          ) : (
                             <span className="text-xs text-blue-400 flex items-center gap-1">
                               <CheckCircle className="w-3 h-3" /> Complete
                             </span>

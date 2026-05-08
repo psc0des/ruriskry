@@ -97,7 +97,7 @@ function AgentBadge({ agentId }) {
 
 // ── Component ─────────────────────────────────────────────────────────────
 
-export default function DecisionTable({ evaluations, onSelect, onRefresh, initialAgent = 'all' }) {
+export default function DecisionTable({ evaluations, onSelect, onRefresh, initialAgent = 'all', loading = false }) {
   const [sortField,   setSortField]   = useState('timestamp')
   const [sortDir,     setSortDir]     = useState('desc')
   const [filterVerdict, setFilter]    = useState('all')
@@ -255,7 +255,12 @@ export default function DecisionTable({ evaluations, onSelect, onRefresh, initia
       </div>
 
       {/* ── Table ── */}
-      {pageRows.length === 0 ? (
+      {loading ? (
+        <div className="flex flex-col items-center justify-center py-16 text-slate-600 gap-3">
+          <div className="w-5 h-5 border-2 border-slate-600 border-t-blue-400 rounded-full animate-spin" />
+          <p className="text-sm">Loading decisions…</p>
+        </div>
+      ) : pageRows.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-16 text-slate-500 gap-2">
           <span className="text-3xl">📭</span>
           <p className="text-sm">{hasFilters ? 'No matching decisions.' : 'No evaluations yet.'}</p>

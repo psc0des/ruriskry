@@ -435,10 +435,14 @@ export default function AuditLog() {
           .some(p => (p.target?.resource_id ?? p.resource_id ?? '').toLowerCase().includes(q))
         if (!inAgent && !inScanId && !inResources) return false
       }
-      if (dateFrom && scan.started_at < dateFrom) return false
-      if (dateTo) {
-        const end = dateTo + 'T23:59:59Z'
-        if (scan.started_at > end) return false
+      if (dateFrom || dateTo) {
+        // Convert UTC ISO timestamp to local YYYY-MM-DD so the filter matches
+        // what the user sees — a scan at 2026-05-07T19:40Z appears as May 8 in UTC+5:30.
+        const scanLocalDate = scan.started_at
+          ? new Date(scan.started_at).toLocaleDateString('en-CA')
+          : ''
+        if (dateFrom && scanLocalDate < dateFrom) return false
+        if (dateTo   && scanLocalDate > dateTo)   return false
       }
       return true
     })

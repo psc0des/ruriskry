@@ -337,11 +337,11 @@ class ExecutionGateway:
         return [r for r in self._records.values() if r.action_id == action_id]
 
     def get_pending_reviews(self) -> list[ExecutionRecord]:
-        """Return all records awaiting human review (ESCALATED verdicts)."""
+        """Return all records awaiting human action — ESCALATED and APPROVED_IF."""
         self._ensure_loaded()
         return [
             r for r in self._records.values()
-            if r.status == ExecutionStatus.awaiting_review
+            if r.status in (ExecutionStatus.awaiting_review, ExecutionStatus.conditional)
         ]
 
     def list_all(self) -> list[ExecutionRecord]:

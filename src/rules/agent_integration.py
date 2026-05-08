@@ -166,10 +166,11 @@ def build_coverage_manifest(
     by_cat: dict[str, dict] = {}
     for cat in categories_run:
         cat_specs = [s for s in all_rule_specs if s.category == cat]
-        cat_findings = [f for f in all_findings if f.category == cat]
+        # count unique rule IDs that fired, not total findings
+        cat_matched_rules = len(set(f.rule_id for f in all_findings if f.category == cat))
         by_cat[cat.value] = {
             "applied": len(cat_specs),
-            "matched": len(cat_findings),
+            "matched": cat_matched_rules,
         }
 
     return {

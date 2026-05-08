@@ -46,7 +46,9 @@ class TestCoverageManifest:
         cost = manifest["categories"]["cost"]
         assert "applied" in cost
         assert "matched" in cost
-        assert cost["matched"] == len(findings)
+        # matched counts unique rule IDs that fired, not total findings
+        unique_rule_ids = len(set(f.rule_id for f in findings if f.category == Category.COST))
+        assert cost["matched"] == unique_rule_ids
 
     def test_scan_history_endpoint_includes_manifest(self):
         """Smoke: scan record update block adds coverage_manifest key."""

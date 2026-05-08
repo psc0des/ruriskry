@@ -260,11 +260,12 @@ function AppShell({ loggedInUser, onLogout, isNewSetup }) {
       .catch(() => setSlackStatus(null))
   }, [])
 
-  // Silent background refresh — errors are swallowed
+  // Silent background refresh — 30s interval, skipped when tab is hidden
   useEffect(() => {
     const id = setInterval(async () => {
+      if (document.hidden) return
       try { await fetchAll() } catch { /* ignore */ }
-    }, 5_000)
+    }, 30_000)
     return () => clearInterval(id)
   }, [fetchAll])
 
