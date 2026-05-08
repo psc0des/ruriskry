@@ -8,10 +8,10 @@
 
 import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { fetchScanHistory, cancelScan } from '../api'
+import { fetchScanHistory, cancelScan, resumeScan } from '../api'
 import {
   RefreshCw, CheckCircle, AlertTriangle, ChevronRight,
-  ScrollText, Filter, XCircle, Square, Download,
+  ScrollText, Filter, XCircle, Square, Download, RotateCcw,
 } from 'lucide-react'
 import TableSkeleton from './magicui/TableSkeleton'
 
@@ -439,6 +439,24 @@ export default function ScanHistoryTable({ onViewLog, scanState = {}, refreshKey
                         >
                           <Square className="w-3 h-3" />
                           <span>Stop</span>
+                        </button>
+                      )}
+                      {scan.scan_id && scan.status === 'error' &&
+                       scan.pending_proposals?.length > 0 && (
+                        <button
+                          onClick={async () => {
+                            try {
+                              await resumeScan(scan.scan_id)
+                              setTimeout(loadScans, 2000)
+                            } catch (err) {
+                              alert(`Resume failed: ${err.message}`)
+                            }
+                          }}
+                          className="inline-flex items-center gap-1 text-xs text-amber-400 hover:text-amber-200 transition-colors"
+                          title="Resume interrupted scan from last checkpoint"
+                        >
+                          <RotateCcw className="w-3 h-3" />
+                          <span>Resume</span>
                         </button>
                       )}
                     </td>

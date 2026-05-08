@@ -3811,11 +3811,12 @@ async def get_pending_reviews() -> dict:
     pending = gateway.get_pending_reviews()
     reviews_json = [r.model_dump(mode="json") for r in pending]
 
-    # Supplement: surface APPROVED_IF decisions that have no execution record at all
-    # (e.g., created before the gateway was enabled, or before Phase 27 wiring).
+    # Supplement: surface ESCALATED and APPROVED_IF decisions that have no execution
+    # record at all (created before the gateway was enabled or before Phase 27 wiring).
     covered_action_ids = {r.action_id for r in pending}
     for decision in _get_tracker().get_recent(limit=1000):
-        if (decision.get("decision") or "").lower() != "approved_if":
+        verdict = (decision.get("decision") or "").lower()
+        if verdict not in ("approved_if", "escalated"):
             continue
         aid = decision.get("action_id")
         if not aid or aid in covered_action_ids:
@@ -3823,10 +3824,11 @@ async def get_pending_reviews() -> dict:
         if gateway.get_records_for_verdict(aid):
             continue  # already processed (dismissed, executed, etc.) — skip
         covered_action_ids.add(aid)
+        synthetic_status = "conditional" if verdict == "approved_if" else "awaiting_review"
         reviews_json.append({
             "execution_id": aid,
             "action_id": aid,
-            "status": "conditional",
+            "status": synthetic_status,
             "verdict_snapshot": decision,
             "created_at": decision.get("timestamp", ""),
             "conditions": [],

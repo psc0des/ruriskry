@@ -285,6 +285,12 @@ export async function cancelScan(scanId) {
   return res.json()
 }
 
+export async function resumeScan(scanId) {
+  const res = await apiFetch(`${BASE}/scan/${scanId}/resume`, { method: 'POST' })
+  if (!res.ok) throw new Error(`API error ${res.status}: failed to resume scan "${scanId}"`)
+  return res.json()
+}
+
 /**
  * Fetch the most recent scan results for an agent.
  * @param {string} agentName - e.g. "cost-optimization-agent"

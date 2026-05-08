@@ -1165,7 +1165,6 @@ export default function Alerts() {
         >
           <option value="all">All statuses</option>
           <option value="pending">Pending</option>
-          <option value="investigating">Investigating</option>
           <option value="resolved">Investigated</option>
           <option value="error">Error</option>
         </select>
