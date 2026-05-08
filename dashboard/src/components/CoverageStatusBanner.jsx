@@ -9,8 +9,7 @@
 
 import React, { useEffect, useState } from 'react'
 import { AlertTriangle, ShieldAlert, RefreshCw } from 'lucide-react'
-
-const API_BASE = import.meta.env.VITE_API_URL || ''
+import { apiFetch } from '../api'
 
 export default function CoverageStatusBanner() {
   const [status, setStatus] = useState(null)
@@ -19,15 +18,10 @@ export default function CoverageStatusBanner() {
 
   const fetchStatus = () => {
     setLoading(true)
-    fetch(`${API_BASE}/api/coverage/status`, {
-      headers: {
-        'Content-Type': 'application/json',
-        ...(localStorage.getItem('api_key') ? { 'X-API-Key': localStorage.getItem('api_key') } : {}),
-      },
-    })
-      .then(r => r.json())
+    apiFetch(`${import.meta.env.VITE_API_URL || ''}/api/coverage/status`)
+      .then(r => r.ok ? r.json() : null)
       .then(data => {
-        setStatus(data)
+        if (data) setStatus(data)
         setLoading(false)
       })
       .catch(() => setLoading(false))

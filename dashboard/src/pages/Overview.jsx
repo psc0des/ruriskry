@@ -352,7 +352,7 @@ function OverrideMetricsCard({ data }) {
 // ── Main Component ─────────────────────────────────────────────────────────
 
 export default function Overview() {
-  const { evaluations, metrics, agents, pendingReviews, alerts, dataReady } = useOutletContext()
+  const { evaluations, metrics, agents, pendingReviews, alerts, dataReady, inventoryStatus } = useOutletContext()
   const navigate = useNavigate()
 
   const [recentScans, setRecentScans] = useState([])
@@ -450,6 +450,17 @@ export default function Overview() {
 
         <div className="ml-auto text-xs text-slate-700 font-mono">Auto-refresh 30s</div>
       </GlowCard>
+
+      {/* ── Inventory staleness warning ── */}
+      {inventoryStatus?.stale && (
+        <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg border border-amber-500/30 bg-amber-500/8 text-xs text-amber-300">
+          <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+          <span>
+            Inventory is {inventoryStatus.age_hours != null ? `${Math.round(inventoryStatus.age_hours)}h` : 'significantly'} old
+            — rules are running against stale data. Run All Agents to refresh.
+          </span>
+        </div>
+      )}
 
       {/* ── Metric cards ── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 card-stagger">
