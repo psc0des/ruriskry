@@ -38,6 +38,11 @@ export async function apiFetch(url, options = {}) {
   const res = await fetch(url, { ...options, headers })
   if (res.status === 401) {
     clearToken()
+    // If a token existed before this request, the session expired mid-session.
+    // Signal AuthGate to show the login screen immediately instead of going dark.
+    if (token) {
+      window.dispatchEvent(new CustomEvent('ruriskry:auth-expired'))
+    }
   }
   return res
 }

@@ -130,6 +130,18 @@ function AuthGate({ children }) {
     return () => { cancelled = true }
   }, [])
 
+  // Listen for mid-session 401s from any apiFetch call. When the session
+  // token expires while the user is active, apiFetch dispatches this event
+  // so the dashboard shows the login form instead of silently going dark.
+  useEffect(() => {
+    function handleAuthExpired() {
+      setLoggedInUser(null)
+      setAuthState('login')
+    }
+    window.addEventListener('ruriskry:auth-expired', handleAuthExpired)
+    return () => window.removeEventListener('ruriskry:auth-expired', handleAuthExpired)
+  }, [])
+
   function handleLogin(token, username) {
     setToken(token)
     setLoggedInUser(username)
