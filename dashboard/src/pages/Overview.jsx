@@ -448,7 +448,7 @@ export default function Overview() {
           </>
         )}
 
-        <div className="ml-auto text-xs text-slate-700 font-mono">Auto-refresh 5s</div>
+        <div className="ml-auto text-xs text-slate-700 font-mono">Auto-refresh 30s</div>
       </GlowCard>
 
       {/* ── Metric cards ── */}

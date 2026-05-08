@@ -151,7 +151,7 @@ export default function LiveActivityFeed({ evaluations, onDrilldown }) {
         {/* Pulsing green dot to signal live updates */}
         <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
         <span className="text-xs text-slate-600 ml-auto">
-          {items.length} events · auto-refresh 5s
+          {items.length} events · auto-refresh 30s
         </span>
       </div>
 

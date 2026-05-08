@@ -531,9 +531,19 @@ class _APIKeyMiddleware(BaseHTTPMiddleware):
             session_ok = bool(raw_token and _validate_session(raw_token))
 
             if not api_key_ok and not session_ok:
+                # Echo back the request Origin so the browser's CORS check
+                # passes and the frontend can read the 401 status code.
+                # Without this, CORSMiddleware (inner layer) never runs,
+                # the browser sees a header-less response, and fetch() throws
+                # TypeError instead of returning a 401 — silently swallowed.
+                origin = request.headers.get("origin", "*")
                 return JSONResponse(
                     {"detail": "Authentication required. Log in via the dashboard or supply X-API-Key."},
                     status_code=401,
+                    headers={
+                        "Access-Control-Allow-Origin": origin,
+                        "Access-Control-Allow-Credentials": "true",
+                    },
                 )
         return await call_next(request)
 
@@ -3799,9 +3809,33 @@ async def get_pending_reviews() -> dict:
     """
     gateway = _get_execution_gateway()
     pending = gateway.get_pending_reviews()
+    reviews_json = [r.model_dump(mode="json") for r in pending]
+
+    # Supplement: surface APPROVED_IF decisions that have no execution record at all
+    # (e.g., created before the gateway was enabled, or before Phase 27 wiring).
+    covered_action_ids = {r.action_id for r in pending}
+    for decision in _get_tracker().get_recent(limit=1000):
+        if (decision.get("decision") or "").lower() != "approved_if":
+            continue
+        aid = decision.get("action_id")
+        if not aid or aid in covered_action_ids:
+            continue
+        if gateway.get_records_for_verdict(aid):
+            continue  # already processed (dismissed, executed, etc.) — skip
+        covered_action_ids.add(aid)
+        reviews_json.append({
+            "execution_id": aid,
+            "action_id": aid,
+            "status": "conditional",
+            "verdict_snapshot": decision,
+            "created_at": decision.get("timestamp", ""),
+            "conditions": [],
+            "synthetic": True,
+        })
+
     return {
-        "count": len(pending),
-        "reviews": [r.model_dump(mode="json") for r in pending],
+        "count": len(reviews_json),
+        "reviews": reviews_json,
     }
 
 

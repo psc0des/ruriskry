@@ -1335,7 +1335,11 @@ export default function EvaluationDrilldown({ evaluation, onBack, reviewedBy }) 
                         )}
                         <div className="flex gap-2 justify-end">
                             <button onClick={() => { setShowDismissInput(false); setDismissError('') }} className="px-3 py-1.5 text-sm text-slate-400 hover:text-slate-200 transition-colors">Cancel</button>
-                            <button onClick={confirmDismiss} className="px-4 py-1.5 text-sm bg-red-600/20 hover:bg-red-600/30 border border-red-500/40 text-red-300 hover:text-red-200 rounded-lg font-medium transition-colors">
+                            <button
+                                onClick={confirmDismiss}
+                                disabled={!dismissReasonDraft.trim()}
+                                className="px-4 py-1.5 text-sm bg-red-600/20 hover:bg-red-600/30 border border-red-500/40 text-red-300 hover:text-red-200 rounded-lg font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
                                 Confirm Dismiss
                             </button>
                         </div>

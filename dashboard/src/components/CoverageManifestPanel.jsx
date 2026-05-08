@@ -18,10 +18,11 @@ const CATEGORY_COLORS = {
 
 function CategoryBadge({ name, applied, matched }) {
   const colors = CATEGORY_COLORS[name] || 'text-slate-400 bg-slate-400/10 border-slate-400/20'
+  const safeMatched = Math.min(matched, applied)
   return (
     <div className={`rounded-lg border px-3 py-2 ${colors}`}>
       <p className="text-xs font-semibold capitalize">{name}</p>
-      <p className="text-lg font-bold mt-0.5">{matched}</p>
+      <p className="text-lg font-bold mt-0.5">{safeMatched}</p>
       <p className="text-xs opacity-60">of {applied} rules matched</p>
     </div>
   )
