@@ -11,7 +11,7 @@
 
 RuriSkry is two systems in one: a team of **Azure AI Cloud Ops Agents** (Monitoring, Cost, Deploy) that propose fixes to your infrastructure — and an **AI Change Advisory Board** (Policy, Blast Radius, Historical, Financial) that simulates, scores, and adjudicates every proposed action *before* it touches production. Ops agents supply the changes; the CAB decides whether they ship.
 
-Born at the Microsoft AI Dev Days Hackathon 2026, RuriSkry has since matured into a fully async, enterprise-ready governance engine with live Azure topology analysis, a 34-rule deterministic rules engine, durable audit trails (Cosmos DB), Slack alerting, explainable AI verdicts with counterfactual analysis, operator override feedback capture, and 1397 automated tests.
+Born at the Microsoft AI Dev Days Hackathon 2026, RuriSkry has since matured into a fully async, enterprise-ready governance engine with live Azure topology analysis, a 34-rule deterministic rules engine, durable audit trails (Cosmos DB), Slack alerting, explainable AI verdicts with counterfactual analysis, operator override feedback capture, and 1457 automated tests.
 
 ---
 
@@ -265,7 +265,7 @@ Every plan is stamped with a **Remediation Confidence badge** shown next to the 
 - **Guided manual** (amber) — exact steps provided; human runs them
 - **Manual** (grey) — investigation required
 
-The generic PATCH tool (`update_resource_property`) covers storage `allowBlobPublicAccess`, Key Vault `enableSoftDelete`, App Service `httpsOnly`, database `publicNetworkAccess`, and hundreds of other property-level fixes that previously fell to "manual required". Works in mock mode (1397 tests pass, no Azure/OpenAI required) and live mode.
+The generic PATCH tool (`update_resource_property`) covers storage `allowBlobPublicAccess`, Key Vault `enableSoftDelete`, App Service `httpsOnly`, database `publicNetworkAccess`, and hundreds of other property-level fixes that previously fell to "manual required". Works in mock mode (1457 tests pass, no Azure/OpenAI required) and live mode.
 
 <p align="center">
   <img src="docs/screenshots/execution-status.png" alt="Execution Status — LLM-Driven Fix with Live Terminal" width="100%">
@@ -516,7 +516,7 @@ python examples/demo_live.py                # two-layer intelligence demo
 ### Run Tests
 
 ```bash
-# Expected: 1397 passed, 0 failed
+# Expected: 1457 passed, 0 failed
 # Tests use mock mode by default — no Azure credentials needed.
 pytest tests/ -v
 
@@ -643,7 +643,7 @@ challenge track: *Automate and Optimize Software Delivery — Leverage Agentic D
 Since its hackathon origins, the project has matured into a production-grade governance engine
 with fully async internals, live Azure topology analysis (Resource Graph + Retail Prices API),
 durable Cosmos DB audit trails, Slack alerting, explainable AI with counterfactual
-drilldowns, and a comprehensive 1397-test suite.
+drilldowns, and a comprehensive 1457-test suite.
 
 ---
 

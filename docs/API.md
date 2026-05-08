@@ -178,7 +178,7 @@ All endpoints are `async def` (FastAPI manages the event loop).
 | GET | `/api/scan/{scan_id}/status` | Poll the status and results of a background scan |
 | GET | `/api/scan/{scan_id}/stream` | SSE stream of real-time scan progress events |
 | PATCH | `/api/scan/{scan_id}/cancel` | Request cancellation of a running scan |
-| POST | `/api/scan/{scan_id}/resume` | **Phase 33C — Scan resume.** Re-evaluates proposals listed in the scan's checkpoint (`pending_proposals`) that are missing from `evaluations`. Reads `governance-checkpoints` Cosmos container. Returns `404` if no checkpoint exists, `409` if scan is already running. |
+| POST | `/api/scan/{scan_id}/resume` | **Phase 33C — Scan resume.** Re-evaluates proposals listed in the scan's checkpoint (`pending_proposals`) that are missing from `evaluations`. Reads `governance-checkpoints` Cosmos container. Returns `404` if no checkpoint exists, `400` if scan is already complete/running. Surfaced in the dashboard as a **Resume** button on error-status scan rows that have a checkpoint. |
 | GET | `/api/evaluations/{evaluation_id}/explanation` | Full decision explanation with counterfactual analysis |
 | GET | `/api/execution/pending-reviews` | List ESCALATED verdicts awaiting human review |
 | GET | `/api/execution/by-action/{action_id}` | Execution status for a verdict |
@@ -838,21 +838,33 @@ Returns 404 if not found. Same shape as one element of the `reviews` array in
 
 ### `GET /api/execution/pending-reviews`
 
-List all ESCALATED verdicts awaiting human review.
+List all verdicts requiring human action: **ESCALATED** (`awaiting_review`) and **APPROVED_IF** (`conditional`).
+
+Combines two sources:
+1. **Execution gateway records** — live in-memory records for verdicts processed after the gateway was enabled.
+2. **Decision tracker supplement** — ESCALATED and APPROVED_IF verdicts from Cosmos DB that have no execution gateway record (created before Phase 27 wiring or before the gateway was enabled). These appear as synthetic records with `"synthetic": true`.
 
 **Response:**
 ```json
 {
-  "count": 1,
+  "count": 2,
   "reviews": [
     {
       "execution_id": "e5f6g7h8-...",
       "action_id": "d4e5f6g7-...",
-      "verdict": "escalated",
       "status": "awaiting_review",
       "iac_managed": true,
       "iac_tool": "terraform",
       "created_at": "2026-03-05T12:00:00+00:00"
+    },
+    {
+      "execution_id": "a1b2c3d4-...",
+      "action_id": "a1b2c3d4-...",
+      "status": "conditional",
+      "verdict_snapshot": { "decision": "approved_if", "..." : "..." },
+      "conditions": [],
+      "synthetic": true,
+      "created_at": "2026-03-04T09:00:00+00:00"
     }
   ]
 }
@@ -887,6 +899,8 @@ Human dismisses a verdict — no execution will happen.
 ```json
 { "reviewed_by": "admin@example.com", "reason": "Not needed — planned maintenance covers this." }
 ```
+
+`reason` is **required** and must not be empty — it is written to the audit trail as a `VerdictOverride` record. The dashboard enforces this in the UI (Confirm Dismiss button is disabled until the textarea has content).
 
 **Response:** Updated `ExecutionRecord` JSON with `status: "dismissed"`.
 
