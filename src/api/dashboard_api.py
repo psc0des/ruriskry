@@ -97,6 +97,8 @@ from src.operational_agents import is_compliant_reason
 from src.notifications.slack_notifier import (
     send_alert_notification,
     send_alert_resolved_notification,
+    send_inventory_stale_notification,
+    send_scan_failure_notification,
     send_verdict_notification,
 )
 
@@ -445,12 +447,16 @@ async def lifespan(app: FastAPI):
     except Exception as _seed_exc:  # noqa: BLE001
         logger.warning("Startup: seed bank load skipped — %s", _seed_exc)
 
+    # Inventory staleness watcher — alerts Slack when inventory > 2× stale_hours old
+    _staleness_task = asyncio.create_task(_inventory_staleness_watcher())
+
     yield  # application runs
 
     _watcher.stop()
     _watcher_task.cancel()
     _labeler.stop()
     _labeler_task.cancel()
+    _staleness_task.cancel()
     try:
         await _watcher_task
     except asyncio.CancelledError:
@@ -1360,11 +1366,25 @@ async def _run_agent_scan(
 
     except Exception as exc:  # noqa: BLE001
         logger.exception("scan %s (%s) failed: %s", scan_id[:8], agent_type, exc)
+
+        # Auto-retry once: create a new scan of the same type and start it
+        # immediately, unless this scan was already a retry (preventing cascades).
+        retry_scan_id: str | None = None
+        if not _scans[scan_id].get("retry_of") and scan_id not in _scan_cancelled:
+            retry_scan_id, _ = _make_scan_record(agent_type, resource_group)
+            _scans[retry_scan_id]["retry_of"] = scan_id
+            _scans[scan_id]["retry_scan_id"] = retry_scan_id
+            _persist_scan_record(retry_scan_id)
+            logger.info(
+                "scan %s (%s) failed — auto-retry started as %s",
+                scan_id[:8], agent_type, retry_scan_id[:8],
+            )
+
         _scans[scan_id].update(
             {
                 "status": "error",
                 "completed_at": datetime.now(timezone.utc).isoformat(),
-                "error": str(exc),
+                "scan_error": str(exc),
                 "totals": _scans[scan_id].get("totals", {"approved": 0, "escalated": 0, "denied": 0}),
             }
         )
@@ -1374,6 +1394,20 @@ async def _run_agent_scan(
             agent=agent_type,
             message=f"Scan failed: {exc}",
         )
+
+        # Fire-and-forget Slack alert (never blocks governance flow)
+        try:
+            asyncio.create_task(send_scan_failure_notification(
+                scan_id, agent_type, str(exc), retry_scan_id=retry_scan_id,
+            ))
+        except Exception:  # noqa: BLE001
+            pass
+
+        # Start the retry scan after the error is persisted and notified
+        if retry_scan_id:
+            asyncio.create_task(_run_agent_scan(
+                retry_scan_id, agent_type, resource_group, subscription_id, inventory_mode,
+            ))
 
 
 def _get_tracker() -> DecisionTracker:
@@ -1398,6 +1432,39 @@ def _get_scan_tracker() -> ScanRunTracker:
     if _scan_tracker is None:
         _scan_tracker = ScanRunTracker()
     return _scan_tracker
+
+
+async def _inventory_staleness_watcher() -> None:
+    """Background task: send a Slack alert when inventory is overdue for refresh.
+
+    Checks every 6 hours. Fires once per 24-hour window when age exceeds
+    2× settings.inventory_stale_hours (default 48 h). Stops cleanly on
+    CancelledError so the lifespan shutdown is not blocked.
+    """
+    # Skip initial wait so the watcher doesn't trigger immediately on startup.
+    _CHECK_INTERVAL_S = 6 * 3600          # 6 hours between checks
+    _ALERT_THRESHOLD_H = settings.inventory_stale_hours * 2  # 48 h by default
+    _last_alerted_day: str | None = None
+
+    try:
+        await asyncio.sleep(_CHECK_INTERVAL_S)
+        while True:
+            try:
+                inv = _get_cosmos_inventory().get_latest(settings.azure_subscription_id or "")
+                if inv:
+                    refreshed_at = inv.get("refreshed_at")
+                    if refreshed_at:
+                        ts = datetime.fromisoformat(refreshed_at.replace("Z", "+00:00"))
+                        age_hours = (datetime.now(timezone.utc) - ts).total_seconds() / 3600
+                        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                        if age_hours > _ALERT_THRESHOLD_H and _last_alerted_day != today:
+                            await send_inventory_stale_notification(age_hours)
+                            _last_alerted_day = today
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Inventory staleness check failed: %s", exc)
+            await asyncio.sleep(_CHECK_INTERVAL_S)
+    except asyncio.CancelledError:
+        pass
 
 
 def _get_execution_gateway() -> ExecutionGateway:

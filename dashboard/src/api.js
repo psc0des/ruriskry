@@ -31,7 +31,7 @@ export function clearToken() {
  * On 401 it clears the stored token so the next React render shows the login
  * screen — it does NOT redirect (React Router handles that).
  */
-async function apiFetch(url, options = {}) {
+export async function apiFetch(url, options = {}) {
   const token = getToken()
   const headers = { ...(options.headers || {}) }
   if (token) headers['Authorization'] = `Bearer ${token}`

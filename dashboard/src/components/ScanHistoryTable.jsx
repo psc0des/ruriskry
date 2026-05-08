@@ -335,9 +335,10 @@ export default function ScanHistoryTable({ onViewLog, scanState = {}, refreshKey
                         }
                         if (scan.status === 'error') {
                           const canResume = scan.pending_proposals?.length > 0
+                          const errMsg = scan.scan_error ?? scan.error
                           const tip = canResume
-                            ? (scan.scan_error ?? 'Scan failed — use Resume to continue from checkpoint')
-                            : (scan.scan_error ?? 'Scan failed — no checkpoint available, run a new scan')
+                            ? (errMsg ?? 'Scan failed — use Resume to continue from checkpoint')
+                            : (errMsg ?? 'Scan failed — no checkpoint available, run a new scan')
                           return (
                             <span className="text-xs text-red-400 flex items-center gap-1" title={tip}>
                               <AlertTriangle className="w-3 h-3" /> Error

@@ -501,3 +501,108 @@ class TestSlackLocalhostWarning:
         assert any("localhost" in r.message for r in caplog.records), (
             "Expected a localhost warning in logs"
         )
+
+
+# ---------------------------------------------------------------------------
+# Tests — send_scan_failure_notification
+# ---------------------------------------------------------------------------
+
+
+class TestSendScanFailureNotification:
+    """send_scan_failure_notification posts a red Block Kit card on scan failure."""
+
+    @pytest.mark.asyncio
+    async def test_posts_to_slack_on_failure(self, monkeypatch):
+        from src.notifications.slack_notifier import send_scan_failure_notification
+
+        monkeypatch.setattr("src.notifications.slack_notifier.settings.slack_webhook_url",
+                            "https://hooks.slack.com/services/T/B/XXX")
+        monkeypatch.setattr("src.notifications.slack_notifier.settings.slack_notifications_enabled", True)
+        monkeypatch.setattr("src.notifications.slack_notifier.settings.dashboard_url",
+                            "https://app.example.com")
+
+        mock_client = _mock_http_client()
+        with patch("src.notifications.slack_notifier._get_client", new_callable=AsyncMock,
+                   return_value=mock_client):
+            result = await send_scan_failure_notification(
+                "aaaa-bbbb-cccc-1111", "cost", "Azure timeout after 600s"
+            )
+
+        assert result is True
+        assert mock_client.post.called
+        payload = mock_client.post.call_args.kwargs["json"]
+        text = str(payload)
+        assert "cost" in text
+        assert "Azure timeout" in text
+
+    @pytest.mark.asyncio
+    async def test_includes_retry_scan_id_when_provided(self, monkeypatch):
+        from src.notifications.slack_notifier import send_scan_failure_notification
+
+        monkeypatch.setattr("src.notifications.slack_notifier.settings.slack_webhook_url",
+                            "https://hooks.slack.com/services/T/B/XXX")
+        monkeypatch.setattr("src.notifications.slack_notifier.settings.slack_notifications_enabled", True)
+        monkeypatch.setattr("src.notifications.slack_notifier.settings.dashboard_url",
+                            "https://app.example.com")
+
+        mock_client = _mock_http_client()
+        with patch("src.notifications.slack_notifier._get_client", new_callable=AsyncMock,
+                   return_value=mock_client):
+            result = await send_scan_failure_notification(
+                "aaaa-bbbb-cccc-1111", "deploy", "LLM timeout",
+                retry_scan_id="dddd-eeee-ffff-2222",
+            )
+
+        assert result is True
+        payload = mock_client.post.call_args.kwargs["json"]
+        assert "dddd" in str(payload)
+
+    @pytest.mark.asyncio
+    async def test_skips_when_slack_not_configured(self, monkeypatch):
+        from src.notifications.slack_notifier import send_scan_failure_notification
+
+        monkeypatch.setattr("src.notifications.slack_notifier.settings.slack_webhook_url", "")
+        monkeypatch.setattr("src.notifications.slack_notifier.settings.slack_notifications_enabled", True)
+
+        result = await send_scan_failure_notification("scan-id", "monitoring", "err")
+        assert result is True  # silent skip, never raises
+
+
+# ---------------------------------------------------------------------------
+# Tests — send_inventory_stale_notification
+# ---------------------------------------------------------------------------
+
+
+class TestSendInventoryStaleNotification:
+    """send_inventory_stale_notification posts an amber Block Kit card when inventory is old."""
+
+    @pytest.mark.asyncio
+    async def test_posts_to_slack_with_age(self, monkeypatch):
+        from src.notifications.slack_notifier import send_inventory_stale_notification
+
+        monkeypatch.setattr("src.notifications.slack_notifier.settings.slack_webhook_url",
+                            "https://hooks.slack.com/services/T/B/XXX")
+        monkeypatch.setattr("src.notifications.slack_notifier.settings.slack_notifications_enabled", True)
+        monkeypatch.setattr("src.notifications.slack_notifier.settings.dashboard_url",
+                            "https://app.example.com")
+
+        mock_client = _mock_http_client()
+        with patch("src.notifications.slack_notifier._get_client", new_callable=AsyncMock,
+                   return_value=mock_client):
+            result = await send_inventory_stale_notification(52.5)
+
+        assert result is True
+        payload = mock_client.post.call_args.kwargs["json"]
+        text = str(payload)
+        assert "53h" in text or "52h" in text or "52.5" in text or "stale" in text.lower()
+
+    @pytest.mark.asyncio
+    async def test_skips_when_disabled(self, monkeypatch):
+        from src.notifications.slack_notifier import send_inventory_stale_notification
+
+        monkeypatch.setattr("src.notifications.slack_notifier.settings.slack_webhook_url",
+                            "https://hooks.slack.com/services/T/B/XXX")
+        monkeypatch.setattr("src.notifications.slack_notifier.settings.slack_notifications_enabled", False)
+
+        result = await send_inventory_stale_notification(72.0)
+        assert result is True  # silent skip

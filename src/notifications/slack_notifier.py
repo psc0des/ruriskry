@@ -424,6 +424,131 @@ async def send_alert_resolved_notification(
     return success
 
 
+async def send_scan_failure_notification(
+    scan_id: str,
+    agent_type: str,
+    error_message: str,
+    *,
+    retry_scan_id: str | None = None,
+) -> bool:
+    """Post a Block Kit message when an agent scan fails with an unhandled exception."""
+    if _should_skip():
+        return True
+
+    _warn_localhost_once()
+    short_id = scan_id[:8]
+    retry_note = f"\n_Auto-retry started as scan `{retry_scan_id[:8]}…`_" if retry_scan_id else ""
+    payload = {
+        "attachments": [{
+            "color": "#E53E3E",
+            "blocks": [
+                {
+                    "type": "header",
+                    "text": {
+                        "type": "plain_text",
+                        "text": f"🔴 Agent Scan Failed — {agent_type}",
+                        "emoji": True,
+                    },
+                },
+                {
+                    "type": "section",
+                    "fields": [
+                        {"type": "mrkdwn", "text": f"*Agent*\n`{agent_type}`"},
+                        {"type": "mrkdwn", "text": f"*Scan ID*\n`{short_id}…`"},
+                    ],
+                },
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": f"*Error*\n```{error_message[:300]}```{retry_note}",
+                    },
+                },
+                {"type": "divider"},
+                {
+                    "type": "actions",
+                    "elements": [{
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "View Scan Log", "emoji": True},
+                        "url": f"{settings.dashboard_url}/agents",
+                        "style": "danger",
+                    }],
+                },
+            ],
+        }],
+    }
+
+    success = await _post(payload, notification_type="scan_failure")
+    if success:
+        logger.info(
+            "Slack scan-failure notification sent.",
+            extra={
+                "event": "slack_sent",
+                "notification_type": "scan_failure",
+                "scan_id": scan_id,
+                "agent_type": agent_type,
+            },
+        )
+    return success
+
+
+async def send_inventory_stale_notification(age_hours: float) -> bool:
+    """Post a Block Kit alert when the resource inventory has not been refreshed recently."""
+    if _should_skip():
+        return True
+
+    _warn_localhost_once()
+    hours_str = f"{age_hours:.0f}h"
+    payload = {
+        "attachments": [{
+            "color": "#D69E2E",
+            "blocks": [
+                {
+                    "type": "header",
+                    "text": {
+                        "type": "plain_text",
+                        "text": f"⚠️ Inventory Stale — {hours_str} Since Last Refresh",
+                        "emoji": True,
+                    },
+                },
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": (
+                            f"The Azure resource inventory is *{hours_str} old*. "
+                            "Governance rules are running against stale data — "
+                            "findings may be inaccurate until the inventory is refreshed."
+                        ),
+                    },
+                },
+                {"type": "divider"},
+                {
+                    "type": "actions",
+                    "elements": [{
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "Run All Agents (Refresh)", "emoji": True},
+                        "url": f"{settings.dashboard_url}/agents",
+                        "style": "primary",
+                    }],
+                },
+            ],
+        }],
+    }
+
+    success = await _post(payload, notification_type="inventory_stale")
+    if success:
+        logger.info(
+            "Slack inventory-stale notification sent.",
+            extra={
+                "event": "slack_sent",
+                "notification_type": "inventory_stale",
+                "age_hours": age_hours,
+            },
+        )
+    return success
+
+
 # ---------------------------------------------------------------------------
 # Payload builder — verdicts
 # ---------------------------------------------------------------------------
