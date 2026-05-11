@@ -589,7 +589,7 @@ ruriskry/
 │   ├── notifications/          # Outbound alerting
 │   │   └── slack_notifier.py        # Block Kit → Slack webhook on DENIED/ESCALATED + alerts
 │   └── api/                    # Dashboard REST endpoints
-│       └── dashboard_api.py         # ~55 REST endpoints: scans, alerts, SSE, explanation, HITL, conditional approvals, config
+│       └── dashboard_api.py         # ~60 REST endpoints: scans, alerts, SSE, explanation, HITL, conditional approvals, config
 ├── dashboard/                  # React + Vite governance dashboard
 ├── data/                       # Seed data + local persistence (mock fallback)
 │   ├── agents/                      # A2A agent registry (mock)
