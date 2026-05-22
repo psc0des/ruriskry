@@ -532,8 +532,12 @@ class _APIKeyMiddleware(BaseHTTPMiddleware):
                 request.headers.get("X-API-Key", ""), settings.api_key
             )
             # Check session token (Authorization: Bearer <token>)
+            # Also accept ?token= query param for SSE endpoints where EventSource
+            # cannot send custom headers (browser API limitation).
             auth_hdr = request.headers.get("Authorization", "")
             raw_token = auth_hdr[7:].strip() if auth_hdr.startswith("Bearer ") else ""
+            if not raw_token:
+                raw_token = request.query_params.get("token", "")
             session_ok = bool(raw_token and _validate_session(raw_token))
 
             if not api_key_ok and not session_ok:
@@ -1304,6 +1308,24 @@ async def _run_agent_scan(
 
             # Persist after every completed batch (not per-proposal).
             _persist_scan_record(scan_id)
+
+        # Post-loop cancel check: if cancel was requested during the last batch
+        # it arrives here without being caught by the per-batch check above.
+        if scan_id in _scan_cancelled:
+            _scan_cancelled.discard(scan_id)
+            logger.info("scan %s (%s): cancelled after final batch", scan_id[:8], agent_type)
+            _scans[scan_id].update(
+                {
+                    "status": "cancelled",
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                    "proposed_actions": [p.model_dump(mode="json") for p in proposals],
+                    "evaluations": evaluations,
+                    "totals": {"approved": approved, "escalated": escalated, "denied": denied},
+                }
+            )
+            _persist_scan_record(scan_id)
+            await _emit_event(scan_id, "scan_error", message="Scan cancelled by user.")
+            return
 
         summary = f"{approved} approved, {escalated} escalated, {denied} denied, {approved_if} approved_if"
 
@@ -4349,7 +4371,14 @@ async def create_pr_from_manual(
             iac_repo=iac_repo, iac_path=iac_path,
             confirmed_change=confirmed_change,
         )
+        if record.status == ExecutionStatus.failed:
+            raise HTTPException(
+                status_code=502,
+                detail=record.notes or "PR creation failed — check GitHub token and repo access.",
+            )
         return record.model_dump(mode="json")
+    except HTTPException:
+        raise
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:

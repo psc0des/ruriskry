@@ -45,7 +45,7 @@ import Login     from './pages/Login'
 import Setup     from './pages/Setup'
 import Glossary        from './pages/Glossary'
 import DecisionQuality from './pages/DecisionQuality'
-import { RefreshCw, Bell, LogOut, BookOpen } from 'lucide-react'
+import { RefreshCw, Bell, LogOut, BookOpen, Menu } from 'lucide-react'
 import { NavLink } from 'react-router-dom'
 
 // ── Loading / Error screens ────────────────────────────────────────────────
@@ -181,6 +181,7 @@ function AppShell({ loggedInUser, onLogout, isNewSetup }) {
   const [error,           setError]           = useState(null)
   const [slackStatus,     setSlackStatus]     = useState(null)
   const [slackBtnLabel,   setSlackBtnLabel]   = useState('Slack Connected')
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
 
   // Stabilized alert badge — requires 3 consecutive polls agreeing on a lower
   // count before the badge decreases. Increases apply immediately. This means
@@ -291,16 +292,31 @@ function AppShell({ loggedInUser, onLogout, isNewSetup }) {
       {/* Onboarding guide — shown once after first-time admin setup */}
       {showOnboarding && <OnboardingModal onClose={closeOnboarding} />}
 
-      <Sidebar pendingCount={pendingReviews.length} alertCount={alertCount} loggedInUser={loggedInUser} />
+      <Sidebar
+        pendingCount={pendingReviews.length}
+        alertCount={alertCount}
+        loggedInUser={loggedInUser}
+        isOpen={mobileSidebarOpen}
+        onClose={() => setMobileSidebarOpen(false)}
+      />
 
       <div className="flex-1 flex flex-col min-w-0 bg-dots">
 
         {/* ── Top bar ── */}
-        <header className="shrink-0 px-6 py-3 flex items-center gap-3 sticky top-0 z-20" style={{
+        <header className="shrink-0 px-4 md:px-6 py-3 flex items-center gap-3 sticky top-0 z-20" style={{
           background: 'rgba(2,8,23,0.92)',
           borderBottom: '1px solid rgba(30,45,74,0.6)',
           backdropFilter: 'blur(12px)',
         }}>
+          {/* Hamburger — mobile only */}
+          <button
+            className="md:hidden text-slate-400 hover:text-slate-200 p-1 rounded"
+            onClick={() => setMobileSidebarOpen(true)}
+            aria-label="Open navigation"
+          >
+            <Menu className="w-5 h-5" />
+          </button>
+
           <div className="flex-1" />
 
           {/* Slack notification button */}

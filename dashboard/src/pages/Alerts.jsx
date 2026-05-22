@@ -1032,7 +1032,7 @@ function TimelineRow({ label, time, icon }) {
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function Alerts() {
-  const { alerts = [], fetchAll, loggedInUser } = useOutletContext()
+  const { alerts = [], fetchAll, loggedInUser, dataReady } = useOutletContext()
 
   const [searchText,    setSearchText]    = useState('')
   const [filterStatus,  setFilterStatus]  = useState('all')
@@ -1068,10 +1068,11 @@ export default function Alerts() {
     if (updated) setSelectedAlert(updated)
   }, [alerts]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Filter
+  // Filter — also strip any null/undefined records that can arrive from the backend
   const filtered = useMemo(() => {
     const q = searchText.toLowerCase()
     return alerts.filter(a => {
+      if (!a || !a.alert_id) return false
       if (filterStatus !== 'all' && a.status !== filterStatus) return false
       if (filterSeverity !== 'all' && String(a.severity) !== filterSeverity) return false
       if (q) {
@@ -1129,7 +1130,9 @@ export default function Alerts() {
         <div>
           <h1 className="text-xl font-bold text-white">Alerts</h1>
           <p className="text-xs text-slate-500 mt-0.5">
-            {isFiltered
+            {!dataReady
+              ? 'Loading…'
+              : isFiltered
               ? <>{filtered.length} of {alerts.length} shown</>
               : <>{alerts.length} total</>
             }

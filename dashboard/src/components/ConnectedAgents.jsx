@@ -326,8 +326,8 @@ function AgentCard({ agent, menuOpen, onMenuToggle, onMenuAction, scanning, hasS
 
       {/* ── Total actions count ── */}
       <div>
-        <span className="text-2xl font-bold text-white tabular-nums">{total}</span>
-        <span className="text-xs text-slate-500 ml-1.5">actions proposed</span>
+        <span className="text-2xl font-bold text-white tabular-nums">{total}</span>{' '}
+        <span className="text-xs text-slate-500">actions proposed</span>
       </div>
 
       {/* ── Mini coloured bar chart ── */}

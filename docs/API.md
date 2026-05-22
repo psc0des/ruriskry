@@ -139,6 +139,8 @@ All endpoints are `async def` (FastAPI manages the event loop).
 
 **GET endpoints** are open — dashboard reads work in the browser without credentials.
 
+**SSE stream endpoints** (`GET /api/scan/{id}/stream`, `GET /api/alerts/{id}/stream`) are GET endpoints but enforce session auth when an admin account exists. Because the browser `EventSource` API cannot set custom headers, these endpoints also accept a `?token=<session-token>` query parameter. The dashboard automatically appends this when a session token is present.
+
 **POST / PATCH endpoints** require one of: valid session token (browser) OR valid API key (`API_KEY` env var set). Auth only enforces when an admin account exists or `API_KEY` is set; neither configured = pass-through (local dev).
 
 **Alert webhook** — `POST /api/alert-trigger` is exempt from the above; it verifies `Authorization: Bearer <secret>` from `ALERT_WEBHOOK_SECRET`.
@@ -944,6 +946,8 @@ Returns `404` if `execution_id` is unknown. Returns `400` in three cases:
 - Status is not `manual_required` or `awaiting_review`
 - Verdict snapshot is missing or corrupted
 - Action type cannot be expressed as a Terraform change (e.g. `restart_service` is an operational power action, not an infrastructure state change) — error message includes guidance to use "Fix by Agent" or run `az vm start` manually
+
+Returns `502` if GitHub is configured but PR creation fails (invalid token, repo not found, insufficient permissions) — the GitHub error message is forwarded in the response body.
 
 ---
 

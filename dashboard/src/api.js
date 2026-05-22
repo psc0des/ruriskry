@@ -271,13 +271,16 @@ export async function fetchScanStatus(scanId) {
 
 /**
  * Open an SSE stream for real-time scan progress events.
- * Returns an EventSource — caller must attach onmessage and call .close() when done.
- * EventSource uses GET and does not require auth headers.
+ * Passes the session token as ?token= because EventSource cannot send headers.
  * @param {string} scanId - UUID returned by triggerScan
  * @returns {EventSource}
  */
 export function streamScanEvents(scanId) {
-  return new EventSource(`${BASE}/scan/${scanId}/stream`)
+  const token = getToken()
+  const url = token
+    ? `${BASE}/scan/${scanId}/stream?token=${encodeURIComponent(token)}`
+    : `${BASE}/scan/${scanId}/stream`
+  return new EventSource(url)
 }
 
 /**
@@ -577,13 +580,16 @@ export async function investigateAlert(alertId) {
 
 /**
  * Open an SSE stream for real-time alert investigation progress.
- * Returns an EventSource — caller must attach onmessage and call .close() when done.
- * EventSource uses GET and does not require auth headers.
+ * Passes the session token as ?token= because EventSource cannot send headers.
  * @param {string} alertId - UUID returned by trigger_alert
  * @returns {EventSource}
  */
 export function streamAlertEvents(alertId) {
-  return new EventSource(`${BASE}/alerts/${alertId}/stream`)
+  const token = getToken()
+  const url = token
+    ? `${BASE}/alerts/${alertId}/stream?token=${encodeURIComponent(token)}`
+    : `${BASE}/alerts/${alertId}/stream`
+  return new EventSource(url)
 }
 
 /**

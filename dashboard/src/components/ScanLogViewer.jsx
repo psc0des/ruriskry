@@ -13,7 +13,7 @@
 
 import React, { useEffect, useRef, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
-import { BASE, fetchScanStatus } from '../api'
+import { BASE, fetchScanStatus, getToken } from '../api'
 import VerdictBadge from './magicui/VerdictBadge'
 import CoverageManifestPanel from './CoverageManifestPanel'
 
@@ -166,7 +166,11 @@ function LiveLogBody({ scanId, agentType, scanEntries }) {
     esMapRef.current = {}
 
     entries.forEach(({ scanId: sid, agentType: atype }) => {
-      const es = new EventSource(`${BASE}/scan/${sid}/stream`)
+      const _tok = getToken()
+      const _streamUrl = _tok
+        ? `${BASE}/scan/${sid}/stream?token=${encodeURIComponent(_tok)}`
+        : `${BASE}/scan/${sid}/stream`
+      const es = new EventSource(_streamUrl)
       esMapRef.current[sid] = es
 
       es.onmessage = (e) => {

@@ -156,8 +156,8 @@ export default function Admin() {
         )}
       </GlowCard>
 
-      {/* ── Danger Zone ── */}
-      <GlowCard color="red" intensity="low" className="p-5" style={{ borderColor: 'rgba(239,68,68,0.2)' }}>
+      {/* ── Danger Zone — only shown in mock/dev mode; backend also blocks it in live mode ── */}
+      {config?.mode !== 'live' && <GlowCard color="red" intensity="low" className="p-5" style={{ borderColor: 'rgba(239,68,68,0.2)' }}>
         <div className="flex items-center gap-2 mb-4">
           <AlertTriangle className="w-4 h-4 text-rose-500" />
           <h2 className="text-sm font-semibold text-rose-400">Danger Zone</h2>
@@ -194,7 +194,7 @@ export default function Admin() {
             {resetResult.message}
           </div>
         )}
-      </GlowCard>
+      </GlowCard>}
 
       </div>
 

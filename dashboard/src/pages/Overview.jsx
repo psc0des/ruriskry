@@ -518,8 +518,8 @@ export default function Overview() {
         <GlowCard color="blue" intensity="low" className="lg:col-span-2 p-5">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-sm font-semibold text-slate-300">
-              SRI trend
-              <span className="ml-2 text-xs text-slate-500 font-normal">last 20 evaluations</span>
+              SRI trend{' '}
+              <span className="text-xs text-slate-500 font-normal">last 20 evaluations</span>
             </h2>
             {trendData.length > 0 && (
               <div className="flex items-center gap-1.5">
@@ -580,7 +580,7 @@ export default function Overview() {
         <GlowCard
           color={pendingReviews.length > 0 ? 'amber' : 'slate'}
           intensity={pendingReviews.length > 0 ? 'medium' : 'low'}
-          className="p-5"
+          className="p-5 overflow-hidden"
         >
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-sm font-semibold text-slate-300">Pending reviews</h2>

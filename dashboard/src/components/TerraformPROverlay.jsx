@@ -178,10 +178,11 @@ export default function TerraformPROverlay({
 
   const canAnalyse = !loading && !resolving && (selectedRepo || repoSearch.trim())
   // Create PR is enabled when:
+  // - not still loading / no GitHub error blocking the repo selection
   // - delete: checkbox must be ticked
   // - nsg_review: always enabled (advisory is informational)
   // - config change: proposed value must be non-empty
-  const canCreatePR = !loading && (
+  const canCreatePR = !loading && !reposError && (
     resolveResult?.action === 'delete'   ? deleteConfirmed :
     resolveResult?.action === 'nsg_review' ? true :
     !!editedValue.trim()
