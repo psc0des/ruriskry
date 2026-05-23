@@ -336,21 +336,21 @@ function AppShell({ loggedInUser, onLogout, isNewSetup }) {
               title="Click to send a test notification to Slack"
             >
               <Bell className="w-3 h-3" />
-              {slackBtnLabel}
+              <span className="hidden sm:inline">{slackBtnLabel}</span>
             </button>
           ) : slackStatus ? (
             <div className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border bg-slate-800 border-slate-700 text-slate-500"
               title="Set SLACK_WEBHOOK_URL in .env to enable"
             >
               <Bell className="w-3 h-3" />
-              Slack: Off
+              <span className="hidden sm:inline">Slack: Off</span>
             </div>
           ) : null}
 
           {/* Live indicator */}
           <div className="flex items-center gap-1.5 text-xs text-slate-500">
             <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-            Live
+            <span className="hidden sm:inline">Live</span>
           </div>
 
           {/* Refresh */}
@@ -375,20 +375,20 @@ function AppShell({ loggedInUser, onLogout, isNewSetup }) {
             title="Glossary & FAQ"
           >
             <BookOpen className="w-3.5 h-3.5" />
-            Glossary
+            <span className="hidden sm:inline">Glossary</span>
           </NavLink>
 
           {/* User + logout */}
           {loggedInUser && (
             <div className="flex items-center gap-2 pl-1 border-l border-slate-700/50">
-              <span className="text-xs text-slate-400">{loggedInUser}</span>
+              <span className="hidden sm:inline text-xs text-slate-400">{loggedInUser}</span>
               <button
                 onClick={onLogout}
                 className="flex items-center gap-1 text-xs px-2 py-1 rounded-md text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors"
-                title="Sign out"
+                title={`Sign out (${loggedInUser})`}
               >
                 <LogOut className="w-3.5 h-3.5" />
-                Sign out
+                <span className="hidden sm:inline">Sign out</span>
               </button>
             </div>
           )}

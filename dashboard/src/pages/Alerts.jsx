@@ -1073,6 +1073,8 @@ export default function Alerts() {
     const q = searchText.toLowerCase()
     return alerts.filter(a => {
       if (!a || !a.alert_id) return false
+      // Discard malformed records that have no resource identity or metric
+      if (!a.resource_id && !a.resource_name && !a.metric) return false
       if (filterStatus !== 'all' && a.status !== filterStatus) return false
       if (filterSeverity !== 'all' && String(a.severity) !== filterSeverity) return false
       if (q) {
@@ -1336,7 +1338,8 @@ export default function Alerts() {
                     denied:    acc.denied    + (t.denied    ?? 0),
                   }
                 }, { approved: 0, escalated: 0, denied: 0 })
-                const allResolved  = grp.every(a => a.status === 'resolved')
+                const allResolved   = grp.every(a => a.status === 'resolved')
+                const resolvedCount = grp.filter(a => a.status === 'resolved').length
 
                 return (
                   <React.Fragment key={key}>
@@ -1399,6 +1402,8 @@ export default function Alerts() {
                               <span className="text-emerald-500">Clean</span>
                             )}
                           </div>
+                        ) : resolvedCount > 0 ? (
+                          <span className="text-slate-500 text-[10px]">{resolvedCount}/{grp.length} resolved</span>
                         ) : (
                           <span className="text-slate-600">—</span>
                         )}

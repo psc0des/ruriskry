@@ -256,7 +256,14 @@ async def execute_playbook(
 
     notes = ""
     if exit_code != 0:
-        notes = f"az exited with code {exit_code} — see stderr"
+        if stderr and "Please run 'az login'" in stderr:
+            notes = (
+                "Azure CLI authentication not configured in the backend environment. "
+                "The container must authenticate via Managed Identity or Service Principal. "
+                "Use dry-run mode until Azure auth is set up."
+            )
+        else:
+            notes = f"az exited with code {exit_code} — see stderr"
 
     record = AzPlaybookExecution(
         execution_id=exec_id,

@@ -19,7 +19,7 @@ import {
   CheckCircle, AlertTriangle, Clock, Zap, TrendingUp, RefreshCw, Cpu,
   Activity as ActivityIcon, Terminal,
 } from 'lucide-react'
-import { fetchAgentLastRun, fetchOverridesMetrics } from '../api'
+import { fetchScanHistory, fetchOverridesMetrics } from '../api'
 import NumberTicker from '../components/magicui/NumberTicker'
 import GlowCard from '../components/magicui/GlowCard'
 import VerdictBadge from '../components/magicui/VerdictBadge'
@@ -136,7 +136,7 @@ function PendingCard({ review, onNavigate }) {
       intensity="low"
       beam
       beamDuration={4}
-      className="p-4 cursor-pointer hover:scale-[1.01] transition-transform"
+      className="w-full p-4 cursor-pointer hover:scale-[1.01] transition-transform"
       as="button"
       onClick={() => onNavigate(`/decisions?exec=${review.execution_id}`)}
     >
@@ -361,15 +361,13 @@ export default function Overview() {
 
   function loadScans() {
     setScansLoading(true)
-    Promise.all(AGENT_NAMES.map(name => fetchAgentLastRun(name).catch(() => null)))
-      .then(results => {
-        setRecentScans(
-          results
-            .filter(r => r && r.status !== 'no_data')
-            .sort((a, b) => (b.started_at ?? '').localeCompare(a.started_at ?? ''))
-        )
+    fetchScanHistory(10)
+      .then(data => {
+        const runs = Array.isArray(data) ? data : (data?.scans ?? data?.items ?? [])
+        setRecentScans(runs.filter(r => r && r.scan_id))
         setScansLoading(false)
       })
+      .catch(() => setScansLoading(false))
   }
 
   useEffect(() => { loadScans() }, [])
@@ -609,7 +607,7 @@ export default function Overview() {
               <p className="text-xs text-slate-600 mt-1">No actions require review</p>
             </div>
           ) : (
-            <div className="space-y-2 max-h-52 overflow-y-auto pr-0.5">
+            <div className="space-y-2 max-h-52 overflow-y-auto overflow-x-hidden pr-0.5">
               {pendingReviews.slice(0, 5).map(r => (
                 <PendingCard key={r.execution_id} review={r} onNavigate={navigate} />
               ))}
