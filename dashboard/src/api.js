@@ -705,7 +705,7 @@ export async function forceExecuteConditional(executionId, adminUser, justificat
 
 /**
  * Fetch the Tier 3 remediation playbook for a governance decision.
- * Returns null if no template exists (404) — caller renders a "not available" state.
+ * Returns null if no template exists for the action type — caller renders "not available".
  * @param {string} decisionId - action_id UUID from the governance verdict
  * @returns {Promise<object|null>} Playbook object or null
  */
@@ -713,7 +713,9 @@ export async function fetchPlaybook(decisionId) {
   const res = await apiFetch(`${BASE}/decisions/${encodeURIComponent(decisionId)}/playbook`)
   if (res.status === 404) return null
   if (!res.ok) throw new Error(`API error ${res.status}: failed to fetch playbook`)
-  return res.json()
+  const data = await res.json()
+  if (data.available === false) return null
+  return data
 }
 
 /**

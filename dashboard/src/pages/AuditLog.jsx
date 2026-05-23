@@ -619,7 +619,7 @@ export default function AuditLog() {
                         </div>
                       </td>
                       <td className="px-4 py-2.5 text-right text-xs text-slate-400 tabular-nums">
-                        {proposals}
+                        {scan.scanned_resources_count ?? scan.scanned_resources?.length ?? 0}
                       </td>
                       <td className="px-4 py-2.5 text-right text-xs text-slate-600 tabular-nums hidden sm:table-cell">
                         {duration ?? '—'}

@@ -701,8 +701,7 @@ class CostOptimizationAgent:
         )
         llm_count = len(proposals_holder) - rule_count - auto_count
         scan_notes.append(
-            f"rules_completed: {len(_rule_findings)} finding(s), "
-            f"categories={{'cost': len([f for f in _rule_findings if f.category.value == 'cost'])}}"
+            f"rules_completed: {len(_rule_findings)} finding(s)"
         )
         if proposals_holder:
             scan_notes.append(

@@ -3703,7 +3703,7 @@ async def get_decision_playbook(decision_id: str) -> dict:
     try:
         playbook = generate_playbook(action, resource_details={})
     except PlaybookUnsupportedError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {"available": False, "reason": str(exc)}
     except Exception as exc:
         logger.exception("Playbook generation failed for decision %s: %s", decision_id, exc)
         raise HTTPException(status_code=500, detail=f"Playbook generation error: {exc}") from exc
