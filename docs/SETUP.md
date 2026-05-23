@@ -496,6 +496,8 @@ subscriptions. This follows the [Azure Landing Zone](https://learn.microsoft.com
 - `Reader` — always required (resource scanning, Resource Graph, Advisor, Defender, Policy)
 - `Network Contributor` + `Virtual Machine Contributor` — only needed when `EXECUTION_GATEWAY_ENABLED=true` (direct remediation). For scan-only deployments, `Reader` alone is sufficient.
 
+> **Live az CLI execution requires Azure auth in the container.** When a user clicks "Run live" on a playbook, the backend runs `az` CLI commands. The Container App must be authenticated — either via System-Assigned Managed Identity (recommended) or a Service Principal with `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET` / `AZURE_TENANT_ID` env vars. If the container is not authenticated, commands fail with `exit_code: 1` and the dashboard shows "Azure CLI authentication not configured — use Managed Identity or Service Principal". Dry-run mode works without Azure auth.
+
 **Steps:**
 ```bash
 PRINCIPAL=$(terraform -chdir=infrastructure/terraform-core output -raw backend_container_app_principal_id)
@@ -694,6 +696,23 @@ Run a scan from the dashboard. When an APPROVED verdict is issued, click
 
 After confirming, a PR is opened in the selected repo with the proposed Terraform change.
 Check the drilldown panel for execution status and a link to the PR.
+
+**Token expiry and rotation:**
+
+Fine-grained PATs expire (typically 90 days). When the token expires, `/api/github/repos` returns
+`502 Bad Gateway` and PR creation is blocked. To rotate:
+
+1. Generate a new fine-grained PAT at GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens.
+   Scope: the IaC repo only. Permissions: Contents (read/write), Pull requests (read/write).
+2. Update the Container App environment variable:
+   ```bash
+   az containerapp update \
+     --name <container-app-name> \
+     --resource-group <rg> \
+     --set-env-vars "GITHUB_TOKEN=<new-token>"
+   ```
+   No Docker rebuild needed — the new value is picked up immediately.
+3. Validate: `GET /api/github/repos` should return `200` with your IaC repo name.
 
 See `infrastructure/terraform-core/deploy.md` for full implementation guide.
 
