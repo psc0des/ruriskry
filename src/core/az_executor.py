@@ -151,6 +151,58 @@ def validate_command(args: list[str]) -> bool:
     return any(pat.fullmatch(cmd) for pat in _ALLOWLIST_PATTERNS)
 
 
+# ---------------------------------------------------------------------------
+# Managed Identity auth — runs once per process lifetime
+# ---------------------------------------------------------------------------
+
+_az_auth_verified = False  # cached after first successful check
+
+
+async def _ensure_az_authenticated(cfg) -> None:
+    """Ensure the az CLI is logged in before a live execution attempt.
+
+    In Azure Container Apps the System-Assigned Managed Identity (MSI) is
+    available via IMDS but the az CLI still needs ``az login --identity`` to
+    pick it up.  We call that once and cache the result for the process.
+    Mock mode is exempt — subprocess is never called there.
+    """
+    global _az_auth_verified
+    if _az_auth_verified or cfg.use_local_mocks:
+        return
+
+    import subprocess  # noqa: PLC0415
+    import logging     # noqa: PLC0415
+    _log = logging.getLogger(__name__)
+
+    # Fast check: if already authenticated (e.g. local az login), skip MSI step.
+    check = await asyncio.to_thread(
+        subprocess.run,
+        ["az", "account", "show"],
+        capture_output=True, text=True, timeout=10,
+    )
+    if check.returncode == 0:
+        _az_auth_verified = True
+        return
+
+    # Not authenticated — attempt Managed Identity login.
+    _log.info("az: not authenticated, attempting az login --identity (MSI)")
+    login = await asyncio.to_thread(
+        subprocess.run,
+        ["az", "login", "--identity"],
+        capture_output=True, text=True, timeout=60,
+    )
+    if login.returncode == 0:
+        _az_auth_verified = True
+        _log.info("az: MSI login succeeded")
+    else:
+        # Don't raise — let the actual command fail with its own error message,
+        # which az_executor already intercepts and annotates with a clear note.
+        _log.warning(
+            "az: MSI login failed (exit %s): %s",
+            login.returncode, login.stderr[:200],
+        )
+
+
 async def execute_playbook(
     playbook: Playbook,
     mode: str,
@@ -250,6 +302,7 @@ async def execute_playbook(
         return record
 
     # --- 3. Live execution -----------------------------------------------
+    await _ensure_az_authenticated(cfg)
     exit_code, stdout, stderr, duration_ms, exec_at = await _run(
         args, _get_timeout(args), cfg
     )
