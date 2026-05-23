@@ -310,7 +310,7 @@ on 429s; operational agents return `[]` (no false positives from stale seed data
 The API layer is production-hardened for public OSS deployment:
 
 - **Dashboard Login** — First visit shows a one-time admin setup screen (create username + password). Every subsequent visit shows a login screen. Session tokens (256-bit random, 8-hour TTL) are stored in the browser's `localStorage` and sent as `Authorization: Bearer <token>` on all mutating requests. Logout button in the top bar. When the backend returns a 401 mid-session (session expired), `apiFetch` dispatches a `ruriskry:auth-expired` window event — `AuthGate` catches it and immediately shows the login form instead of letting the dashboard go dark silently.
-- **API Key Authentication** — `_APIKeyMiddleware` gates all `POST`/`PATCH` endpoints with either a session token (browser) or an `X-API-Key` header (machine-to-machine / CI-CD). Both credential types are accepted; neither blocks the other. Uses `secrets.compare_digest` (constant-time comparison) to prevent timing attacks. GET endpoints stay open so the browser dashboard works without credentials. Opt-in: set `API_KEY` env var; empty = disabled.
+- **API Key Authentication** — `_APIKeyMiddleware` gates all `POST`/`PATCH` endpoints with either a session token (browser) or an `X-API-Key` header (machine-to-machine / CI-CD). Both credential types are accepted; neither blocks the other. Uses `secrets.compare_digest` (constant-time comparison) to prevent timing attacks. GET endpoints stay open; SSE stream endpoints (`/scan/{id}/stream`, `/alerts/{id}/stream`) also accept a `?token=` query parameter because the browser `EventSource` API cannot send `Authorization` headers. Opt-in: set `API_KEY` env var; empty = disabled.
 - **Alert Webhook Secret** — `POST /api/alert-trigger` is exempt from the API key middleware (it has its own secret). The endpoint verifies `Authorization: Bearer <secret>` using constant-time comparison. Protects expensive LLM investigation calls from spoofed Azure Monitor payloads.
 - **X-Request-ID Tracing** — `_RequestIDMiddleware` generates (or echoes) a UUID per request, stores it in a `ContextVar` (safe under async concurrency), injects it into every log line via `logging.Filter`, and echoes it in the response header. Correlates frontend → backend → Cosmos → LLM log lines across distributed failures.
 - **Per-IP Rate Limiting** — 10 requests/60-second sliding window per client IP on all scan endpoints. In-memory `defaultdict(list)` with `time.monotonic()` — no Redis required for single-replica or sticky-session deployments.
@@ -377,7 +377,7 @@ Set `USE_WORKFLOWS=false` only to opt back to the deprecated legacy path:
 
 ## Dashboard
 
-A 7-page React governance UI with real-time SSE streaming, custom design tokens, and animated components. Includes an **inline Glossary & FAQ**: every page exposes contextual `i` icons next to verdicts, agents, and key terms; clicking opens a popover with a short definition and a deep link into the full glossary page (top-bar Glossary entry).
+A 7-page React governance UI with real-time SSE streaming, custom design tokens, and animated components. Fully responsive — on mobile the sidebar collapses to an overlay drawer triggered by a hamburger button in the header. Includes an **inline Glossary & FAQ**: every page exposes contextual `i` icons next to verdicts, agents, and key terms; clicking opens a popover with a short definition and a deep link into the full glossary page (top-bar Glossary entry).
 
 ### Overview — Ops Nerve Center
 <p align="center">

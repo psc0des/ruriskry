@@ -663,10 +663,16 @@ POST /api/scan/all
 - **asyncio.Queue bridges producer↔consumer** — the background task pushes events; the SSE
   generator awaits them. Events are buffered for late-connecting clients.
 - **Parallel proposal evaluation** — proposals are batched and evaluated with `asyncio.gather`
-  (`PROPOSAL_BATCH_SIZE` env var, default 4). Cancellation is checked before each batch, not
-  per-proposal. `tracker.record()` and `update_agent_stats()` run in the main loop after gather
-  to avoid concurrent writes to shared state. At batch=4, a 35-proposal scan drops from ~19 min
-  to ~5 min evaluation time.
+  (`PROPOSAL_BATCH_SIZE` env var, default 4). Cancellation is checked before each batch **and
+  once more after the final batch** (post-loop check) — ensures a cancel request that arrives
+  during the last batch still lands as `"cancelled"` rather than `"complete"`. `tracker.record()`
+  and `update_agent_stats()` run in the main loop after gather to avoid concurrent writes to
+  shared state. At batch=4, a 35-proposal scan drops from ~19 min to ~5 min evaluation time.
+- **SSE stream auth** — the browser `EventSource` API cannot set `Authorization` headers (browser
+  standard limitation). The backend `_APIKeyMiddleware` therefore also accepts a `?token=<session-
+  token>` query parameter on `GET /api/scan/{id}/stream` and `GET /api/alerts/{id}/stream`. The
+  dashboard appends this automatically; unauthenticated connections still work when no admin account
+  is configured (local dev).
 - **Shared inventory for Run All Agents** — `POST /api/scan/all` pre-fetches one Cosmos snapshot
   before starting background tasks. All three agents receive it as `shared_inventory` and skip
   their own fetch. Eliminates the case where Cost, Monitoring, and Deploy each see different
