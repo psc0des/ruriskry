@@ -256,7 +256,15 @@ boundary — minimal overhead. Used by `examples/demo.py` and all unit tests.
    blocking the remediation. Mock mode bypasses the framework entirely — deterministic baseline only
    (all tests pass unchanged).
 
-6. **DefaultAzureCredential (sync vs async, lifecycle)** — sync clients use
+6. **az CLI MSI auto-auth** — the Azure SDK (`DefaultAzureCredential`) picks up the
+   Container App's System-Assigned Managed Identity automatically via IMDS, but the `az`
+   CLI is a separate tool that does NOT auto-authenticate. `az_executor.py` calls
+   `_ensure_az_authenticated(cfg)` before every live execution: it checks `az account show`
+   first (fast, no-op if already logged in) and falls back to `az login --identity` if
+   needed. Result is cached in a module-level flag (`_az_auth_verified`) — auth runs at
+   most once per Container App replica lifetime. Mock mode skips this entirely.
+
+7. **DefaultAzureCredential (sync vs async, lifecycle)** — sync clients use
    `azure.identity.DefaultAzureCredential`; async clients (`.aio.*` packages) use
    `azure.identity.aio.DefaultAzureCredential`. Both resolve credentials the same way (`az login`
    locally, Managed Identity in Azure) — no code changes between environments. Using the wrong
