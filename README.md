@@ -350,6 +350,16 @@ Admin force-execute is available with a mandatory non-empty justification for a 
 Dashboard shows APPROVED_IF verdicts with an amber `🔒 Conditional` badge and a conditions
 panel; human conditions have explicit sign-off buttons; the watcher drives auto-condition resolution.
 
+### Operator Override Feedback Capture
+
+Every time a human overrides a governance verdict — force-executing a DENIED action, dismissing a pending ESCALATED, or manually satisfying a condition — RuriSkry captures a **`VerdictOverride` record** with a fingerprint hash of the decision context. This creates a feedback loop:
+
+- **Three override types**: `force_execute` (bypass DENIED/ESCALATED), `dismiss` (close without acting), `condition_satisfied` (human sign-off on a condition gate)
+- **Fingerprint deduplication**: similar decisions in the future can be correlated against prior overrides to detect repeated operator disagreements with the engine
+- **Full audit trail**: override type, reviewer identity, mandatory justification (≥20 chars for `force_execute`), and the original verdict are all stored in Cosmos DB (`governance-overrides`, partitioned by `/fingerprint_hash`)
+- **Override Metrics card** on the Overview: total overrides, by type, and top action types most frequently overridden — a leading indicator of policy miscalibration
+- **`GET /api/overrides`** and **`GET /api/overrides/metrics`** expose the history and aggregate stats for external tooling
+
 ### Agent Framework Workflow Engine
 
 The governance pipeline runs as a **7-executor workflow graph** using the Microsoft Agent
@@ -377,7 +387,7 @@ Set `USE_WORKFLOWS=false` only to opt back to the deprecated legacy path:
 
 ## Dashboard
 
-A 7-page React governance UI with real-time SSE streaming, custom design tokens, and animated components. Fully responsive — on mobile the sidebar collapses to an overlay drawer triggered by a hamburger button in the header. Includes an **inline Glossary & FAQ**: every page exposes contextual `i` icons next to verdicts, agents, and key terms; clicking opens a popover with a short definition and a deep link into the full glossary page (top-bar Glossary entry).
+A 9-page React governance UI with real-time SSE streaming, custom design tokens, and animated components. Fully responsive — on mobile the sidebar collapses to an overlay drawer triggered by a hamburger button in the header. Includes an **inline Glossary & FAQ**: every page exposes contextual `i` icons next to verdicts, agents, and key terms; clicking opens a popover with a short definition and a deep link into the full glossary page (top-bar Glossary entry).
 
 ### Overview — Ops Nerve Center
 <p align="center">
@@ -428,6 +438,13 @@ A 7-page React governance UI with real-time SSE streaming, custom design tokens,
 
 > System configuration (mode, LLM timeout, feature flags), execution gateway status, and danger zone reset — gear icon in the sidebar.
 
+### Decision Quality — Self-Measuring Governance
+<p align="center">
+  <img src="docs/screenshots/visual-scan-decisions.png" alt="Decision Quality" width="100%">
+</p>
+
+> Precision, recall, and F1 over labeled decisions. As operators accumulate validated decisions, the engine measures its own accuracy using a confusion matrix of incident-correlated outcomes. Shows a clean empty-state card on day one — no errors until data is available.
+
 ### Execution Status — LLM-Driven Remediation
 <p align="center">
   <img src="docs/screenshots/execution-status.png" alt="Execution Status" width="100%">
@@ -461,7 +478,7 @@ Detailed infra runbook: [`infrastructure/terraform-core/deploy.md`](infrastructu
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-org/ruriskry.git
+git clone https://github.com/psc0des/ruriskry.git
 cd ruriskry
 
 # Create virtual environment
@@ -662,15 +679,20 @@ This project is licensed under the MIT License — see the [LICENSE](LICENSE) fi
 
 ## Current Status & Honest Expectations
 
-RuriSkry is a genuine attempt at solving a real and underserved problem: holding AI agents accountable before they act on production infrastructure. The core architecture — the SRI™ scoring engine, governance pipeline, HITL execution flow, Cosmos DB audit trail — is solid and designed to production standards.
+RuriSkry solves a real and underserved problem: holding AI agents accountable before they act on production infrastructure. The core architecture — SRI™ scoring engine, governance pipeline, HITL execution flow, Cosmos DB audit trail — is designed to production standards and has been validated end-to-end against a live Azure environment.
 
-**However: this is actively in development.** I started this thinking it would come together quickly. The more I tested against real Azure environments, the more edge cases surfaced. That's the nature of infrastructure tooling — the gap between "works in one environment" and "works reliably everywhere" is wide, and the only way to close it is through continued real-world testing. This project will get there, but it isn't there yet.
+**What works today (validated):**
+
+- Full governance pipeline: scan → verdict → HITL → execution, tested across Monitoring, Cost, and Deploy agents
+- Live Azure execution via Managed Identity — `az login --identity` auto-authenticates on first execution; all subsequent calls are free. Validated with VM restart (`exit_code: 0`, `status: applied`)
+- GitHub Terraform PR creation — detects IaC-managed resources via `managed_by=terraform` tags, opens PRs against the correct repo/path
+- 1462 automated tests pass in mock mode — no Azure credentials required to run the full suite
 
 **What this means for you:**
 
 - The governance logic, policy engine, and scoring model are well-tested and intentional
-- The agent execution paths (plan → execute → verify → rollback) work, but may behave unexpectedly on resource configurations or Azure environments I haven't tested against
-- You will likely find bugs. That's expected and welcome — every issue reported makes this better for everyone
+- The agent execution paths (plan → execute → verify → rollback) work; behaviour on resource configurations or Azure environments not yet tested may surface edge cases
+- You will likely find bugs — every issue reported makes this better for everyone
 
 **Direct remediation coverage (Phase 34A Tier 1 SDK):**
 
@@ -699,7 +721,7 @@ All Tier 1 tools support **dry-run mode** — pass `dry_run=True` in the execute
 | Cosmos DB | update config (consistency level) |
 | Service Bus namespace | scale up |
 
-**Phase 34E** adds audited `az` CLI execution directly from the dashboard. **Phase 34F** adds an A2 Validator safety review before every execution. The playbook panel now has two buttons:
+**Phase 34E** adds audited `az` CLI execution directly from the dashboard. **Phase 34F** adds an A2 Validator safety review before every execution. In Azure Container Apps, the executor automatically authenticates via the Container App's System-Assigned Managed Identity (`az login --identity`) on the first live execution — no manual `az login` step required. The playbook panel has two buttons:
 
 - **Run as dry-run** — opens the confirmation modal; the A2 Validator reviews the command (≤5s), then you confirm. Validates against the 13-pattern allowlist and writes an audit record without executing. Safe to click at any time.
 - **▶ Run live** — same modal flow; confirms before running `az` against your Azure environment. Every execution (live, dry-run, and rejection) writes a full audit record to Cosmos DB including the validator's summary and caveats for postmortem traceability.
