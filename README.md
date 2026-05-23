@@ -9,6 +9,10 @@
 [![Azure](https://img.shields.io/badge/cloud-Azure-0078D4.svg)](https://azure.microsoft.com)
 [![AI Dev Days Hackathon 2026](https://img.shields.io/badge/hackathon-AI%20Dev%20Days%202026-purple.svg)](https://microsoft.com)
 
+<p align="center">
+  <img src="docs/ruriskry-demo.gif" alt="RuriSkry Demo — full 9-page dashboard walkthrough" width="100%">
+</p>
+
 RuriSkry is two systems in one: a team of **Azure AI Cloud Ops Agents** (Monitoring, Cost, Deploy) that propose fixes to your infrastructure — and an **AI Change Advisory Board** (Policy, Blast Radius, Historical, Financial) that simulates, scores, and adjudicates every proposed action *before* it touches production. Ops agents supply the changes; the CAB decides whether they ship.
 
 Born at the Microsoft AI Dev Days Hackathon 2026, RuriSkry has since matured into a fully async, enterprise-ready governance engine with live Azure topology analysis, a 34-rule deterministic rules engine, durable audit trails (Cosmos DB), Slack alerting, explainable AI verdicts with counterfactual analysis, operator override feedback capture, and 1462 automated tests.
@@ -93,7 +97,7 @@ RuriSkry is a **governance engine** that acts as the **Change Advisory Board for
 | Incident Search | Azure AI Search (BM25) | Historical incident similarity |
 | Audit DB | Azure Cosmos DB (SQL API) | Governance decisions + agent registry + scan-run records |
 | Secret Management | Azure Key Vault + `DefaultAzureCredential` | Runtime secret resolution |
-| Dashboard | React + Vite + FastAPI | 6-page governance UI with SSE real-time streaming, custom design system, animated components |
+| Dashboard | React + Vite + FastAPI | 9-page governance UI with SSE real-time streaming, custom design system, animated components |
 | Slack Notifications | Slack Incoming Webhook (Block Kit attachments) | Real-time alerts for DENIED/ESCALATED verdicts, Azure Monitor alerts, agent scan failures, and inventory staleness |
 | Azure Monitor → RuriSkry | Alert Processing Rule (APR) scoped to target subscription + `azurerm_monitor_action_group.ruriskry` (`terraform-core`) | One APR routes ALL current and future alert rules automatically — no per-rule wiring. Alerts POST to `/api/alert-trigger` → `pending` record → **Investigate** → `MonitoringAgent` → governance verdict → Alerts tab |
 | Decision Explanation Engine | `DecisionExplainer` — LLM summary + counterfactual analysis | Click any verdict row → 6-section drilldown with "what would change this?" analysis |
@@ -440,10 +444,10 @@ A 9-page React governance UI with real-time SSE streaming, custom design tokens,
 
 ### Decision Quality — Self-Measuring Governance
 <p align="center">
-  <img src="docs/screenshots/visual-scan-decisions.png" alt="Decision Quality" width="100%">
+  <img src="docs/screenshots/visual-scan-decision-quality.png" alt="Decision Quality" width="100%">
 </p>
 
-> Precision, recall, and F1 over labeled decisions. As operators accumulate validated decisions, the engine measures its own accuracy using a confusion matrix of incident-correlated outcomes. Shows a clean empty-state card on day one — no errors until data is available.
+> Precision, recall, and F1 over labeled decisions. As operators accumulate validated decisions, the engine measures its own accuracy using a confusion matrix of incident-correlated outcomes. Breakdown by verdict band (Approved / Approved If / Escalated / Denied) with incident rate per band. Shows a clean empty-state card on day one — no errors until data is available.
 
 ### Execution Status — LLM-Driven Remediation
 <p align="center">
@@ -585,9 +589,21 @@ ruriskry/
 │   │   ├── alert_tracker.py         # Azure Monitor alert lifecycle tracking
 │   │   ├── execution_gateway.py     # Routes APPROVED → HITL / Terraform PR / execution
 │   │   ├── execution_agent.py       # LLM-driven execution planning, verify, rollback
+│   │   ├── az_executor.py           # Audited az CLI executor — 13-pattern allowlist, shell=False
+│   │   ├── playbook_generator.py    # Tier 3 playbook — 10 templates (SQL, Redis, KV, ACR, Cosmos, SB)
+│   │   ├── override_capture.py      # VerdictOverride capture + fingerprint hashing (Phase 35A)
+│   │   ├── decision_alert_correlator.py  # 7-day resource_id correlation (Phase 36)
+│   │   ├── decision_labeler.py      # 6-hour background labeler — incident_correlated / no_incident_observed
+│   │   ├── decision_embedder.py     # text-embedding-3-small embeddings for few-shot retrieval
+│   │   ├── seed_bank_loader.py      # Idempotent startup loader for few_shot_seed_bank.json
+│   │   ├── few_shot_retrieval.py    # Cosine similarity retrieval from AI Search vector index
 │   │   ├── terraform_pr_generator.py # GitHub PR generation for IaC-managed resources
 │   │   ├── explanation_engine.py    # Counterfactual analysis + LLM summary
-│   │   └── interception.py          # Action interception façade
+│   │   ├── interception.py          # Action interception façade
+│   │   └── workflows/               # Agent Framework 7-executor graph (Phase 33)
+│   │       ├── __init__.py
+│   │       ├── workflow_builder.py       # Fan-out/fan-in executor graph
+│   │       └── checkpoint_store.py      # CosmosCheckpointStore for scan resume
 │   ├── a2a/                    # A2A Protocol layer
 │   │   ├── ruriskry_a2a_server.py   # A2A server + Agent Card
 │   │   ├── operational_a2a_clients.py  # A2A client wrappers
@@ -608,6 +624,12 @@ ruriskry/
 │   └── api/                    # Dashboard REST endpoints
 │       └── dashboard_api.py         # ~60 REST endpoints: scans, alerts, SSE, explanation, HITL, conditional approvals, config
 ├── dashboard/                  # React + Vite governance dashboard
+├── src/rules/                  # Universal + type-aware rules engine (Phase 40)
+│   ├── base.py                      # @rule decorator + self-registering registry
+│   ├── inventory_index.py           # O(1) InventoryIndex — by_type, get, is_referenced
+│   ├── agent_integration.py         # run_rules_prescan() wired before every LLM call
+│   ├── universal/                   # 26 UNIV-* rules (public network, TLS, MI, tags, disks…)
+│   └── type_aware/                  # 8 TYPE-* rules (NSG SSH/RDP, AKS, SQL, Cosmos, App Service)
 ├── data/                       # Seed data + local persistence (mock fallback)
 │   ├── agents/                      # A2A agent registry (mock)
 │   ├── alerts/                      # Alert records (local fallback)
@@ -615,6 +637,7 @@ ruriskry/
 │   ├── scans/                       # Scan-run records (mock — ScanRunTracker)
 │   ├── seed_incidents.json
 │   ├── seed_resources.json
+│   ├── few_shot_seed_bank.json      # 40 validated examples — all action×verdict combos (Phase 38)
 │   └── policies.json                # Governance policy rules (JSON — edit to add rules)
 ├── examples/demo.py                     # Direct pipeline demo (3 scenarios)
 ├── examples/demo_a2a.py                 # A2A protocol demo
