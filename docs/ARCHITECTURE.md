@@ -1216,3 +1216,32 @@ For breakdown bars with a fixed label and a fixed annotation, use: `flex items-c
 **is_validated logic**: `True` when `update_outcome_label()` is called (Phase 36 alert correlation or labeler). Seeds have `is_validated=True` and `is_seed=True`. User-generated validated decisions have `is_validated=True` and `is_seed=False`. Retrieval filters to either.
 
 **Observability**: `GovernanceVerdict.few_shot_examples_used: list[str]` stores seed/decision IDs used. EvaluationDrilldown shows "Few-shot calibrated" badge; `FewShotExamplesModal` lists examples with `(seed)` tags.
+
+---
+
+## Evidence-Aware Scoring (Phase 32)
+
+Each governance agent's score is informed by **structured evidence** gathered from real Azure data, not just policy patterns. When an agent evaluates an action it can attach an `EvidencePayload` and adjust its score on confirmed facts:
+
+| Agent | Evidence collected |
+|-------|--------------------|
+| **BlastRadius** | Confirms dependency count and single-point-of-failure exposure in the real topology |
+| **Policy** | Reads live resource tags to confirm whether a CRITICAL policy actually applies |
+| **Historical** | Counts confirmed prior escalations/denials for the same action type |
+| **Financial** | Verifies current SKU cost and whether the change saves or costs more |
+
+Evidence-based adjustments are bounded by the same **±30 pt LLM guardrail** (`clamp_score()` in `_llm_governance.py`), so a single confirmed fact cannot dominate the composite score.
+
+---
+
+## Production Security Hardening
+
+The API layer is hardened for public OSS deployment. All middleware lives in `src/api/dashboard_api.py`.
+
+- **Dashboard login** — first visit shows a one-time admin setup (create username + password); every later visit shows a login screen. Session tokens are 256-bit random with an 8-hour TTL, stored in browser `localStorage` and sent as `Authorization: Bearer <token>` on mutating requests. A backend 401 mid-session dispatches a `ruriskry:auth-expired` window event that `AuthGate` catches to re-show the login form instead of going dark.
+- **API key authentication** — `_APIKeyMiddleware` gates all `POST`/`PATCH` endpoints with either a session token (browser) or an `X-API-Key` header (machine-to-machine). Both are accepted; comparison uses `secrets.compare_digest` (constant-time). GET endpoints stay open; SSE endpoints also accept a `?token=` query param because `EventSource` cannot send headers. Opt-in via the `API_KEY` env var (empty = disabled).
+- **Alert webhook secret** — `POST /api/alert-trigger` is exempt from the API-key middleware and verifies its own `Authorization: Bearer <secret>` with constant-time comparison, protecting expensive LLM investigation from spoofed Azure Monitor payloads.
+- **X-Request-ID tracing** — `_RequestIDMiddleware` generates/echoes a UUID per request, stores it in a `ContextVar` (async-safe), injects it into every log line via a `logging.Filter`, and echoes it in the response header.
+- **Per-IP rate limiting** — 10 requests / 60-second sliding window per client IP on scan endpoints; in-memory `defaultdict(list)` + `time.monotonic()`, no Redis needed for single-replica / sticky-session deployments.
+- **`reviewed_by` validation** — all 5 HITL endpoints reject empty reviewer identities and the `dashboard-user` default in live mode, preventing meaningless audit-log reviewers.
+- **Admin reset guard** — `POST /api/admin/reset` returns 403 in live mode (`USE_LOCAL_MOCKS=false`) to prevent accidental wipe of production Cosmos state.

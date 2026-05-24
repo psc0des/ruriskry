@@ -1,8 +1,6 @@
-# 🛡️ RuriSkry — Azure AI Cloud Ops Agents, Governed by an AI Change Advisory Board
+# 🛡️ RuriSkry — AI-Powered Ops. AI-Governed Decisions.
 
-> **AI agents propose the fix. An AI Change Advisory Board decides if it ships.**
->
-> *Because autonomous AI needs accountable AI — built for Azure, built on Azure.*
+> Ops agents propose cloud changes. Governance agents score the risk. Humans approve what reaches production.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
@@ -106,6 +104,8 @@ RuriSkry is a **governance engine** that acts as the **Change Advisory Board for
 
 ## Key Features
 
+> Each feature below is summarized for a quick read. Deep-dive design and data flow live in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
 ### Intelligent Governance — LLM as Decision Maker
 All 4 governance agents use gpt-4.1-mini as an **active decision maker**, not a narrator. The
 deterministic rule engine produces a **baseline score**; the LLM then receives the full policy
@@ -116,71 +116,28 @@ security issue (not creating one), the LLM recognises that intent and reduces th
 rather than blocking the fix.
 
 ### Decision Quality Metrics (Phases 36 + 38)
-RuriSkry now measures its own accuracy over time and improves on borderline cases.
+RuriSkry measures its own accuracy and improves on borderline cases.
 
-**Phase 36 — Decision-Incident Linkage**: Every ingested Azure Monitor alert is correlated
-against recent governance decisions on the same resource (7-day window, exact `resource_id`
-match). When a match is found, both records get backref fields and the decision is labeled
-`incident_correlated`. A 6-hour background labeler marks aged decisions that saw no incident as
-`no_incident_observed`. The new **Decision Quality** dashboard page surfaces precision, recall,
-and F1 computed from labeled decisions — the same metrics ML researchers use to grade a model.
-A clean empty-state card is shown on day 1 (no errors, no 404s).
-
-**Phase 38 — Few-Shot Seed Bank**: A curated set of 40 validated examples (`data/few_shot_seed_bank.json`)
-ships with RuriSkry, covering all action-type × verdict combinations including 6 boundary cases.
-On startup, these examples are loaded idempotently into Azure AI Search (vector index, `text-embedding-3-small`,
-1536-dim HNSW cosine). When a governance scan produces a **borderline** verdict (composite SRI
-within ±3 of any decision boundary), all 4 governance agents re-run with the top-3 most-similar
-validated or seed examples injected into the LLM prompt — improving calibration where it matters most.
-As operators accumulate real validated decisions, those rank above the seeds automatically (closer
-vectors). A "Few-shot calibrated" badge appears on the verdict drilldown for any borderline verdict;
-clicking opens a modal listing the examples with `(seed)` tags for shipped examples.
+- **Decision-Incident Linkage (Phase 36)** — every Azure Monitor alert is correlated against recent decisions on the same resource (7-day window, exact `resource_id` match); a 6-hour background labeler marks aged decisions that saw no incident. The **Decision Quality** dashboard page surfaces precision, recall, and F1 from labeled decisions, with a clean empty-state on day 1.
+- **Few-Shot Seed Bank (Phase 38)** — 40 curated examples ship in `data/few_shot_seed_bank.json` and load into an Azure AI Search vector index (`text-embedding-3-small`, 1536-dim) on startup. When a verdict is **borderline** (composite SRI within ±3 of a boundary), all 4 agents re-run with the top-3 most-similar examples injected, improving calibration. Real validated decisions outrank seeds over time; a "Few-shot calibrated" badge + modal appears on borderline verdicts.
 
 ### Universal Rules Engine (Phase 40)
-Before any LLM call, a **34-rule deterministic engine** scans every resource in the inventory
-against a self-registering `@rule` decorator registry. Rules are organised into three layers:
+Before any LLM call, a **34-rule deterministic engine** scans every resource against a self-registering `@rule` registry, in three layers:
 
-- **Layer 1 — Universal rules (UNIV-*):** 26 rules that fire on any resource sharing a common
-  property — public network access, TLS version, managed identity, missing tags, unattached
-  disks, single-region data services, and more. These give broad coverage across all 311+
-  Azure resource types without per-type special-casing.
-- **Layer 2 — Microsoft API enrichment:** Azure Advisor, Defender for Cloud, Policy Insights,
-  Resource Health — require `Reader` (or richer roles). A preflight check at `GET /api/coverage/status`
-  reports which APIs are accessible; 403 responses surface the missing role in an amber
-  `CoverageStatusBanner` on the Overview and Agents pages.
-- **Layer 3 — Type-aware rules (TYPE-*):** 8 rules that inspect deep service-specific schema
-  fields — NSG inbound rules (SSH/RDP exposed to internet), AKS autoscaler state, SQL failover
-  groups, Cosmos auto-failover, App Service client certs.
+- **Layer 1 — Universal rules (UNIV-*, 26):** fire on any resource sharing a common property (public network access, TLS version, managed identity, missing tags, unattached disks, single-region data services), covering all 311+ Azure types without per-type special-casing.
+- **Layer 2 — Microsoft API enrichment:** Azure Advisor, Defender for Cloud, Policy Insights, Resource Health (require `Reader`+). `GET /api/coverage/status` reports which APIs are accessible; 403s surface the missing role in an amber `CoverageStatusBanner`.
+- **Layer 3 — Type-aware rules (TYPE-*, 8):** inspect service-specific schema — NSG SSH/RDP exposure, AKS autoscaler, SQL failover groups, Cosmos auto-failover, App Service client certs.
 
-Rule findings are injected into the LLM prompt as confirmed context before the LLM runs.
-The LLM acts as an **enricher and validator**, not a discoverer. Post-scan, proposals are
-deduplicated by `(resource_id, action_type)` with rule-derived entries winning. A
-`coverage_manifest` (rules applied, matched, types uncovered) is stored in every scan record
-and rendered in the scan log modal.
+Findings are injected into the LLM prompt as confirmed context — the LLM **enriches and validates**, it doesn't discover. Post-scan, proposals dedup by `(resource_id, action_type)` with rule-derived entries winning; a `coverage_manifest` is stored in every scan record.
 
 ### Two-Layer Intelligence
-Operational agents aren't blind action-proposers — they query **real Azure data** (Resource
-Graph tags, Monitor metrics, NSG rules, activity logs) via gpt-4.1-mini before proposing. RuriSkry
-then provides an **independent second opinion** using 4 governance agents in parallel. The ops
-agent catches obvious risks; RuriSkry catches what the ops agent missed.
+Operational agents aren't blind action-proposers — they query **real Azure data** (Resource Graph tags, Monitor metrics, NSG rules, activity logs) via gpt-4.1-mini before proposing. RuriSkry then provides an **independent second opinion** from 4 governance agents in parallel: the ops agent catches obvious risks; RuriSkry catches what it missed.
 
-Each operational agent has enterprise-grade system instructions:
-All three operational agents use a **four-phase detection pipeline**: (0) Universal + type-aware
-rules engine runs deterministically against the full inventory before any API or LLM call —
-findings injected into the LLM prompt as confirmed context; (1) Microsoft APIs (Azure Advisor,
-Defender for Cloud, Azure Policy) run next — deterministic, confirmed findings further enriching
-the prompt; (2) LLM investigates confirmed findings with real metric data (CPU%, power state,
-activity log) and scans for anything the APIs missed using open-ended KQL (no hardcoded resource
-type filters — discovers all 200+ Azure types); (3) post-scan safety net auto-proposes any
-finding the LLM skipped, using already-computed results (no duplicate calls). Each phase
-deduplicates against the others — rule-derived proposals always win.
-The **Monitoring Agent** runs a 6-step proactive scan covering VM power state, database health,
-container app health, observability gaps, and orphaned resources — and handles 5 distinct Azure
-Monitor alert types with evidence-specific investigation steps. The **Deploy Agent** audits 9
-security domains per scan including NSG rules, storage security, database/Key Vault config, VM
-security posture, Defender for Cloud assessments, and Azure Policy compliance. The **Cost Agent**
-flags deallocated VMs (disk cost persists when stopped), unattached disks, orphaned public IPs,
-and over-provisioned SKUs — backed by Advisor cost recommendations and Policy compliance checks.
+All three operational agents use a **four-phase detection pipeline**: (0) rules engine runs deterministically against the full inventory; (1) Microsoft APIs (Advisor, Defender, Policy) confirm findings; (2) the LLM investigates with real metric data and open-ended KQL across all 200+ Azure types; (3) a post-scan safety net auto-proposes anything the LLM skipped. Each phase dedups against the others — rule-derived proposals win.
+
+- **Monitoring Agent** — 6-step proactive scan (VM power state, DB/container health, observability gaps, orphans) + handles 5 Azure Monitor alert types.
+- **Deploy Agent** — audits 9 security domains (NSG, storage, DB/Key Vault, VM posture, Defender, Policy).
+- **Cost Agent** — flags deallocated VMs, unattached disks, orphaned public IPs, over-provisioned SKUs, backed by Advisor + Policy.
 
 ### Live Azure Topology Analysis
 In live mode (`USE_LIVE_TOPOLOGY=true`), governance agents query **Azure Resource Graph in
@@ -214,11 +171,8 @@ no one needs to watch the dashboard:
 | **Agent scan failed** | 🔴 red | Unhandled exception in `_run_agent_scan` — includes scan ID, agent type, error, and whether auto-retry was triggered |
 | **Inventory stale** | 🟡 amber | Background watcher fires when inventory age exceeds `2 × inventory_stale_hours` (default 48 h); deduped to once per calendar day |
 
-- **Zero-config default** — leave the Slack webhook URL empty to disable silently (in deployed environments the URL is stored as a Key Vault secret and injected via Container App secret mechanism, not as a plain env var)
-- **Fire-and-forget** — never blocks or delays a governance decision
-- **Master switch** — `SLACK_NOTIFICATIONS_ENABLED=false` pauses all notifications without removing the webhook URL
-- **Auto-retry on failure** — when a scan crashes, a new scan of the same type starts automatically (guarded by `retry_of` flag to prevent cascades); the failure notification includes the retry scan ID
-- See [`docs/slack-setup.md`](docs/slack-setup.md) for the full setup guide
+- **Zero-config** — empty webhook URL disables silently (deployed: stored as a Key Vault secret). **Fire-and-forget** — never blocks a verdict. **Master switch** — `SLACK_NOTIFICATIONS_ENABLED=false`. **Auto-retry** — a crashed scan restarts once (guarded by `retry_of`).
+- See [`docs/slack-setup.md`](docs/slack-setup.md) for the full setup guide.
 
 ### Decision Explanation & Counterfactual Drilldown
 Click any row in the Live Activity Feed to open a **6-section full-page drilldown**:
@@ -234,76 +188,46 @@ Click any row in the Live Activity Feed to open a **6-section full-page drilldow
 No extra setup needed — the explanation engine works in both mock and live mode.
 
 ### Execution Gateway & Human-in-the-Loop
-APPROVED verdicts don't execute directly on Azure — that would cause **IaC state drift**
-(Terraform reverts the change on next `terraform apply`). Instead, the Execution Gateway
-routes verdicts to IaC-safe paths:
+APPROVED verdicts don't execute directly on Azure — that would cause **IaC state drift**. The Execution Gateway routes verdicts to IaC-safe paths:
 
 - **DENIED** → blocked, logged, Slack alert
-- **ESCALATED** → human review required (Approve/Dismiss buttons in dashboard drilldown)
-- **APPROVED + IaC-managed** → user clicks **Create Terraform PR** (opens a confirmation
-  overlay to verify/override the detected repo + path) → PR opened against the IaC repo;
-  human reviews and merges; CI/CD runs `terraform apply`
+- **ESCALATED** → human review (Approve/Dismiss in the drilldown)
+- **APPROVED + IaC-managed** → user clicks **Create Terraform PR** (confirmation overlay to verify/override the detected repo + path) → PR against the IaC repo; human merges; CI runs `terraform apply`
 - **APPROVED + not IaC-managed** → marked for manual execution
 
-IaC detection reads `managed_by=terraform` from Azure resource tags — queried live via
-`ResourceGraphClient` in live mode; falls back to `seed_resources.json` in mock mode.
-The **PR overlay** shows the auto-detected repo/path and lets the user search all repos
-accessible via their GitHub PAT if the tags are wrong or missing.
-The governance engine evaluates; Terraform executes; humans approve. IaC state never drifts.
+IaC detection reads `managed_by=terraform` tags (live via `ResourceGraphClient`, else `seed_resources.json`). The PR overlay lets the user search their GitHub PAT's repos if tags are wrong. The engine evaluates; Terraform executes; humans approve — IaC state never drifts.
 
 ### LLM-Driven Execution Agent
-The **"Fix by Agent"** button is now fully LLM-driven end-to-end. The complete pipeline is:
+The **"Fix by Agent"** button is fully LLM-driven end-to-end:
 
 ```
 Operational Agent (LLM thinks) → Governance (LLM scores) → Execution (LLM acts)
 ```
 
-Two-phase execution with human review in between:
+Two-phase with human review between: **Plan** (LLM reads resource state → structured steps table: operation, target, params, reason, impact, rollback hint) → **human reviews** → **Execute** (LLM calls Azure SDK write tools as planned, fail-safe on any step).
 
-1. **Plan phase** — LLM reads the resource's current state (via read-only Azure tools), then outputs a structured step-by-step plan: operation, target, params, reason per step + summary, estimated impact, rollback hint
-2. **Human reviews** — dashboard shows the plan as a steps table before any write operation
-3. **Execute phase** — LLM calls Azure SDK write tools exactly as planned; fails safe if any step fails
+The agent picks a fix via a 4-step decision tree, each stamped with a **Remediation Confidence badge**:
+1. **Specific tool** (`start_vm`, `delete_nsg_rule`, …) — *Automated fix* (green)
+2. **Generic PATCH** (`update_resource_property` via `begin_update_by_id`; checks `fetch_azure_docs` for the right `api_version`/`property_path`) — *Generic fix* (blue)
+3. **Guided manual** (`guided_manual` — copy-pasteable az CLI + Portal steps) — *Guided manual* (amber)
+4. **Manual** — *Manual* (grey), last resort
 
-The agent follows a 4-step decision tree when choosing how to fix an issue:
-1. **Specific tool** (`start_vm`, `resize_vm`, `delete_nsg_rule`, etc.) — safest, most tested
-2. **Generic PATCH** (`update_resource_property`) — updates any property on any Azure resource type via `resources.begin_update_by_id`; LLM calls `fetch_azure_docs` first to confirm the correct `api_version` and `property_path`
-3. **Guided manual** (`guided_manual`) — copy-pasteable az CLI commands + numbered Portal steps when new resource creation or multi-step orchestration is needed; rendered inline in the dashboard with a copy button
-4. **Manual** — last resort with best-effort explanation
-
-Every plan is stamped with a **Remediation Confidence badge** shown next to the plan summary:
-- **Automated fix** (green) — specific SDK tool, fully automated
-- **Generic fix** (blue) — ARM PATCH, likely works; verify after
-- **Guided manual** (amber) — exact steps provided; human runs them
-- **Manual** (grey) — investigation required
-
-The generic PATCH tool (`update_resource_property`) covers storage `allowBlobPublicAccess`, Key Vault `enableSoftDelete`, App Service `httpsOnly`, database `publicNetworkAccess`, and hundreds of other property-level fixes that previously fell to "manual required". Works in mock mode (1462 tests pass, no Azure/OpenAI required) and live mode.
-
-<p align="center">
-  <img src="docs/screenshots/execution-status.png" alt="Execution Status — LLM-Driven Fix with Live Terminal" width="100%">
-</p>
-
-> Real execution in action: the LLM-generated plan shows each operation with target and reason, impact analysis warns affected users, rollback instructions are pre-computed, and the live execution terminal streams progress as Azure SDK calls are made — all from a single "Fix by Agent" click.
+The generic PATCH covers storage `allowBlobPublicAccess`, Key Vault `enableSoftDelete`, App Service `httpsOnly`, database `publicNetworkAccess`, and hundreds of other property fixes. Works in mock and live mode (see the Execution Status screenshot below).
 
 ### One-Click Rollback
-
-After a fix is applied by the agent, an amber **↩ Rollback** button appears next to the Applied badge. Clicking it shows a confirm dialog with the exact inverse operation (`rollback_hint` from the stored execution plan), then calls `ExecutionAgent.rollback()` which inverts each step: `RESTART_SERVICE` → deallocate VM, `SCALE_UP/DOWN` → resize back to original SKU, `MODIFY_NSG` → restore rule. The `rolled_back` status and `rollback_log` are stored for the audit trail.
+After a fix is applied, an amber **↩ Rollback** button appears. It confirms the exact inverse operation (`rollback_hint` from the stored plan), then `ExecutionAgent.rollback()` inverts each step (`RESTART_SERVICE` → deallocate, `SCALE_*` → resize back, `MODIFY_NSG` → restore rule). `rolled_back` status + `rollback_log` are stored for audit.
 
 ### Resource Inventory — Deterministic Discovery
-Operational agents historically produced inconsistent results (0 verdicts on some runs, 6 on others) because the LLM non-deterministically chose which `query_resource_graph` tool calls to make. The **Resource Inventory** feature eliminates this class of failures:
+The LLM used to non-deterministically pick which `query_resource_graph` calls to make (0 verdicts one run, 6 the next). The **Resource Inventory** removes that:
 
-- **One KQL query, no type filter** — `build_inventory()` fetches every resource in the subscription via a single Resource Graph query. No resource type is excluded.
-- **VM power state enrichment** — `ComputeManagementClient.instance_view()` is called in parallel for all VMs; `powerState` (Running / Deallocated / Stopped) is injected into each VM dict before the agent runs.
-- **Injected into every agent prompt** — the formatted inventory is prepended to the LLM's context. The agent reviews *every* resource by name — it can't skip what's in front of it.
-- **LLM still decides** — the inventory is purely for discovery completeness. The LLM still decides what's a risk, what to propose, and at what urgency.
-- **Cosmos-backed, scan-to-scan** — snapshots persist across deployments. Choose `existing` (fast), `refresh` (accurate), or `skip` (legacy LLM discovery) per scan.
+- **One KQL query, no type filter** — `build_inventory()` fetches every subscription resource.
+- **VM power state enrichment** — `instance_view()` runs in parallel for all VMs; `powerState` is injected before the agent runs.
+- **Injected into every prompt** — the agent reviews every resource by name; it can't skip what's in front of it.
+- **LLM still decides** — inventory is for discovery completeness only; the LLM decides risk / proposal / urgency.
+- **Cosmos-backed** — snapshots persist; choose `existing` / `refresh` / `skip` per scan.
 
 ### Post-Execution Verification
-After the Execute phase completes, the engine runs a **verification pass**: read-only Azure tools re-check the resource to confirm the fix actually took effect. The result (`{confirmed, message, checked_at}`) is stored on the `ExecutionRecord` and shown in the dashboard as a ✓ Verified / ⚠ Unconfirmed banner with the per-step execution log.
-
-The dashboard also gained:
-- **Execution Metrics card** on the Overview — applied/PR/failed counts + agent fix rate + success rate
-- **Alerts Activity card** on the Overview — total/active/resolved/resolution rate with a rose glow when alerts are firing
-- **Admin panel** (`/admin`) — System Configuration (mode, timeouts, feature flags) + Danger Zone with Reset; gear icon in the sidebar bottom
+After Execute, a **verification pass** re-checks the resource via read-only tools to confirm the fix took effect; the result (`{confirmed, message, checked_at}`) is stored on the `ExecutionRecord` and shown as a ✓ Verified / ⚠ Unconfirmed banner. The Overview also gained an **Execution Metrics card**, an **Alerts Activity card**, and an **Admin panel** (`/admin`) for config + danger-zone reset.
 
 ### LLM Rate Limiting
 All 7 agents call Azure OpenAI through `run_with_throttle()` — an `asyncio.Semaphore` +
@@ -311,64 +235,30 @@ exponential backoff wrapper. Governance agents fall back to deterministic rule-b
 on 429s; operational agents return `[]` (no false positives from stale seed data).
 
 ### Production Security Hardening
-The API layer is production-hardened for public OSS deployment:
+The API layer is hardened for public deployment: **dashboard login** (one-time admin setup; 256-bit session tokens, 8h TTL), **API key auth** on all `POST`/`PATCH` (`X-API-Key` or session token, constant-time compare; SSE via `?token=`), a separate **alert-webhook secret**, **X-Request-ID** tracing, **per-IP rate limiting** (10 req/60s), **`reviewed_by` validation**, and an **admin-reset guard** (403 in live mode).
 
-- **Dashboard Login** — First visit shows a one-time admin setup screen (create username + password). Every subsequent visit shows a login screen. Session tokens (256-bit random, 8-hour TTL) are stored in the browser's `localStorage` and sent as `Authorization: Bearer <token>` on all mutating requests. Logout button in the top bar. When the backend returns a 401 mid-session (session expired), `apiFetch` dispatches a `ruriskry:auth-expired` window event — `AuthGate` catches it and immediately shows the login form instead of letting the dashboard go dark silently.
-- **API Key Authentication** — `_APIKeyMiddleware` gates all `POST`/`PATCH` endpoints with either a session token (browser) or an `X-API-Key` header (machine-to-machine / CI-CD). Both credential types are accepted; neither blocks the other. Uses `secrets.compare_digest` (constant-time comparison) to prevent timing attacks. GET endpoints stay open; SSE stream endpoints (`/scan/{id}/stream`, `/alerts/{id}/stream`) also accept a `?token=` query parameter because the browser `EventSource` API cannot send `Authorization` headers. Opt-in: set `API_KEY` env var; empty = disabled.
-- **Alert Webhook Secret** — `POST /api/alert-trigger` is exempt from the API key middleware (it has its own secret). The endpoint verifies `Authorization: Bearer <secret>` using constant-time comparison. Protects expensive LLM investigation calls from spoofed Azure Monitor payloads.
-- **X-Request-ID Tracing** — `_RequestIDMiddleware` generates (or echoes) a UUID per request, stores it in a `ContextVar` (safe under async concurrency), injects it into every log line via `logging.Filter`, and echoes it in the response header. Correlates frontend → backend → Cosmos → LLM log lines across distributed failures.
-- **Per-IP Rate Limiting** — 10 requests/60-second sliding window per client IP on all scan endpoints. In-memory `defaultdict(list)` with `time.monotonic()` — no Redis required for single-replica or sticky-session deployments.
-- **`reviewed_by` Validation** — all 5 HITL endpoints reject empty reviewer identities and the `dashboard-user` default in live mode. Prevents audit logs with meaningless system-default reviewer names.
-- **Admin Reset Guard** — `POST /api/admin/reset` returns 403 in live mode (`USE_LOCAL_MOCKS=false`). Prevents accidental wipe of production Cosmos state.
+→ Details in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) § Production Security Hardening.
 
 ### Evidence-Aware Scoring
+Each governance agent can attach a structured `EvidencePayload` from real Azure data to adjust its score on confirmed facts — BlastRadius (dependency count, SPOF), Policy (live tags confirm a CRITICAL applies), Historical (prior escalations/denials), Financial (real SKU cost). Bounded by the same ±30 pt guardrail.
 
-Each governance agent's score is informed by **structured evidence** collected from real Azure
-data sources. When a governance agent evaluates an action, it can attach an `EvidencePayload`
-to adjust its score based on confirmed facts — not just policy patterns:
-
-- **BlastRadius**: confirms dependency count and SPOF exposure in real topology
-- **Policy**: reads live resource tags to confirm whether a CRITICAL policy actually applies
-- **Historical**: counts confirmed prior escalations/denials for the same action type
-- **Financial**: verifies current SKU cost and whether the proposed change saves or costs more
-
-Evidence-based adjustments are bounded by the same ±30 pt LLM guardrail, so a single confirmed
-fact cannot dominate the composite score.
+→ Details in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) § Evidence-Aware Scoring.
 
 ### Conditional Approvals (APPROVED_IF)
+A fourth verdict beyond APPROVED / ESCALATED / DENIED — **APPROVED_IF** — says "proceed, but only when these conditions are met," avoiding expensive ESCALATED reviews for borderline cases. Conditions: `TIME_WINDOW` and `METRIC_THRESHOLD` (auto-checkable), `BLAST_RADIUS_CONFIRMED`, `OWNER_NOTIFIED`, `DEPENDENCY_CONFIRMED` (human sign-off).
 
-A fourth SRI verdict beyond APPROVED / ESCALATED / DENIED — **APPROVED_IF** — allows the engine
-to say "yes, proceed — but only when these conditions are met." This avoids forcing every
-borderline case into an expensive ESCALATED human review:
-
-- **TIME_WINDOW** — auto-checkable: execute only during the 00:00–06:00 UTC maintenance window
-- **BLAST_RADIUS_CONFIRMED** — human-required: blast-radius reviewer must sign off
-- **METRIC_THRESHOLD** — auto-checkable: current metric is within a safe bound
-- **OWNER_NOTIFIED** — human-required: resource owner has acknowledged the change
-- **DEPENDENCY_CONFIRMED** — human-required: downstream services confirmed safe
-
-A 60-second background `ConditionWatcher` polls auto-checkable conditions. If all conditions
-are met at evaluation time, the verdict promotes to APPROVED immediately (no waiting).
-Admin force-execute is available with a mandatory non-empty justification for a full audit trail.
-
-Dashboard shows APPROVED_IF verdicts with an amber `🔒 Conditional` badge and a conditions
-panel; human conditions have explicit sign-off buttons; the watcher drives auto-condition resolution.
+A 60-second `ConditionWatcher` polls auto-conditions; if all are met at evaluation time the verdict promotes to APPROVED immediately. Admin force-execute requires a mandatory justification. The dashboard shows an amber `🔒 Conditional` badge + conditions panel with sign-off buttons.
 
 ### Operator Override Feedback Capture
+Every human override — force-executing a DENIED, dismissing an ESCALATED, or satisfying a condition — captures a **`VerdictOverride` record** with a fingerprint hash of the decision context, creating a feedback loop:
 
-Every time a human overrides a governance verdict — force-executing a DENIED action, dismissing a pending ESCALATED, or manually satisfying a condition — RuriSkry captures a **`VerdictOverride` record** with a fingerprint hash of the decision context. This creates a feedback loop:
-
-- **Three override types**: `force_execute` (bypass DENIED/ESCALATED), `dismiss` (close without acting), `condition_satisfied` (human sign-off on a condition gate)
-- **Fingerprint deduplication**: similar decisions in the future can be correlated against prior overrides to detect repeated operator disagreements with the engine
-- **Full audit trail**: override type, reviewer identity, mandatory justification (≥20 chars for `force_execute`), and the original verdict are all stored in Cosmos DB (`governance-overrides`, partitioned by `/fingerprint_hash`)
-- **Override Metrics card** on the Overview: total overrides, by type, and top action types most frequently overridden — a leading indicator of policy miscalibration
-- **`GET /api/overrides`** and **`GET /api/overrides/metrics`** expose the history and aggregate stats for external tooling
+- **Three types**: `force_execute`, `dismiss`, `condition_satisfied`.
+- **Fingerprint dedup** correlates future similar decisions to detect repeated disagreement with the engine.
+- **Full audit trail** (type, reviewer, mandatory justification ≥20 chars for `force_execute`, original verdict) stored in Cosmos `governance-overrides` (partition `/fingerprint_hash`).
+- **Override Metrics card** + `GET /api/overrides` / `GET /api/overrides/metrics` — a leading indicator of policy miscalibration.
 
 ### Agent Framework Workflow Engine
-
-The governance pipeline runs as a **7-executor workflow graph** using the Microsoft Agent
-Framework. This is the **production default** as of Phase 33D — no configuration needed.
-Set `USE_WORKFLOWS=false` only to opt back to the deprecated legacy path:
+The governance pipeline runs as a **7-executor workflow graph** (Microsoft Agent Framework) — the **production default** since Phase 33D (`USE_WORKFLOWS=false` reverts to the deprecated legacy path):
 
 ```
 [DispatchExecutor]
@@ -378,14 +268,10 @@ Set `USE_WORKFLOWS=false` only to opt back to the deprecated legacy path:
       └──→ FinancialExecutor   ─┘
 ```
 
-- **Fan-out / fan-in**: dispatch fans out to 4 parallel executors; scoring aggregates all results
-- **ConditionGateExecutor**: post-scoring node — checks auto-conditions and promotes
-  APPROVED_IF → APPROVED in-flight before the verdict is returned
-- **Durable checkpointing** (`CosmosCheckpointStore`): saves `pending_proposals` before
-  the evaluation loop so scan resumption skips already-evaluated proposals on restart
-- **Streaming**: `executor_invoked` → `evaluation` SSE event; `executor_completed` → `reasoning`
-  SSE event; `condition_gate` output → final `GovernanceVerdict`
-- **Scan resume**: `POST /api/scan/{id}/resume` resumes from the last Cosmos checkpoint
+- **Fan-out / fan-in** — dispatch → 4 parallel executors → scoring aggregates.
+- **ConditionGateExecutor** promotes APPROVED_IF → APPROVED in-flight.
+- **Durable checkpointing** (`CosmosCheckpointStore`) + **scan resume** (`POST /api/scan/{id}/resume`).
+- **Streaming** maps `executor_invoked`/`completed` to `evaluation`/`reasoning` SSE events.
 
 ---
 
@@ -748,16 +634,9 @@ All Tier 1 tools support **dry-run mode** — pass `dry_run=True` in the execute
 | Cosmos DB | update config (consistency level) |
 | Service Bus namespace | scale up |
 
-**Phase 34E** adds audited `az` CLI execution directly from the dashboard. **Phase 34F** adds an A2 Validator safety review before every execution. In Azure Container Apps, the executor automatically authenticates via the Container App's System-Assigned Managed Identity (`az login --identity`) on the first live execution — no manual `az login` step required. The playbook panel has two buttons:
+**Phase 34E/34F** add audited `az` CLI execution from the dashboard, gated by an **A2 Validator** (a conservative GPT-4.1 critic, 5s timeout — warns but never blocks). The playbook panel offers **Run as dry-run** and **▶ Run live**; both flow through a confirmation modal and write a full Cosmos audit record (incl. validator summary). Safety invariants: a hard-coded 13-pattern allowlist checked before any subprocess, `shell=False` always, args passed as a list — new patterns require a code change. In Container Apps the executor auto-authenticates via System-Assigned MI (`az login --identity`); requires `az` in the image (see [`docs/SETUP.md`](docs/SETUP.md)).
 
-- **Run as dry-run** — opens the confirmation modal; the A2 Validator reviews the command (≤5s), then you confirm. Validates against the 13-pattern allowlist and writes an audit record without executing. Safe to click at any time.
-- **▶ Run live** — same modal flow; confirms before running `az` against your Azure environment. Every execution (live, dry-run, and rejection) writes a full audit record to Cosmos DB including the validator's summary and caveats for postmortem traceability.
-
-The **A2 Validator** is a conservative GPT-4.1 critic call with a hard 5-second timeout. If the validator is unavailable, an amber warning is shown but execution is NOT blocked — you can still proceed. The validator brief (summary, caveats, risk level) is stored verbatim in the audit record.
-
-Safety invariants: commands validated against hard-coded allowlist before any subprocess call; `shell=False` enforced always; `executable_args` list (not display string) passed to OS. Adding new allowlist patterns requires a code change — nothing is configurable at runtime. Requires `az` CLI installed in the Container App image (see `docs/SETUP.md`).
-
-For other resource types, the Execution Gateway still creates a Terraform PR for human review and merge. If your environment is not Terraform-managed, RuriSkry will still surface verdicts and recommendations for those types, but the action must be applied manually.
+For types without Tier 1/Tier 3 coverage, the Execution Gateway creates a Terraform PR for human review; non-Terraform environments still get verdicts and recommendations to apply manually.
 
 **If you're deploying RuriSkry:**
 - Start with mock mode (`USE_LOCAL_MOCKS=true`) to understand how the decision pipeline works before connecting live Azure credentials
