@@ -8,10 +8,14 @@
 [![AI Dev Days Hackathon 2026](https://img.shields.io/badge/hackathon-AI%20Dev%20Days%202026-purple.svg)](https://microsoft.com)
 
 <p align="center">
-  <img src="docs/ruriskry-demo.gif" alt="RuriSkry Demo — full 9-page dashboard walkthrough" width="100%">
+  <img src="docs/ruriskry-demo.gif" alt="RuriSkry demo walkthrough" width="100%">
 </p>
 
-RuriSkry is two systems in one: a team of **Azure AI Cloud Ops Agents** (Monitoring, Cost, Deploy) that propose fixes to your infrastructure — and an **AI Change Advisory Board** (Policy, Blast Radius, Historical, Financial) that simulates, scores, and adjudicates every proposed action *before* it touches production. Ops agents supply the changes; the CAB decides whether they ship.
+<p align="center">
+  <a href="docs/videos/ruriskry-full-walkthrough.webm"><strong>Watch the full archived live-deployment walkthrough</strong></a>
+</p>
+
+RuriSkry is two systems in one: a team of **Azure AI Cloud Ops Agents** (Monitoring, Cost, Deploy) that propose and plan cloud changes — and an **AI Change Advisory Board** (Policy, Blast Radius, Historical, Financial) that simulates, scores, and adjudicates every proposed action *before* it touches production. Ops agents supply the changes; the CAB decides whether they ship.
 
 Born at the Microsoft AI Dev Days Hackathon 2026, RuriSkry has since matured into a fully async, enterprise-ready governance engine with live Azure topology analysis, a 34-rule deterministic rules engine, durable audit trails (Cosmos DB), Slack alerting, explainable AI verdicts with counterfactual analysis, operator override feedback capture, and 1462 automated tests.
 
@@ -279,12 +283,12 @@ The governance pipeline runs as a **7-executor workflow graph** (Microsoft Agent
 
 A 9-page React governance UI with real-time SSE streaming, custom design tokens, and animated components. Fully responsive — on mobile the sidebar collapses to an overlay drawer triggered by a hamburger button in the header. Includes an **inline Glossary & FAQ**: every page exposes contextual `i` icons next to verdicts, agents, and key terms; clicking opens a popover with a short definition and a deep link into the full glossary page (top-bar Glossary entry).
 
-### Overview — Ops Nerve Center
+### Overview — Production Protection Flow
 <p align="center">
-  <img src="docs/screenshots/visual-scan-overview.png" alt="Overview Dashboard" width="100%">
+  <img src="docs/screenshots/visual-scan-overview.png" alt="How RuriSkry protects production" width="100%">
 </p>
 
-> NumberTicker count-up metrics, SRI trend chart, alert activity, execution metrics, pending HITL reviews, and recent scan runs — all auto-refreshing.
+> Interactive decision pipeline: alert triggers and agent scans fan out to four governance agents, aggregate into SRI scoring, pass through condition gates, and route into controlled execution.
 
 ### Agents — Enterprise Scan Management
 <p align="center">
@@ -340,7 +344,7 @@ A 9-page React governance UI with real-time SSE streaming, custom design tokens,
   <img src="docs/screenshots/execution-status.png" alt="Execution Status" width="100%">
 </p>
 
-> When a governance verdict is APPROVED, the LLM-driven Execution Agent generates a structured plan (operations, targets, reasons), computes impact and rollback instructions, then executes via Azure SDK — all streamed live in the execution terminal. Supports Terraform PR creation, direct agent fix, and one-click rollback.
+> The Execution Gateway turns governance outcomes into controlled action paths: Terraform PR, Azure Portal handoff, agent-generated fix plan, dismissal, or rollback — all captured in the decision audit trail.
 
 ### Slack Notifications
 <p align="center">
