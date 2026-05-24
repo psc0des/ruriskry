@@ -611,29 +611,33 @@ ruriskry/
 │   ├── mcp_server/             # RuriSkry as MCP provider
 │   │   └── server.py                # FastMCP — 3 tools: evaluate, query history, risk profile
 │   ├── infrastructure/         # Azure service clients (mock fallback)
-│   │   ├── azure_tools.py           # 5 sync + 5 async (*_async) tools: Resource Graph, metrics, NSG, activity log
+│   │   ├── azure_tools.py           # 5 sync + 10 async (*_async) tools: Resource Graph, metrics, NSG, activity log, resource health, Advisor, Defender, Policy, ARM metadata
 │   │   ├── resource_graph.py        # Live: KQL topology enrichment (tags + NSG join + cost)
 │   │   ├── cost_lookup.py           # Azure Retail Prices API — SKU→monthly cost (no auth)
 │   │   ├── llm_throttle.py          # asyncio.Semaphore + exponential backoff for LLM calls
-│   │   ├── cosmos_client.py         # Cosmos DB decisions + executions client
+│   │   ├── cosmos_client.py         # 5 Cosmos clients: decisions, executions, inventory, agents/admin, overrides (Phase 35A)
 │   │   ├── search_client.py         # Azure AI Search client
 │   │   ├── openai_client.py         # Azure OpenAI / gpt-4.1-mini client
 │   │   └── secrets.py               # Key Vault secret resolver
 │   ├── notifications/          # Outbound alerting
-│   │   └── slack_notifier.py        # Block Kit → Slack webhook on DENIED/ESCALATED + alerts
+│   │   └── slack_notifier.py        # 5 notification types: verdict, alert fired/resolved, scan failure, inventory stale (Block Kit)
+│   ├── governance/             # Finding → proposal adapter
+│   │   └── finding_to_proposal.py   # finding_to_proposal() — Finding → ProposedAction (Phase 40)
+│   ├── rules/                  # Universal + type-aware rules engine (Phase 40)
+│   │   ├── base.py                  # @rule decorator + self-registering registry
+│   │   ├── inventory_index.py       # O(1) InventoryIndex — by_type, get, is_referenced
+│   │   ├── agent_integration.py     # run_rules_prescan() wired before every LLM call
+│   │   ├── universal/               # 26 UNIV-* rules (public network, TLS, MI, tags, disks…)
+│   │   └── type_aware/              # 8 TYPE-* rules (NSG SSH/RDP, AKS, SQL, Cosmos, App Service)
 │   └── api/                    # Dashboard REST endpoints
 │       └── dashboard_api.py         # ~60 REST endpoints: scans, alerts, SSE, explanation, HITL, conditional approvals, config
 ├── dashboard/                  # React + Vite governance dashboard
-├── src/rules/                  # Universal + type-aware rules engine (Phase 40)
-│   ├── base.py                      # @rule decorator + self-registering registry
-│   ├── inventory_index.py           # O(1) InventoryIndex — by_type, get, is_referenced
-│   ├── agent_integration.py         # run_rules_prescan() wired before every LLM call
-│   ├── universal/                   # 26 UNIV-* rules (public network, TLS, MI, tags, disks…)
-│   └── type_aware/                  # 8 TYPE-* rules (NSG SSH/RDP, AKS, SQL, Cosmos, App Service)
 ├── data/                       # Seed data + local persistence (mock fallback)
 │   ├── agents/                      # A2A agent registry (mock)
 │   ├── alerts/                      # Alert records (local fallback)
 │   ├── decisions/                   # Audit trail (mock)
+│   ├── executions/                  # Execution records (mock)
+│   ├── overrides/                   # Override feedback records (Phase 35A)
 │   ├── scans/                       # Scan-run records (mock — ScanRunTracker)
 │   ├── seed_incidents.json
 │   ├── seed_resources.json

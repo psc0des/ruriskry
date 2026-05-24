@@ -91,6 +91,7 @@ data/scans/
 data/executions/
 data/agents/
 data/alerts/
+data/overrides/
 
 # Playwright perf results and screenshots
 dashboard/tests/results/
@@ -127,6 +128,8 @@ docs/demo-script.md
 PLAN-*.md
 docs/plans/
 docs/QA-*.md
+docs/STITCH-REDESIGN-PLAN.md
+docs/ruriskry-design.md
 Adding-HITL-Agent-Fix-Plan.md
 Adding-Terraform-Feature.md
 ag_opus_issues_detailed.md
@@ -140,6 +143,12 @@ rearchitecture.md
 # Old UI mockup screenshots
 decisions_mockup.png
 overview_mockup.png
+
+# Root-level QA / session screenshots and data captures
+current-state.png
+overview-qa.png
+qa-overview-desktop-*.png
+pr-final.txt
 
 # Generated HTML — kept tracked as diagram source (PNG is rendered from it)
 # docs/architecture-diagram.html
