@@ -347,28 +347,6 @@ function Connections() {
         style={{ ...ani, filter: 'drop-shadow(0 0 2px #d9770660)' }}
       />
 
-      {/* ── Borderline re-run loop: Scoring left edge → curves back to bus ── */}
-      <path
-        d={`M ${PIPE_LX} ${Y.scoring + NODE_H / 2} C ${PIPE_LX - 52} ${Y.scoring + NODE_H / 2},${PIPE_LX - 52} ${BUS_OUT_Y},${CX - 4} ${BUS_OUT_Y}`}
-        stroke="#f59e0b" strokeWidth={1.4} fill="none" strokeDasharray="4 4"
-        markerEnd="url(#a-amber)"
-        style={{ filter: 'drop-shadow(0 0 2px #f59e0b55)' }}
-      />
-      <text
-        x={PIPE_LX - 62} y={Y.scoring - 6}
-        fill="#92400e" fontFamily="JetBrains Mono,monospace" fontSize="8" fontWeight="700"
-        textAnchor="end"
-      >
-        borderline
-      </text>
-      <text
-        x={PIPE_LX - 62} y={Y.scoring + 5}
-        fill="#92400e" fontFamily="JetBrains Mono,monospace" fontSize="8" fontWeight="700"
-        textAnchor="end"
-      >
-        re-run ±3
-      </text>
-
       {/* ── Pipeline straight arrows ── */}
       {[
         [Y.scoring,  Y.condgate,  '#059669', 'a-green'],
